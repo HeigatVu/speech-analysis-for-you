@@ -435,7 +435,58 @@ class AcousticsAnalyzer:
         df_results.to_csv(result_file, index=False)
         self.logger.info(f"Results saved to {result_file}")
 
+def main():
 
+    if len(sys.argv) < 2:
+        print("Usage: python cognospeak_acoustics.py <n_jobs> [--segments]")
+        print("Example: python cognospeak_acoustics.py 4")
+        print("         python cognospeak_acoustics.py 4 --segments")
+        sys.exit(1)
+
+    n_jobs = int(sys.argv[1])
+    use_segments = '--segments' in sys.argv
+
+    analyzer = AcousticsAnalyzer(base_dir=".", n_jobs=n_jobs)
+
+    # Configuration
+    tasks_to_test = ['picture_description']  # Start with available task
+    feature_sets_to_test = ['eGeMAPSv02', 'ComParE_2016']
+    classifiers_to_test = [1, 3]  # LR and SVM
+
+    analyzer.logger.info(f"Analysis mode: {'Segmented audio' if use_segments else 'full audio files'}")
+
+    all_results = {}
+
+    # Run
+    for task in tasks_to_test:
+        for feature_set in feature_sets_to_test:
+            experiment_key = f"{task}_{feature_set}{'_segmented' if use_segments else ''}"
+
+            try:
+                results = analyzer.run_classification_experiment(
+                    task_name=task,
+                    feature_set_name=feature_set,
+                    classifier_ids=classifiers_to_test,
+                    class_type='2-way',  # Modify as needed
+                    n_folds=5,
+                    use_segments=use_segments
+                )
+                all_results[experiment_key] = results
+                analyzer.save_results(results, task, feature_set)
+                
+            except Exception as e:
+                analyzer.logger.error(f"Experiment {experiment_key} failed: {str(e)}")
+                continue
+
+    # Print summary
+    print("\n" + "="*60)
+    print("EXPERIMENT SUMMARY")
+    print("="*60)
+    
+    for experiment_key, results in all_results.items():
+        print(f"\n{experiment_key}:")
+        for classifier_name, metrics in results.items():
+            print(f"  {classifier_name}: F1={metrics['mean_f1']:.3f}±{metrics['std_f1']:.3f}")
 
 if __name__ == "__main__":
-    pass
+    main()
