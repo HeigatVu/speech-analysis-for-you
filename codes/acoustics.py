@@ -10,6 +10,7 @@ from sklearn.neural_network import MLPClassifier, MLPRegressor
 from sklearn.svm import SVR, SVC, LinearSVC
 from sklearn.metrics import accuracy_score, classification_report, confusion_matrix, f1_score, precision_score, recall_score, roc_auc_score, r2_score, mean_squared_error, root_mean_squared_error
 from sklearn.ensemble import RandomForestRegressor
+from sklearn.neighbors import KNeighborsClassifier
 import matplotlib.pyplot as plt
 from datetime import datetime
 
@@ -277,3 +278,88 @@ if __name__ == "__main__" and "__file__" in globals():
                             
                                 feat_names = list(smile.feature_names)
 
+                            print(f"Feature extration is dont for {openSmile_feat}")
+                            print(f"This is a {a_class_type} type classification")
+
+
+                            list_f1_vals = []
+                            list_pres = []
+                            list_recalls = []
+
+                            for k in range(N_FOLDS):
+                                if Q_2_consider == "ALL":
+                                    df_train = df_feat[df_feat[f"FOLD_{str(k)}"] == "TRAIN"]
+                                    df_test = df_feat[df_feat[f"FOLD_{str(k)}"] == "TEST"]
+                                else:
+                                    df_train = df_feat[
+                                        (df_feat[f"FOLD_{str(k)}"] == "TRAIN") & (df.feat.Q_type==Q_2_consider)
+                                    ]
+                                    df_test = df_feat[
+                                        (df_feat[f"FOLD_{str(k)}"] == "TEST") & (df.feat.Q_type==Q_2_consider)
+                                    ]
+
+                                try:
+                                    if class_type == "grid":
+                                        if classifier_idx == 1:
+                                            if a_class_type == "3-way":
+                                                opt_LRM, to_save_params = classifiers.cv_param_estimation_LR_multiclass(df_train, feat_names, CV_SCORER, N_jobs)
+                                            else:
+                                                opt_LRM, to_save_params = classifiers.cv_param_estimation_LR(df_train, feat_names, CV_SCORER, N_jobs)
+                                        elif classifier_idx == 2:
+                                            opt_KNN, to_save_params = classifiers.cv_param_estimation_KNN(df_train, feat_names, CV_SCORER, N_jobs)
+                                        elif classifier_idx == 3:
+                                            if a_class_type == "3-way":
+                                                opt_LRM, to_save_params = classifiers.cv_param_estimation_SVM_multiclass(df_train, feat_names, CV_SCORER, N_jobs)
+                                            else:
+                                                opt_LRM, to_save_params = classifiers.cv_param_estimation_SVM(df_train, feat_names, CV_SCORER, N_jobs)
+                                        elif classifier_idx == 4:
+                                            if a_class_type == "3-way":
+                                                opt_LRM, to_save_params = classifiers.cv_param_estimation_MLP_multiclass(df_train, feat_names, CV_SCORER, N_jobs)
+                                            else:
+                                                opt_LRM, to_save_params = classifiers.cv_param_estimation_MLP(df_train, feat_names, CV_SCORER, N_jobs)
+                                        elif classifier_idx == 5:
+                                            opt_LRM, to_save_params = classifiers.cv_param_estimation_MLP_TF(df_train, feat_names, CV_SCORER, N_jobs)
+                                        trained_LRM = opt_LRM.fit(robust_scale(df_train[feat_names]), list(df_train.labels.values))
+                                    elif class_type == "simple":
+                                        if classifier_idx == 1:
+                                            trained_LRM = LogisticRegression(max_iter=int(1e+20), n_jobs=N_jobs)
+                                            trained_LRM.fit(robust_scale(np.array(df_train[feat_names])), list(df_train.labels.values))
+                                        elif classifier_idx == 2:
+                                            trained_KNN = KNeighborsClassifier(n_jobs=N_jobs)
+                                            trained_KNN.fit(robust_scale(np.array(df_train[feat_names])), list(df_train.labels.values))
+                                        elif classifier_idx == 3:
+                                            trained_SVM = SVC(kernel='rbf', C=1.0, gamma=0.1, probability=True, n_jobs=N_jobs)
+                                            trained_SVM.fit(robust_scale(np.array(df_train[feat_names])), list(df_train.labels.values))
+                                        elif classifier_idx == 4:
+                                            trained_MLP = MLPClassifier(max_iter=int(1e+20), n_jobs=N_jobs)
+                                            trained_MLP.fit(robust_scale(np.array(df_train[feat_names])), list(df_train.labels.values))
+                                    else:
+                                        print("PLEASE INPUT GRID OR SIMPLE OR REGREE")
+                                except:
+                                    print(f"Error in parameter estimation for {classifier_name} with {class_type} type")
+
+                                test_preds = trained_LRM.predict(robust_scale(np.array(df_test[feat_names])))
+
+                                df_final_test = df_test[["dir_name", "labels"]]
+                                df_final_test.insert(len(df_final_test.columns), "pred_label", test_preds)
+                                df_final_test = df_final_test.rename(columns={"dir_name": "r_IDs"})
+
+                                df_final_test, f1_val, pres_val, rec_val, conf_val = majority_voting_pred_labels(df_final_test, a_class_type, verbose=0)
+
+                                list_f1_vals.append(f1_val)
+                                list_pres.append(pres_val)
+                                list_recalls.append(rec_val)
+
+                            print('List of F1-scores: ', list_f1_vals)
+                            print('Max F1-score: ', max(list_f1_vals))
+                            print('Mean F1-score: ', round(np.mean(list_f1_vals), 2), ' with STD : ', round(np.std(list_f1_vals), 2))
+                            print('Mean Precision: ', round(np.mean(list_pres), 2), ' with STD : ', round(np.std(list_pres), 2))
+                            print('Mean Recall: ', round(np.mean(list_recalls), 2), ' with STD : ', round(np.std(list_recalls), 2))
+                                
+                            print('----------------------')
+                            sys.stdout.flush()
+
+    exceutionTime = datetime.now() - start_time
+    current_time = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    print(f"\n\n CognoSpeak Acoustics completed at: {str(current_time)} \n\n")
+    print(f"Execution time: {str(exceutionTime)}")
