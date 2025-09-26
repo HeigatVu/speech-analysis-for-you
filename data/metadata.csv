@@ -1,0 +1,11 @@
+participant_id,age,gender,diagnosis,ethnicity,labels,FOLD_0,FOLD_1,FOLD_2,FOLD_3,FOLD_4
+participant_001,62,F,HC,White British,0,TRAIN,TEST,TRAIN,TRAIN,TRAIN
+participant_002,58,M,HC,White British,0,TRAIN,TRAIN,TEST,TRAIN,TRAIN
+participant_003,69,F,HC,Asian,0,TEST,TRAIN,TRAIN,TRAIN,TRAIN
+participant_004,64,M,HC,Other White,0,TRAIN,TRAIN,TRAIN,TEST,TRAIN
+participant_005,71,F,HC,White British,0,TRAIN,TRAIN,TRAIN,TRAIN,TEST
+participant_006,78,M,Dementia,White British,1,TRAIN,TEST,TRAIN,TRAIN,TRAIN
+participant_007,82,F,Dementia,White British,1,TRAIN,TRAIN,TEST,TRAIN,TRAIN
+participant_008,75,M,Dementia,Asian,1,TEST,TRAIN,TRAIN,TRAIN,TRAIN
+participant_009,80,F,Dementia,Mixed,1,TRAIN,TRAIN,TRAIN,TEST,TRAIN
+participant_010,77,M,Dementia,White British,1,TRAIN,TRAIN,TRAIN,TRAIN,TEST
