@@ -1,49 +1,78 @@
-## Config for acoustic analysis
-# Cross-validation parameters
-N_FOLDS = 5
-CV_SCORER = 'AUC'  # Options: 'AUC', 'KAPPA', 'accuracy'
+"""
 
-# Classification parameters
-DEFAULT_CLASSIFIERS = [1, 3]  # LR and SVM
-CLASS_TYPES = ['2-way']  # ['2-way', '3-way']
+Configuration file for classifiers
 
-# Feature extraction parameters
-DEFAULT_FEATURE_SETS = ['eGeMAPSv02', 'ComParE_2016']
+This file contains configuration parameters used across the CognoSpeak
+classification experiments.
+"""
 
-# Audio processing parameters
-DEFAULT_SAMPLE_RATE = None  # Let librosa auto-detect
-SEGMENT_LENGTH = 30  # seconds (for future segmentation if needed)
+# Cross-validation scoring metric
+# Options: 'AUC' for ROC-AUC scoring, 'KAPPA' for Cohen's Kappa
+CV_SCORER = "AUC"
 
-# File naming conventions
-AUDIO_FILE_PATTERNS = {
-    'picture_description': '*_picture_description.wav',
-    'short_memory': '*_short_memory.wav', 
-    'long_memory': '*_long_memory.wav',
-    'semantic_fluency': '*_semantic_fluency.wav',
-    'phonemic_fluency': '*_phonemic_fluency.wav'
+# Number of folds for cross-validation
+# The paper mentions k=5 for 5-fold cross-validation
+N_FOLDS = 5            
+
+# Data path
+BASE_DIR = "~/cogno-speak"
+DATA_PATH = f"/mnt/data_lab513/ducvu/fake-speech-data"
+FEATS_PATH = f"{BASE_DIR}/feats/"
+RESULTS_PATH = f"{BASE_DIR}/results/"
+
+LIST_TASKS = {
+            "Q1": {
+                "name": "Maximum Phonation Time",
+                "file_pattern": "*_Q1.wav",
+            },
+            "Q2": {
+                "name": "Read sentences",
+                "file_pattern": "*_Q2.wav",
+            },
+            "Q3": {
+                "name": "Immediately recall the story",
+                "file_pattern": "*_Q3.wav",
+            },
+            "Q4": {
+                "name": "Picture description",
+                "file_pattern": "*_Q4.mp3",
+            },
+            "Q5": {
+                "name": "Recall picture story narrative",
+                "file_pattern": "*_Q5.wav",
+            },
+            "Q6": {
+                "name": "Phonetic fluency task",
+                "file_pattern": "*_Q6.wav",
+            },
+            "Q7": {
+                "name": "Senmantic fluency task",
+                "file_pattern": "*_Q7.wav",
+            },
+            "Q8": {
+                "name": "Procedural discourse",
+                "file_pattern": "*_Q8.wav",
+            },
+            "Q9": {
+                "name": "Simple calculation",
+                "file_pattern": "*_Q9.wav",
+            },
+            "Q10": {
+                "name": "Object recall task",
+                "file_pattern": "*_Q9.wav",
+            },
+            "Q11": {
+                "name": "Delayed story recall",
+                "file_pattern": "*_Q10.wav",
+            },
 }
 
-# Label mappings
-LABEL_MAPPINGS = {
-    '2-way': {
-        'HC': 0,          # Healthy Control
-        'MCI': 1,         # Mild Cognitive Impairment  
-        'Dementia': 1     # Dementia (grouped with MCI as "impaired")
-    },
-    '3-way': {
-        'HC': 0,          # Healthy Control
-        'MCI': 1,         # Mild Cognitive Impairment
-        'Dementia': 2     # Dementia
-    }
+LIST_ACOUSTIC_TYPE = ["eGeMAPSv02", "ComParE_2016"]
+
+LIST_CLASSIFIER_NAME = {
+    1 : "LR",
+    2 : "KNN",
+    3 : "SVM",
+    4 : "MLP",
+    5 : "MLP_TF",   
 }
-
-# Preprocessing options
-ROBUST_SCALING = True
-FORCE_RECOMPUTE_FEATURES = False
-
-# Logging configuration
-LOG_LEVEL = 'INFO'
-SAVE_DETAILED_RESULTS = True
-
-
-
