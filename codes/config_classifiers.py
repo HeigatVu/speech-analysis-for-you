@@ -23,51 +23,51 @@ RESULTS_PATH = f"{BASE_DIR}/results/"
 LIST_TASKS = {
             "Q1": {
                 "name": "Maximum Phonation Time",
-                "file_pattern": "*_Q1.wav",
+                "file_pattern": "Q1.wav",
             },
             "Q2": {
                 "name": "Read sentences",
-                "file_pattern": "*_Q2.wav",
+                "file_pattern": "Q2.wav",
             },
             "Q3": {
                 "name": "Immediately recall the story",
-                "file_pattern": "*_Q3.wav",
+                "file_pattern": "Q3.wav",
             },
             "Q4": {
                 "name": "Picture description",
-                "file_pattern": "*_Q4.mp3",
+                "file_pattern": "Q4.mp3",
             },
             "Q5": {
                 "name": "Recall picture story narrative",
-                "file_pattern": "*_Q5.wav",
+                "file_pattern": "Q5.wav",
             },
             "Q6": {
                 "name": "Phonetic fluency task",
-                "file_pattern": "*_Q6.wav",
+                "file_pattern": "Q6.wav",
             },
             "Q7": {
                 "name": "Senmantic fluency task",
-                "file_pattern": "*_Q7.wav",
+                "file_pattern": "Q7.wav",
             },
             "Q8": {
                 "name": "Procedural discourse",
-                "file_pattern": "*_Q8.wav",
+                "file_pattern": "Q8.wav",
             },
             "Q9": {
                 "name": "Simple calculation",
-                "file_pattern": "*_Q9.wav",
+                "file_pattern": "Q9.wav",
             },
             "Q10": {
                 "name": "Object recall task",
-                "file_pattern": "*_Q9.wav",
+                "file_pattern": "Q10.wav",
             },
             "Q11": {
                 "name": "Delayed story recall",
-                "file_pattern": "*_Q10.wav",
+                "file_pattern": "Q11.wav",
             },
 }
 
-LIST_ACOUSTIC_TYPE = ["eGeMAPSv02", "ComParE_2016"]
+LIST_ACOUSTIC = ["eGeMAPSv02", "ComParE_2016"]
 
 LIST_CLASSIFIER_NAME = {
     1 : "LR",
