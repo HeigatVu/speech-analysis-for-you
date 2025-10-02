@@ -11,8 +11,10 @@ classification experiments.
 CV_SCORER = "AUC"
 
 # Number of folds for cross-validation
-# The paper mentions k=5 for 5-fold cross-validation
 N_FOLDS = 5            
+
+# Number of parallel
+N_JOBS = 5
 
 # Data path
 BASE_DIR = "~/cogno-speak"
@@ -20,6 +22,11 @@ DATA_PATH = f"/mnt/data_lab513/ducvu/fake-speech-data"
 FEATS_PATH = f"{BASE_DIR}/feats/"
 RESULTS_PATH = f"{BASE_DIR}/results/"
 
+# List way to run for classification
+# Options: "simple" and "grid"
+CLASS_TYPE_CHOSEN = ["simple"]
+
+# List task in research
 LIST_TASKS = {
             "Q1": {
                 "name": "Maximum Phonation Time",
@@ -67,8 +74,12 @@ LIST_TASKS = {
             },
 }
 
+# List chosen task
+TASK_CHOSEN = ["Q4"]
+
 LIST_ACOUSTIC = ["eGeMAPSv02", "ComParE_2016"]
 
+# List all classification
 LIST_CLASSIFIER_NAME = {
     1 : "LR",
     2 : "KNN",
@@ -76,3 +87,10 @@ LIST_CLASSIFIER_NAME = {
     4 : "MLP",
     5 : "MLP_TF",   
 }
+
+# List chosen classification
+CLASSIFIER_CHOSEN = [1, 3]
+
+# Way to classification
+# Options: "2-way" and "3-way"
+WAY_CLASSIFICATION = ["2-way"]
