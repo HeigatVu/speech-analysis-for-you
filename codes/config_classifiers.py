@@ -22,7 +22,7 @@ DATA_PATH = f"/mnt/data_lab513/ducvu/fake-speech-data"
 FEATS_PATH = f"{BASE_DIR}/feats/"
 RESULTS_PATH = f"{BASE_DIR}/results/"
 
-# List way to run for classification
+# Optimize classification
 # Options: "simple" and "grid"
 CLASS_TYPE_CHOSEN = ["simple"]
 
@@ -94,3 +94,10 @@ CLASSIFIER_CHOSEN = [1, 3]
 # Way to classification
 # Options: "2-way" and "3-way"
 WAY_CLASSIFICATION = ["2-way"]
+
+# Maping label
+LABEL_MAP = {
+    "HC" : 0,
+    "MCI" : 1,
+    "Dementia": 2,
+}
