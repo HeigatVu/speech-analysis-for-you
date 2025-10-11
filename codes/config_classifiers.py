@@ -45,7 +45,7 @@ LIST_TASKS = {
                 "file_pattern": "Q4.mp3",
             },
             "Q5": {
-                "name": "Recall picture story narrative",
+                "name": "Picture story narrative",
                 "file_pattern": "Q5.wav",
             },
             "Q6": {
@@ -65,7 +65,7 @@ LIST_TASKS = {
                 "file_pattern": "Q9.wav",
             },
             "Q10": {
-                "name": "Object recall task",
+                "name": "Calling object task",
                 "file_pattern": "Q10.wav",
             },
             "Q11": {
