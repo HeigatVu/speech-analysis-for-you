@@ -1,0 +1,17 @@
+name: dementia-speech
+channels:
+  - pytorch
+  - nvidia
+  - conda-forge
+dependencies:
+  # --- Core Infrastructure ---
+  - python=3.12
+  - pip
+  - uv
+
+  # --- CUDA and PyTorch ---
+  # Conda is the best way to install the CUDA toolkit and PyTorch together
+  - pytorch
+  - torchvision
+  - torchaudio
+  - pytorch-cuda=12.1 # IMPORTANT: Match this to your NVIDIA driver version
