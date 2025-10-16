@@ -57,11 +57,11 @@ LIST_TASKS = {
                 "file_pattern": "Q7.wav",
             },
             "Q8": {
-                "name": "Procedural discourse",
+                "name": "Procedural discourse task",
                 "file_pattern": "Q8.wav",
             },
             "Q9": {
-                "name": "Simple calculation",
+                "name": "Simple calculation task",
                 "file_pattern": "Q9.wav",
             },
             "Q10": {
@@ -69,7 +69,7 @@ LIST_TASKS = {
                 "file_pattern": "Q10.wav",
             },
             "Q11": {
-                "name": "Delayed story recall",
+                "name": "Delayed story recall task",
                 "file_pattern": "Q11.wav",
             },
 }
