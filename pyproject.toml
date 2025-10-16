@@ -8,12 +8,15 @@ dependencies = [
     "import-ipynb>=0.2",
     "ipykernel>=7.0.1",
     "librosa>=0.11.0",
+    "noisereduce>=3.0.3",
     "numpy>=2.3.3",
     "opensmile>=2.6.0",
     "pandas>=2.3.3",
     "pydub>=0.25.1",
+    "pyloudnorm>=0.1.1",
     "scikit-learn>=1.7.2",
     "scipy>=1.16.2",
+    "soundfile>=0.13.1",
     "tqdm>=4.67.1",
 ]
 
