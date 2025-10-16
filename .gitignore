@@ -13,3 +13,4 @@ wheels/
 raw_data/*
 feats/*
 results/*
+processed_data/*
