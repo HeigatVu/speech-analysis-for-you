@@ -8,3 +8,8 @@ wheels/
 
 # Virtual environments
 .venv
+
+# Data
+raw_data/*
+feats/*
+results/*
