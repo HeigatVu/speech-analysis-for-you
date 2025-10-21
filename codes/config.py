@@ -17,7 +17,7 @@ N_FOLDS = 5
 N_JOBS = 5
 
 # Data path
-BASE_DIR = "/home2/ducvu/speech-processing-implement/"
+BASE_DIR = "/home2/ducvu/speech-processing-implement"
 DATA_PATH = f"/mnt/data_lab513/ducvu/fake-speech-data"
 FEATS_PATH = f"{BASE_DIR}/feats/"
 RESULTS_PATH = f"{BASE_DIR}/results/"

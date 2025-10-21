@@ -1,5 +1,5 @@
 import import_ipynb
-from codes.feature_extraction.acoustics import *
+from codes.preprocessing.basic_preprocessing import main
 
 if __name__ == "__main__":
-    pass
+    main()
