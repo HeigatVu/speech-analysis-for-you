@@ -1,4 +1,4 @@
-# Replicate-CognoSpeak
+# Implement-speech-dementia
 ```
 ├── raw_data/
 |   ├── sub-1/
@@ -6,8 +6,8 @@
 |   |   |   ├── sub-1_sub.wav
 │   │   │   └── sub-1_tech.wav
 |   |   ├── sub-2
-│   │   └──...
-|   └──sub-2/
+|   ├── sub-2/
+│   └── ...
 ├── data/
 │   ├── metadata.csv
 │   ├── audio_files/
@@ -37,6 +37,8 @@
     └── CognoSpeak_results_2024-08-23_14-30-15.csv
 ```
 
+# Flow to run
+Raw data -> preprocessing (clapperboard-detection.ipynb) in processed_data with two dir segments and slate_positions -> Rename file into participant_001_Qx_sub.wav ..... 
 
 # Note
 Q1: Maximum Phonation Time
