@@ -86,6 +86,7 @@ data/raw/audio/
 │   └── recording_02.wav
 └── participant_002/
     └── recording_01.wav
+    └── recording_02.wav
 ```
 ### 2. Configure the Pipeline
 
@@ -139,9 +140,9 @@ speech-analysis-for-you/
 │       │   └── recording_01.json
 │       └── all_features.json         # 📊 Combined: all recordings
 │
-└── outputs/                          # 📈 Analysis results
-    ├── reports/
-    └── figures/
+└── output/                          # 📈 Analysis results
+    ├── report/
+    └── figure/
 ```
 
 ### Feature File Format (JSON)
@@ -222,7 +223,7 @@ Project Link: [https://github.com/HeigatVu/speech-analysis-for-you.git](https://
 - [x] Comprehensive preprocessing
 - [x] Feature analysis tools
 - [ ] Integration with ML models (planned)
-- [ ] Real-time feature extraction
-- [ ] Web-based demo interface
+- [ ] Real-time feature extraction (in the future)
+- [ ] Web-based demo interface (in the future)
 
 ---

@@ -10,7 +10,25 @@ wheels/
 .venv
 
 # Data
-raw_data/*
-feats/*
-results/*
-processed_data/*
+data/raw/
+data/processed/
+data/features/
+*.wav
+*.mp3
+*.json  # feature files
+
+# Virtual environment
+.venv/
+venv/
+
+# Outputs (can regenerate)
+output/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# IDE files
+.vscode/
+.idea/
+.DS_Store
