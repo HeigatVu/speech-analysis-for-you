@@ -19,8 +19,3 @@ dependencies = [
     "soundfile>=0.13.1",
     "tqdm>=4.67.1",
 ]
-
-[tool.uv.workspace]
-members = [
-    "practice-speech-processing",
-]
