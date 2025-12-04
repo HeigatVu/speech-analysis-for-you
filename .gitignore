@@ -10,12 +10,7 @@ wheels/
 .venv
 
 # Data
-data/raw/
-data/processed/
-data/features/
-*.wav
-*.mp3
-*.json  # feature files
+data/*
 
 # Virtual environment
 .venv/
