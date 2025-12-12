@@ -1,15 +1,18 @@
 [project]
-name = "speech-processing-implement"
+name = "speech-analysis-for-you"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "hydra-core>=1.3.2",
     "import-ipynb>=0.2",
     "ipykernel>=7.0.1",
     "librosa>=0.11.0",
+    "nbconvert>=7.16.6",
     "noisereduce>=3.0.3",
     "numpy>=2.3.3",
+    "omegaconf>=2.3.0",
     "opensmile>=2.6.0",
     "pandas>=2.3.3",
     "pydub>=0.25.1",
