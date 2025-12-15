@@ -13,11 +13,15 @@ import pandas as pd
 from scipy import signal
 from scipy.io import wavfile
 
+# # Add project root to Python path for imports
+# project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# if project_root not in sys.path:
+#     sys.path.insert(0, project_root)
+
 import src.utils.audio as uAudio
 import src.utils.visualization as uVisualization
 import src.utils.file_io as uFile
 
-@hydra.main(config_path="../config", config_name="main", version_base=None)
 def clapperboard_detection(
                             audio_path:str,
                             config:DictConfig,
@@ -61,28 +65,68 @@ def clapperboard_detection(
     clapperboard_position_seconds = (peaks/sr_raw_audio).tolist()
     clapperboard_position_ms = (peaks/sr_raw_audio * 1000).tolist()
 
-    result = defaultdict[list]
-    result = {
-        "positions_samples": clapperboard_position_samples,
-        "positions_seconds": clapperboard_position_seconds,
-        "positions_ms": clapperboard_position_ms,
-        "correlation_scores": correlation_values,
-    }
+    # Store the result
+    result = defaultdict(list)
+    result["positions_samples"] = clapperboard_position_samples
+    result["positions_seconds"] = clapperboard_position_seconds
+    result["positions_ms"] = clapperboard_position_ms
+    result["correlation_scores"] = correlation_values
 
     # Create output folder for json and save json
-    uFile.create_dir(output_json)
-    uFile.save_json(result, output_json, file_name)
+    if save_json and output_json and file_name:
+        uFile.create_dir(output_json, config)
+        uFile.save_json(result, output_json, file_name, config)
 
     return result
 
+@hydra.main(config_path="../config", config_name="main", version_base=None)
+def main(config: DictConfig) -> str:
+    # Get config parameters
+    audio_path = config.get("audio_path", "")
+    threshold = config.get("threshold", 0.5)
+    min_distance_sec = config.get("min_distance_sec", 3)
+    save_json = config.get("save_json", True)
+    output_json = config.get("output_json", "")
+    file_name = config.get("file_name", "")
+    
+    # Extract file_name from audio_path if not provided
+    if not file_name and audio_path:
+        full_file_name = audio_path.split('/')[-1]
+        file_name = full_file_name.split('.')[0]
+    
+    result = clapperboard_detection(
+        audio_path=audio_path,
+        config=config,
+        threshold=threshold,
+        min_distance_sec=min_distance_sec,
+        save_json=save_json,
+        output_json=output_json,
+        file_name=file_name
+    )
+    
+    return f"Splitting audio successfully"
+
 
 if __name__ == "__main__":
-    audio_file = f"/home2/ducvu/speech-analysis-for-you/data/raw/participant_001.wav"
-    full_file_name = audio_file.split('/')[-1]
-    file_name = full_file_name.split('.')[0]
-
-    output_json = "splitedAudio/clapperboard_position"
-    result = clapperboard_detection(audio_file, output_json=output_json, file_name=file_name)
-    print(result)
+    # Option 1: Call main() directly - Hydra will automatically load config
+    # 
+    # Usage from command line:
+    #   python -m src.preprocessing.clapperboard audio_path=/path/to/audio.wav output_json=path
+    #
+    # For hardcoded values when running directly (no CLI args), set them here:
+    # Set default values if not provided via command line (sys.argv[0] is script name)
+    if len(sys.argv) == 1:  # Only script name, no arguments
+        audio_file = "/home2/ducvu/speech-analysis-for-you/data/raw/participant_001.wav"
+        output_json = "splitedAudio/clapperboard_position"
+        
+        # Override config via command-line style arguments (Hydra will parse these)
+        sys.argv.extend([
+            f"audio_path={audio_file}",
+            f"output_json={output_json}"
+        ])
+        # Note: file_name will be auto-extracted from audio_path in main() function
+    
+    # Call main() - @hydra.main decorator will handle config loading and argument parsing
+    main()
 
 
