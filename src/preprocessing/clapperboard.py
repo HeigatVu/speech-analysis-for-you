@@ -99,9 +99,9 @@ def clapperboard_detection(
         "audio_file": audio_path,
         "sample_rate": sr_raw_audio,
         "audio_duration_sec": len(mono_raw_audio_array_norm) / sr_raw_audio,
-        "audio_duration_ms": len(mono_raw_audio_array_norm),
+        "audio_duration_ms": int(len(mono_raw_audio_array_norm) / sr_raw_audio * 1000),
         "clapperboard_duration_sec": len(mono_clapperboard_sound_effect_array_norm) / sr_raw_audio,
-        "clapperboard_duration_ms": len(mono_clapperboard_sound_effect_array_norm),
+        "clapperboard_duration_ms": int(len(mono_clapperboard_sound_effect_array_norm) / sr_raw_audio * 1000),
         "num_clapperboard_found": len(clapperboard_position_samples),
         "threshold_used": threshold,
         "min_distance_sec": min_distance_sec,
@@ -136,7 +136,7 @@ def split_audio_by_position(
                             output_dir:str,
                             config:DictConfig,
                             remove_clapperboard:bool=True,
-                            clapperboard_buffer_ms:int=500,
+                            clapperboard_buffer_ms:int=500.0,
                             min_segment_duration_sec:float=1.0,
                             save_json:bool=True,
                             ) -> list:
@@ -162,18 +162,25 @@ def split_audio_by_position(
     # data = uFile.load_json(splited_json_path)
 
     # Load audio
-    raw_audio = uAudio.load_audio_pydub(audio_file, mono=False)
+    _, raw_audio = uAudio.load_audio_pydub(audio_file, mono=False)
+    audio_length_ms = len(raw_audio)
+    print(f"Audio length: {audio_length_ms}ms ({audio_length_ms/1000:.2f}s)")
 
     # Extract clapperboard position in milliseconds
     clapperboard_time_ms = [pos["time_ms"] for pos in result_splited_position["clapperboard_positions"]]
+    print(f"Clapperboard positions: {clapperboard_time_ms}")
+    print(f"Number of clapperboards: {len(clapperboard_time_ms)}")
+
     clapperboard_duration_ms = result_splited_position["clapperboard_duration_ms"]
+    print(f"Clapperboard duration: {clapperboard_duration_ms}ms, Buffer: {clapperboard_buffer_ms}ms")
 
     # Create output folder
     uFile.create_dir(output_dir, config)
 
     # Calculate segment boudaries
     segments = []
-    for i in range(len(clapperboard_time_ms) + 1):
+    segment_counter = 0
+    for i in range(len(clapperboard_time_ms)+1):
         if i == 0: 
         # First clapperboard position in audio
             start = 0
@@ -182,43 +189,56 @@ def split_audio_by_position(
             else:
                 end = clapperboard_time_ms[0] + clapperboard_duration_ms
             label = "intro"
-        elif i == len(clapperboard_time_ms): 
-        # last segment of last clapperboard position in audio
-            start = clapperboard_time_ms[-1] + clapperboard_duration_ms + clapperboard_buffer_ms
-            end = len(raw_audio)
-            label = "outro"
-        else:
-            # Middle segment of each clappberboard
-            start = clapperboard_time_ms[i - 1] + clapperboard_duration_ms + clapperboard_buffer_ms
-            end = clapperboard_time_ms[i]
-            if not remove_clapperboard:
-                end = end + clapperboard_time_ms
-            label = "middle-segment"
+            clap_ref_index = 0
+        elif i < len(clapperboard_time_ms):
+            prev_clap_end = clapperboard_time_ms[i - 1] + clapperboard_duration_ms
+            
+            if remove_clapperboard:
+                start = prev_clap_end + clapperboard_buffer_ms
+                end = clapperboard_time_ms[i]
+            else:
+                start = prev_clap_end + clapperboard_buffer_ms
+                end = clapperboard_time_ms[i] + clapperboard_duration_ms
+            
+            label = f"segment_{i}"
+            clap_ref_index = i
 
-        # check min duration
+        elif i == len(clapperboard_time_ms):
+            prev_clap_end = clapperboard_time_ms[-1] + clapperboard_duration_ms
+            start = prev_clap_end + clapperboard_buffer_ms
+            end = audio_length_ms
+            label = "outro"
+            clap_ref_index = len(clapperboard_time_ms) - 1
+
         duration_sec = (end - start) / 1000.0
         if duration_sec >= min_segment_duration_sec:
             segments.append({
-                "index": i,
-                "start_ms": start,
-                "end_ms": end,
-                "duration_sec": duration_sec,
-                "duration_min": int(duration_sec/60),
+                "segment_id": segment_counter,
+                "clapperboard_index": clap_ref_index,
+                "start_ms": int(start),
+                "end_ms": int(end),
+                "duration_sec": round(duration_sec, 3),
+                "clapperboard_time": uAudio.format_time(clapperboard_time_ms[clap_ref_index] / 1000),
                 "label": label,
             })
-    
+            segment_counter += 1
+        else:
+            print(f"Skip Segment {segment_counter}: {label} [{start}ms - {end}ms] = {duration_sec:.3f}s\n")
+
+
+    # Export json and audio file
     audio_name = result_splited_position["audio_file"].split('/')[-1]
     file_name = audio_name.split('.')[0]
     # Save segment
-    for seg in tqdm(segments, desc="Processing segments"):
+    for seg in tqdm(segments, desc=f"Processing segments {file_name}"):
         # Extract segment
         segment_audio = raw_audio[seg["start_ms"]:seg["end_ms"]]
-        output_path = os.path.join(output_dir, f"{file_name}_{seg["index"]:03d}.wav")
+        output_path = os.path.join(output_dir, f"{file_name}_{seg["segment_id"]:03d}.wav")
         # Export file
         segment_audio.export(output_path, format="wav")
 
     if save_json:
-        uFile.save_json(segments, output_dir, file_name, config)
+        uFile.save_json(segments, output_dir, f"{file_name}_segments", config)
 
 
 
@@ -232,8 +252,9 @@ def main(config: DictConfig) -> str:
     save_json = config.preprocessing.save_json_splited_position
     output_json_splited_position_path = config.preprocessing.output_json_splited_position_path
     save_viz_cor_path = config.preprocessing.output_img_correlation
-
-
+    output_audio_segment_path = config.preprocessing.output_audio_segment_path
+    min_segment_duration_sec = config.preprocessing.min_segment_duration_sec
+    clappboard_buffer_ms = config.preprocessing.clapperboard_buffer_ms
 
     # Extract file_name from audio_path if not provided
     if raw_audio_path:
@@ -251,9 +272,16 @@ def main(config: DictConfig) -> str:
         file_name=file_name,
         save_viz_cor_path=save_viz_cor_path,
     )
-    split_audio_by_position(audio_file=raw_audio_path, )
-    # Spliting original audio
 
+    # Spliting original audio
+    split_audio_by_position(
+        audio_file=raw_audio_path,
+        result_splited_position=result,
+        output_dir=output_audio_segment_path,
+        config=config,
+        clapperboard_buffer_ms=clappboard_buffer_ms,
+        min_segment_duration_sec=min_segment_duration_sec,
+    )
 
     return f"Splitting audio successfully"
 
