@@ -112,12 +112,13 @@ def clapperboard_detection(
 
 @hydra.main(config_path="../config", config_name="main", version_base=None)
 def main(config: DictConfig) -> str:
-    # Get config parameters
-    raw_audio_path = config.get("raw_audio_path", "")
-    splited_threshold = config.get("splited_threshold", 0.5)
-    min_distance_sec = config.get("min_distance_sec", 1)
-    save_json = config.get("save_json", True)
-    output_json_path = config.get("output_json_path", "")
+
+    # Get config preprocessing parameters
+    raw_audio_path = config.preprocessing.raw_audio_path
+    splited_threshold = config.preprocessing.splited_threshold
+    min_distance_sec = config.preprocessing.min_distance_sec
+    save_json = config.preprocessing.save_json_splited_position
+    output_json_splited_position_path = config.preprocessing.output_json_splited_position_path
     
     # Extract file_name from audio_path if not provided
     if raw_audio_path:
@@ -130,7 +131,7 @@ def main(config: DictConfig) -> str:
         threshold=splited_threshold,
         min_distance_sec=min_distance_sec,
         save_json=save_json,
-        output_json=output_json_path,
+        output_json=output_json_splited_position_path,
         file_name=file_name
     )
     

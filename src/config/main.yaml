@@ -13,12 +13,12 @@ hydra:
 # defaults:
 #   - data: audio
 #   - data: transcript
-#   - _self_
 
-# Audio splitting configuration
-raw_audio_path: "/home2/ducvu/project/speech-analysis-for-you/data/raw/participant_001.wav"
-splited_threshold: 0.5
-min_distance_sec: 1.0
-save_json: True
-output_json_path: "/home2/ducvu/project/speech-analysis-for-you/data/splited/clapperboard_position"
+# Audio preprocessing
+preprocessing:
+  raw_audio_path: "/home2/ducvu/project/speech-analysis-for-you/data/raw/participant_001.wav"
+  splited_threshold: 0.5
+  min_distance_sec: 30.0
+  save_json_splited_position: True
+  output_json_splited_position_path: "/home2/ducvu/project/speech-analysis-for-you/data/splited/clapperboard_position"
 
