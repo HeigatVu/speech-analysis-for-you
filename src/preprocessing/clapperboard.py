@@ -119,7 +119,8 @@ def main(config: DictConfig) -> str:
     min_distance_sec = config.preprocessing.min_distance_sec
     save_json = config.preprocessing.save_json_splited_position
     output_json_splited_position_path = config.preprocessing.output_json_splited_position_path
-    
+    save_viz_cor_path = config.preprocessing.output_img_correlation
+
     # Extract file_name from audio_path if not provided
     if raw_audio_path:
         full_file_name = raw_audio_path.split('/')[-1]
@@ -132,7 +133,8 @@ def main(config: DictConfig) -> str:
         min_distance_sec=min_distance_sec,
         save_json=save_json,
         output_json=output_json_splited_position_path,
-        file_name=file_name
+        file_name=file_name,
+        save_viz_cor_path=save_viz_cor_path,
     )
     
     return f"Splitting audio successfully"

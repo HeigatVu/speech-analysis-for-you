@@ -2,7 +2,7 @@ project:
   name: "speech-analysis-for-you"
   version: "1.0.0"
   description: "Support dectection of neurodegernative disorder"
-  project_path: "/home2/ducvu/project/speech-analysis-for-you"
+  project_path: "${oc.env:HOME}/project/speech-analysis-for-you"
   seed: 42
 
 hydra:
@@ -17,8 +17,10 @@ hydra:
 # Audio preprocessing
 preprocessing:
   raw_audio_path: "/home2/ducvu/project/speech-analysis-for-you/data/raw/participant_001.wav"
+  # Splitted audio
   splited_threshold: 0.5
   min_distance_sec: 30.0
   save_json_splited_position: True
-  output_json_splited_position_path: "/home2/ducvu/project/speech-analysis-for-you/data/splited/clapperboard_position"
-
+  output_json_splited_position_path: "${project.project_path}/data/splited/clapperboard_position"
+  output_img_correlation: "${project.project_path}/outputs/img/"
+  
