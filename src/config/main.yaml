@@ -5,6 +5,11 @@ project:
   project_path: "/home2/ducvu/project/speech-analysis-for-you"
   seed: 42
 
+hydra:
+  run:
+    # Save Hydra run directories under the project's outputs/hydra/DATE/TIME
+    dir: "${project.project_path}/log/hydra/${now:%Y-%m-%d}/${now:%H-%M-%S}"
+
 # defaults:
 #   - data: audio
 #   - data: transcript
@@ -13,8 +18,7 @@ project:
 # Audio splitting configuration
 raw_audio_path: "/home2/ducvu/project/speech-analysis-for-you/data/raw/participant_001.wav"
 splited_threshold: 0.5
-min_distance_sec: 3
+min_distance_sec: 1.0
 save_json: True
 output_json_path: "/home2/ducvu/project/speech-analysis-for-you/data/splited/clapperboard_position"
-
 

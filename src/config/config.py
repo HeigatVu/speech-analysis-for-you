@@ -17,9 +17,9 @@ N_FOLDS = 5
 N_JOBS = 5
 
 # Data path
-BASE_DIR = f"/home2/ducvu/speech-analysis-for-you/"
-DATA_PATH = f"/home2/ducvu/speech-analysis-for-you/data"
-OUTPUT_PATH = f"/home2/ducvu/speech-analysis-for-you/output"
+BASE_DIR = f"/home2/ducvu/project/speech-analysis-for-you/"
+DATA_PATH = f"/home2/ducvu/project/speech-analysis-for-you/data"
+OUTPUT_PATH = f"/home2/ducvu/project/speech-analysis-for-you/output"
 
 # Optimize classification
 # Options: "simple" and "grid"
