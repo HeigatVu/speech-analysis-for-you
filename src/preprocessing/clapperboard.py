@@ -82,25 +82,24 @@ def clapperboard_detection(
 @hydra.main(config_path="../config", config_name="main", version_base=None)
 def main(config: DictConfig) -> str:
     # Get config parameters
-    audio_path = config.get("audio_path", "")
-    threshold = config.get("threshold", 0.5)
+    raw_audio_path = config.get("raw_audio_path", "")
+    splited_threshold = config.get("splited_threshold", 0.5)
     min_distance_sec = config.get("min_distance_sec", 3)
     save_json = config.get("save_json", True)
-    output_json = config.get("output_json", "")
-    file_name = config.get("file_name", "")
+    output_json_path = config.get("output_json_path", "")
     
     # Extract file_name from audio_path if not provided
-    if not file_name and audio_path:
-        full_file_name = audio_path.split('/')[-1]
+    if raw_audio_path:
+        full_file_name = raw_audio_path.split('/')[-1]
         file_name = full_file_name.split('.')[0]
     
     result = clapperboard_detection(
-        audio_path=audio_path,
+        audio_path=raw_audio_path,
         config=config,
-        threshold=threshold,
+        threshold=splited_threshold,
         min_distance_sec=min_distance_sec,
         save_json=save_json,
-        output_json=output_json,
+        output_json=output_json_path,
         file_name=file_name
     )
     
@@ -108,24 +107,25 @@ def main(config: DictConfig) -> str:
 
 
 if __name__ == "__main__":
-    # Option 1: Call main() directly - Hydra will automatically load config
-    # 
-    # Usage from command line:
-    #   python -m src.preprocessing.clapperboard audio_path=/path/to/audio.wav output_json=path
-    #
-    # For hardcoded values when running directly (no CLI args), set them here:
-    # Set default values if not provided via command line (sys.argv[0] is script name)
-    if len(sys.argv) == 1:  # Only script name, no arguments
-        audio_file = "/home2/ducvu/speech-analysis-for-you/data/raw/participant_001.wav"
-        output_json = "splitedAudio/clapperboard_position"
-        
-        # Override config via command-line style arguments (Hydra will parse these)
-        sys.argv.extend([
-            f"audio_path={audio_file}",
-            f"output_json={output_json}"
-        ])
-        # Note: file_name will be auto-extracted from audio_path in main() function
-    
+    # # Option 1: Call main() directly - Hydra will automatically load config
+    # # 
+    # # Usage from command line:
+    # #   python -m src.preprocessing.clapperboard raw_audio_path=/path/to/audio.wav output_json_path=path
+    # #
+    # # For hardcoded values when running directly (no CLI args), set them here:
+    # # Set default values if not provided via command line (sys.argv[0] is script name)
+    # if len(sys.argv) == 1:  # Only script name, no arguments
+    #     audio_file = "/home2/ducvu/speech-analysis-for-you/data/raw/participant_001.wav"
+    #     output_json = "splitedAudio/clapperboard_position"
+
+    #     # Override config via command-line style arguments (Hydra will parse these)
+    #     # Use keys that actually exist in the config (`raw_audio_path` and `output_json_path`)
+    #     sys.argv.extend([
+    #         f"raw_audio_path={audio_file}",
+    #         f"output_json_path={output_json}"
+    #     ])
+        # Note: file_name will be auto-extracted from raw_audio_path in main() function
+
     # Call main() - @hydra.main decorator will handle config loading and argument parsing
     main()
 

@@ -1,0 +1,2 @@
+- raw_audio_path=/home2/ducvu/speech-analysis-for-you/data/raw/participant_001.wav
+- output_json_path=splitedAudio/clapperboard_position
