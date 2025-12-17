@@ -7,7 +7,7 @@ project:
 
 hydra:
   run:
-    # Save Hydra run directories under the project's outputs/hydra/DATE/TIME
+    # Save Hydra run log
     dir: "${project.project_path}/log/hydra/${now:%Y-%m-%d}/${now:%H-%M-%S}"
 
 # defaults:
@@ -17,10 +17,11 @@ hydra:
 # Audio preprocessing
 preprocessing:
   raw_audio_path: "/home2/ducvu/project/speech-analysis-for-you/data/raw/participant_001.wav"
+  
   # Splitted audio
   splited_threshold: 0.5
   min_distance_sec: 30.0
   save_json_splited_position: True
   output_json_splited_position_path: "${project.project_path}/data/splited/clapperboard_position"
-  output_img_correlation: "${project.project_path}/outputs/img/"
+  output_img_correlation: "${project.project_path}/output/img/"
   

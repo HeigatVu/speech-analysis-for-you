@@ -4,16 +4,21 @@ from numpy.typing import NDArray
 
 
 def correlation_visualization(
-    lag: NDArray,
-    correlation: NDArray,
-    threshold: float = 0.5,
-    figsize: tuple = (12, 4),
-    save_path: str | None = None,
-) -> None:
-    """
-    Plot the cross-correlation and optionally save the figure to disk.
-
-    If `save_path` is provided, the plot is saved before being shown.
+                                lag: NDArray,
+                                correlation: NDArray,
+                                threshold: float = 0.5,
+                                figsize: tuple = (12, 4),
+                                save_path: str | None = None,
+                            ) -> None:
+    """ Plot correlation between two signals
+    Input:
+        lag: samples one signal is shifted relative to the other
+        correlation: value of correlation between two signals
+        threshold: line for choosing peak
+        figsize: size of visualization
+        save_path: path for saving visulization image
+    Output:
+        None
     """
     plt.figure(figsize=figsize)
     plt.plot(lag, correlation)
