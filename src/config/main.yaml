@@ -24,4 +24,6 @@ preprocessing:
   save_json_splited_position: True
   output_json_splited_position_path: "${project.project_path}/data/splited/clapperboard_position"
   output_img_correlation: "${project.project_path}/output/img/"
+  output_audio_segment_path: "${project.project_path}/data/splited/audio_segmentation"
+
   

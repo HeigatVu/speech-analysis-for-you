@@ -45,3 +45,16 @@ def save_json(data, output_path: str, file_name: str, config: DictConfig) -> Non
     with open(file_path, "w") as f:
         json.dump(data, f, indent=1)
     return f"{file_name}.json is created"
+
+def load_json(json_path: str, config: DictConfig) -> None:
+    """ Load json file
+    Input:
+        file_path: path of json file
+    Return:
+        data in json
+    """
+    full_dir_path_json = __resolve_path(json_path, config)
+    with open(full_dir_path_json, 'r') as f:
+        data = json.load(f)
+
+    return data

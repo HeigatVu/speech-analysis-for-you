@@ -40,7 +40,7 @@ def format_time(seconds:int) -> str:
 
 
 def normalize_with_zscore(mono_audio_file:NDArray) -> NDArray:
-    """Normalizing with z-score scaling"""
+    """ Normalizing with z-score scaling """
     # Make audio signal centered
     audio_file_centered = mono_audio_file - np.mean(mono_audio_file)
     # Normalized with std (avoid division by zero)
@@ -49,7 +49,7 @@ def normalize_with_zscore(mono_audio_file:NDArray) -> NDArray:
     return audio_file_norm
 
 def normalize_with_minmax(mono_audio_file:NDArray) -> NDArray:
-    """Normalizing with min-max scaling"""
+    """ ormalizing with min-max scaling """
     min_value = np.min(np.abs(mono_audio_file))
     max_value = np.max(np.abs(mono_audio_file))
     x_std = (mono_audio_file - min_value) / (max_value - min_value)
