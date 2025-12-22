@@ -1,5 +1,4 @@
 import os
-import sys
 import json
 from tqdm import tqdm
 import glob
@@ -140,7 +139,7 @@ def split_audio_by_position(
                             min_segment_duration_sec:float=1.0,
                             save_json:bool=True,
                             ) -> list:
-    """ Split audio follwing json file
+    """ Split audio follwing result of clapperboard detection milisecond time
     Input:
         audio_file: path of audio path
         // splited_json_path: json for saving position of clapperboard
