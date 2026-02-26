@@ -10,20 +10,37 @@ hydra:
     # Save Hydra run log
     dir: "${project.project_path}/log/hydra/${now:%Y-%m-%d}/${now:%H-%M-%S}"
 
-# defaults:
-#   - data: audio
-#   - data: transcript
 
 # Audio preprocessing
 preprocessing:
-  raw_audio_path: "/home2/ducvu/project/speech-analysis-for-you/data/raw/participant-001.wav"
+  # raw_audio_path: "${project.project_path}/data/raw/participant-001.wav"
   
   # Splitted audio
   splited_threshold: 0.45
   min_distance_sec: 1.0
   save_json_splited_position: True
+
+  # Clapperboard paths
+  task_clapperboard_path: "${project.project_path}/data/audio-split-data/clapperboard-sound-effect.wav"
+  participant_clapperboard_path: "${project.project_path}/data/audio-split-data/clapperboard-participant-talk.wav"
+
+  # Output paths
   output_json_splited_position_path: "${project.project_path}/data/splited/clapperboard_position"
   output_img_correlation: "${project.project_path}/output/img/"
-  output_audio_segment_path: "${project.project_path}/data/splited/audio_segmentation"
+  output_audio_segment_path: "${project.project_path}/data/splited/"
+
+  task_names: [
+              "sustained_vowel", 
+              "reading_paragraph", 
+              "picture_desc_1", 
+              "picture_desc_2", 
+              "immediate_recall", 
+              "serial_subtraction", 
+              "phonemic_fluency", 
+              "semantic_fluency", 
+              "procedure_desc", 
+              "naming", 
+              "delayed_recall"]
+  
   clapperboard_buffer_ms: 300.0
   min_segment_duration_sec: 1.0
