@@ -1,7 +1,7 @@
 import os
-from tqdm import tqdm
-import typing
+from omegaconf import DictConfig
 import hydra
+from tqdm import tqdm
 from omegaconf import DictConfig
 
 import numpy as np
@@ -19,7 +19,8 @@ def clapperboard_detection(
                             save_json:bool=True,
                             output_json:str="",
                             file_name:str="",
-                            save_viz_cor_path:str=os.getcwd(),
+                            save_viz_cor_path:str=None,
+                            clapperboard_path:str=None,
                             ) -> dict:
     """ Detecting clapperboard to split task
     Input: 
@@ -32,37 +33,37 @@ def clapperboard_detection(
 
     """
 
-    clapperboard_path = f'{config["project"]["project_path"]}/data/clapperboard-sound-effect.wav'
-
     # Load audio with pydub with sample_rate, mono audio_file
     sr_raw_audio, mono_raw_audio = uAudio.load_audio_pydub(audio_path, mono=True)
-    _, mono_clapperboard_sound_effect = uAudio.load_audio_pydub(
+    _, mono_clap = uAudio.load_audio_pydub(
                                                             clapperboard_path,
                                                             mono=True,
                                                         )
 
     # Convert to numpy array
     mono_raw_audio_array = np.array(mono_raw_audio.get_array_of_samples(), dtype=float)
-    mono_clapperboard_sound_effect_array = np.array(
-                                                mono_clapperboard_sound_effect.get_array_of_samples(), 
+    mono_clap_array = np.array(
+                                                mono_clap.get_array_of_samples(), 
                                                 dtype=float
                                             )
 
     # Normalize audio and cross-corelation
-    mono_raw_audio_array_norm = uAudio.normalize_with_minmax(mono_raw_audio_array)
-    mono_clapperboard_sound_effect_array_norm = uAudio.normalize_with_minmax(mono_clapperboard_sound_effect_array)
+    mono_raw_audio_norm = uAudio.normalize_with_minmax(mono_raw_audio_array)
+    mono_clap_norm = uAudio.normalize_with_minmax(mono_clap_array)
     
     # Cross-correlation
     correlation = signal.correlate(
-                            mono_raw_audio_array_norm, 
-                            mono_clapperboard_sound_effect_array_norm, 
+                            mono_raw_audio_norm, 
+                            mono_clap_norm, 
                             mode="full"
                         )
     correlation = correlation / np.max(np.abs(correlation))
 
     # Visualization
-    lag = np.arange(-len(mono_clapperboard_sound_effect_array_norm) + 1, len(mono_raw_audio_array_norm))
-    visualization = uVisualization.correlation_visualization(
+    lag = np.arange(-len(mono_clap_norm) + 1, len(mono_raw_audio_norm))
+    
+    if save_viz_cor_path:
+        visualization = uVisualization.correlation_visualization(
                                             lag, 
                                             correlation, 
                                             threshold, 
@@ -83,7 +84,7 @@ def clapperboard_detection(
 
     for peak_idx in peaks:
         actual_position = lag[peak_idx]
-        if 0 <= actual_position < len(mono_raw_audio_array_norm):
+        if 0 <= actual_position < len(mono_raw_audio_norm):
             clapperboard_position_samples.append(actual_position)
             correlation_values.append(correlation[peak_idx])
 
@@ -91,30 +92,44 @@ def clapperboard_detection(
     clapperboard_positions_seconds = [i / sr_raw_audio for i in clapperboard_position_samples]
     clapperboard_positions_ms = [int(pos / sr_raw_audio * 1000) for pos in clapperboard_position_samples]
 
-    # Create result dictionary
+    # # Create result dictionary
+    # result = {
+    #     "audio_file": audio_path,
+    #     "sample_rate": sr_raw_audio,
+    #     "audio_duration_sec": len(mono_raw_audio_array_norm) / sr_raw_audio,
+    #     "audio_duration_ms": int(len(mono_raw_audio_array_norm) / sr_raw_audio * 1000),
+    #     "clapperboard_duration_sec": len(mono_clapperboard_sound_effect_array_norm) / sr_raw_audio,
+    #     "clapperboard_duration_ms": int(len(mono_clapperboard_sound_effect_array_norm) / sr_raw_audio * 1000),
+    #     "num_clapperboard_found": len(clapperboard_position_samples),
+    #     "min_distance_sec": min_distance_sec,
+    #     "clapperboard_positions": [
+    #         {
+    #             "index": i,
+    #             "sample": int(pos_sample),
+    #             "time_sec": round(pos_sec, 3),
+    #             "time_ms": pos_ms,
+    #             "time_formatted": uAudio.format_time(pos_sec),
+    #             "correlation_score": round(corr, 4)
+    #         }
+    #         for i, (pos_sample, pos_sec, pos_ms, corr) in enumerate(
+    #             zip(clapperboard_position_samples, clapperboard_positions_seconds, 
+    #                 clapperboard_positions_ms, correlation_values)
+    #         )
+    #     ]
+    # }
+
     result = {
         "audio_file": audio_path,
         "sample_rate": sr_raw_audio,
-        "audio_duration_sec": len(mono_raw_audio_array_norm) / sr_raw_audio,
-        "audio_duration_ms": int(len(mono_raw_audio_array_norm) / sr_raw_audio * 1000),
-        "clapperboard_duration_sec": len(mono_clapperboard_sound_effect_array_norm) / sr_raw_audio,
-        "clapperboard_duration_ms": int(len(mono_clapperboard_sound_effect_array_norm) / sr_raw_audio * 1000),
-        "num_clapperboard_found": len(clapperboard_position_samples),
-        "threshold_used": threshold,
-        "min_distance_sec": min_distance_sec,
+        "audio_duration_ms": int(len(mono_raw_audio_norm) / sr_raw_audio * 1000),
+        "clapperboard_duration_ms": int(len(mono_clap_norm) / sr_raw_audio * 1000),
         "clapperboard_positions": [
             {
-                "index": i,
-                "sample": int(pos_sample),
                 "time_sec": round(pos_sec, 3),
                 "time_ms": pos_ms,
-                "time_formatted": uAudio.format_time(pos_sec),
                 "correlation_score": round(corr, 4)
             }
-            for i, (pos_sample, pos_sec, pos_ms, corr) in enumerate(
-                zip(clapperboard_position_samples, clapperboard_positions_seconds, 
-                    clapperboard_positions_ms, correlation_values)
-            )
+            for pos_sec, pos_ms, corr in zip(clapperboard_positions_seconds, clapperboard_positions_ms, correlation_values)
         ]
     }
 
@@ -126,32 +141,18 @@ def clapperboard_detection(
     return result
 
 
-def split_audio_by_position(
+def split_tasks_first_pass(
                             audio_file:str,
-                            # splited_json_path:str,
                             result_splited_position:dict,
-                            output_dir:str,
+                            output_base_dir:str,
+                            participant_name:str,
                             config:DictConfig,
                             remove_clapperboard:bool=True,
-                            clapperboard_buffer_ms:int=500.0,
-                            min_segment_duration_sec:float=1.0,
+                            clapperboard_buffer_ms:int=500,
                             save_json:bool=True,
+                            task_names:list=None,
                             ) -> list:
-    """ Split audio follwing result of clapperboard detection milisecond time
-    Input:
-        audio_file: path of audio path
-        // splited_json_path: json for saving position of clapperboard
-        result_splited_position: result from clapperboard detection above
-        output_dir: output of splited audio
-        config: configuration of splited audio
-        remove_clapperboard: option for including clapperboard in splitted audio
-        clapperboard_buffer_ms:  adds padding to avoid cutting off audio
-        min_segment_duration_sec:  keeps segments longer than the minimum duration
-        question_list: list of tasks in research
-        file_name: name of file to create directory
-        save_json: backup json to double check clappboard detection
-    Output:
-        None
+    """ Split audio to each task
     """
 
 
@@ -161,127 +162,201 @@ def split_audio_by_position(
     # Load audio
     _, raw_audio = uAudio.load_audio_pydub(audio_file, mono=False)
     audio_length_ms = len(raw_audio)
-    print(f"Audio length: {audio_length_ms}ms ({audio_length_ms/1000:.2f}s)")
 
-    # Extract clapperboard position in milliseconds
-    clapperboard_time_ms = [pos["time_ms"] for pos in result_splited_position["clapperboard_positions"]]
-    print(f"Clapperboard positions: {clapperboard_time_ms}")
-    print(f"Number of clapperboards: {len(clapperboard_time_ms)}")
+    # # Extract clapperboard position in milliseconds
+    # clapperboard_time_ms = [pos["time_ms"] for pos in result_splited_position["clapperboard_positions"]]
+    # clapperboard_duration_ms = result_splited_position["clapperboard_duration_ms"]
 
-    clapperboard_duration_ms = result_splited_position["clapperboard_duration_ms"]
-    print(f"Clapperboard duration: {clapperboard_duration_ms}ms, Buffer: {clapperboard_buffer_ms}ms")
+    # # Calculate segment boudaries
+    # segments = []
+    # segment_counter = 0
+    # for i in range(len(clapperboard_time_ms)+1):
+    #     if i == 0: 
+    #     # First clapperboard position in audio
+    #         start = 0
+    #         if remove_clapperboard:
+    #             end = clapperboard_time_ms[0]
+    #         else:
+    #             end = clapperboard_time_ms[0] + clapperboard_duration_ms
+    #         label = "intro"
+    #         clap_ref_index = 0
+    #     elif i < len(clapperboard_time_ms):
+    #         prev_clap_end = clapperboard_time_ms[i - 1] + clapperboard_duration_ms
+            
+    #         if remove_clapperboard:
+    #             start = prev_clap_end + clapperboard_buffer_ms
+    #             end = clapperboard_time_ms[i]
+    #         else:
+    #             start = prev_clap_end + clapperboard_buffer_ms
+    #             end = clapperboard_time_ms[i] + clapperboard_duration_ms
+            
+    #         label = f"segment_{i}"
+    #         clap_ref_index = i
 
-    # Create output folder
-    uFile.create_dir(output_dir, config)
+    #     elif i == len(clapperboard_time_ms):
+    #         prev_clap_end = clapperboard_time_ms[-1] + clapperboard_duration_ms
+    #         start = prev_clap_end + clapperboard_buffer_ms
+    #         end = audio_length_ms
+    #         label = "outro"
+    #         clap_ref_index = len(clapperboard_time_ms) - 1
 
-    # Calculate segment boudaries
+    #     duration_sec = (end - start) / 1000.0
+    #     if duration_sec >= min_segment_duration_sec:
+    #         segments.append({
+    #             "segment_id": segment_counter,
+    #             "clapperboard_index": clap_ref_index,
+    #             "start_ms": int(start),
+    #             "end_ms": int(end),
+    #             "duration_sec": round(duration_sec, 3),
+    #             "clapperboard_time": uAudio.format_time(clapperboard_time_ms[clap_ref_index] / 1000),
+    #             "label": label,
+    #         })
+    #         segment_counter += 1
+    #     else:
+    #         print(f"Skip Segment {segment_counter}: {label} [{start}ms - {end}ms] = {duration_sec:.3f}s\n")
+
+
+    # # Export json and audio file
+    # audio_name = result_splited_position["audio_file"].split('/')[-1]
+    # file_name = audio_name.split('.')[0]
+    # # Save segment
+    # for seg in tqdm(segments, desc=f"Processing segments {file_name}"):
+    #     # Extract segment
+    #     segment_audio = raw_audio[seg["start_ms"]:seg["end_ms"]]
+    #     output_path = os.path.join(output_dir, f"{file_name}_{seg["segment_id"]:03d}.wav")
+    #     # Export file
+    #     segment_audio.export(output_path, format="wav")
+
+    # if save_json:
+    #     uFile.save_json(segments, output_dir, f"{file_name}_segments", config)
+
+    # return segments
+
+    claps_ms = [pos["time_ms"] for pos in result_splited_position["clapperboard_positions"]]
+    clap_dur_ms = result_splited_position["clapperboard_duration_ms"]
+
     segments = []
-    segment_counter = 0
-    for i in range(len(clapperboard_time_ms)+1):
-        if i == 0: 
-        # First clapperboard position in audio
+    
+    for i in range(len(claps_ms) + 1):
+        if i == 0:
             start = 0
-            if remove_clapperboard:
-                end = clapperboard_time_ms[0]
-            else:
-                end = clapperboard_time_ms[0] + clapperboard_duration_ms
-            label = "intro"
-            clap_ref_index = 0
-        elif i < len(clapperboard_time_ms):
-            prev_clap_end = clapperboard_time_ms[i - 1] + clapperboard_duration_ms
-            
-            if remove_clapperboard:
-                start = prev_clap_end + clapperboard_buffer_ms
-                end = clapperboard_time_ms[i]
-            else:
-                start = prev_clap_end + clapperboard_buffer_ms
-                end = clapperboard_time_ms[i] + clapperboard_duration_ms
-            
-            label = f"segment_{i}"
-            clap_ref_index = i
-
-        elif i == len(clapperboard_time_ms):
-            prev_clap_end = clapperboard_time_ms[-1] + clapperboard_duration_ms
-            start = prev_clap_end + clapperboard_buffer_ms
-            end = audio_length_ms
-            label = "outro"
-            clap_ref_index = len(clapperboard_time_ms) - 1
-
-        duration_sec = (end - start) / 1000.0
-        if duration_sec >= min_segment_duration_sec:
-            segments.append({
-                "segment_id": segment_counter,
-                "clapperboard_index": clap_ref_index,
-                "start_ms": int(start),
-                "end_ms": int(end),
-                "duration_sec": round(duration_sec, 3),
-                "clapperboard_time": uAudio.format_time(clapperboard_time_ms[clap_ref_index] / 1000),
-                "label": label,
-            })
-            segment_counter += 1
+            end = claps_ms[0] if remove_clapperboard else claps_ms[0] + clap_dur_ms
+        elif i < len(claps_ms):
+            start = claps_ms[i - 1] + clap_dur_ms + clapperboard_buffer_ms
+            end = claps_ms[i] if remove_clapperboard else claps_ms[i] + clap_dur_ms
         else:
-            print(f"Skip Segment {segment_counter}: {label} [{start}ms - {end}ms] = {duration_sec:.3f}s\n")
+            start = claps_ms[-1] + clap_dur_ms + clapperboard_buffer_ms
+            end = audio_length_ms
 
+        label = task_names[i] if i < len(task_names) else f"extra_segment_{i}"
+        
+        segments.append({
+            "label": label,
+            "start_ms": int(start),
+            "end_ms": int(end)
+        })
 
-    # Export json and audio file
-    audio_name = result_splited_position["audio_file"].split('/')[-1]
-    file_name = audio_name.split('.')[0]
-    # Save segment
-    for seg in tqdm(segments, desc=f"Processing segments {file_name}"):
-        # Extract segment
-        segment_audio = raw_audio[seg["start_ms"]:seg["end_ms"]]
-        output_path = os.path.join(output_dir, f"{file_name}_{seg["segment_id"]:03d}.wav")
-        # Export file
-        segment_audio.export(output_path, format="wav")
+    for seg in tqdm(segments, desc=f"Exporting Tasks for {participant_name}"):
+        task_dir = os.path.join(output_base_dir, seg["label"])
+        os.makedirs(task_dir, exist_ok=True)
+        
+        output_path = os.path.join(task_dir, f"{participant_name}.wav")
+        raw_audio[seg["start_ms"]:seg["end_ms"]].export(output_path, format="wav")
 
     if save_json:
-        uFile.save_json(segments, output_dir, f"{file_name}_segments", config)
+        uFile.save_json(segments, output_base_dir, f"{participant_name}_task_segments", config)
 
+    return segments
 
-
-
-@hydra.main(config_path="../config", config_name="main", version_base=None)
-def main(config: DictConfig) -> str:
-    # Get config preprocessing parameters
-    raw_audio_path = config.preprocessing.raw_audio_path
-    splited_threshold = config.preprocessing.splited_threshold
-    min_distance_sec = config.preprocessing.min_distance_sec
-    save_json = config.preprocessing.save_json_splited_position
-    output_json_splited_position_path = config.preprocessing.output_json_splited_position_path
-    save_viz_cor_path = config.preprocessing.output_img_correlation
-    output_audio_segment_path = config.preprocessing.output_audio_segment_path
-    min_segment_duration_sec = config.preprocessing.min_segment_duration_sec
-    clappboard_buffer_ms = config.preprocessing.clapperboard_buffer_ms
-
-    # Extract file_name from audio_path if not provided
-    if raw_audio_path:
-        full_file_name = raw_audio_path.split('/')[-1]
-        file_name = full_file_name.split('.')[0]
+def split_onset_second_pass(
+    task_audio_file: str,
+    result_splited_position: dict,
+    participant_name: str,
+    remove_clapperboard: bool = True
+):
+    """Splits a task audio file into -setup.wav and -participant.wav
+    """
+    _, raw_audio = uAudio.load_audio_pydub(task_audio_file, mono=False)
     
-    # Clapperboard position
-    result = clapperboard_detection(
-        audio_path=raw_audio_path,
+    if not result_splited_position["clapperboard_positions"]:
+        print(f"Skipping {task_audio_file} - No participant onset clap found.")
+        return
+
+    clap_ms = result_splited_position["clapperboard_positions"][0]["time_ms"]
+    clap_dur_ms = result_splited_position["clapperboard_duration_ms"]
+    task_dir = os.path.dirname(task_audio_file)
+
+    # 1. Setup Phase
+    setup_audio = raw_audio[0:clap_ms]
+    setup_path = os.path.join(task_dir, f"{participant_name}-setup.wav")
+    setup_audio.export(setup_path, format="wav")
+
+    # 2. Participant Phase
+    part_start = clap_ms if remove_clapperboard else clap_ms + clap_dur_ms
+    participant_audio = raw_audio[part_start:len(raw_audio)]
+    participant_path = os.path.join(task_dir, f"{participant_name}-participant.wav")
+    participant_audio.export(participant_path, format="wav")
+
+
+
+def run_split_audio_file(config: DictConfig, audio_path:str) -> dict:
+    """
+    """
+    task_clap_path = config.preprocessing.task_clapperboard_path
+    # participant_clap_path = config.preprocessing.participant_clapperboard_path
+    output_base_dir = config.preprocessing.output_audio_segment_path
+    task_names = config.preprocessing.task_names
+    
+    # Validation check
+    if not raw_audio_path or not os.path.exists(raw_audio_path):
+        return {"status": "error", "file": raw_audio_path, "message": "File not found or path is empty."}
+        
+    participant_name = os.path.basename(raw_audio_path).split('.')[0]
+
+    # --- STAGE 1: Splitting Audio by Task ---
+    task_result = clapperboard_detection(
+        audio_path=audio_path,
         config=config,
-        threshold=splited_threshold,
-        min_distance_sec=min_distance_sec,
-        save_json=save_json,
-        output_json=output_json_splited_position_path,
-        file_name=file_name,
-        save_viz_cor_path=save_viz_cor_path,
+        threshold=config.preprocessing.splited_threshold,
+        min_distance_sec=config.preprocessing.min_distance_sec,
+        save_json=config.preprocessing.save_json_splited_position,
+        output_json=config.preprocessing.output_json_splited_position_path,
+        file_name=f"{participant_name}_task_claps",
+        save_viz_cor_path=config.preprocessing.output_img_correlation,
+        clapperboard_path=task_clap_path
     )
 
-    # Spliting original audio
-    split_audio_by_position(
-        audio_file=raw_audio_path,
-        result_splited_position=result,
-        output_dir=output_audio_segment_path,
+    task_segments = split_tasks_first_pass(
+        audio_file=audio_path,
+        result_splited_position=task_result,
+        output_base_dir=output_base_dir,
+        participant_name=participant_name,
+        task_names=task_names,
         config=config,
-        clapperboard_buffer_ms=clappboard_buffer_ms,
-        min_segment_duration_sec=min_segment_duration_sec,
+        clapperboard_buffer_ms=config.preprocessing.clapperboard_buffer_ms,
     )
 
-    return f"Splitting audio successfully"
+    # # --- STAGE 2: Splitting Task Audio by Participant Onset ---
+    # for seg in task_segments:
+    #     if seg["label"] in ["intro", "outro"] or seg["label"].startswith("extra"):
+    #         continue # Skip non-task folders
+            
+    #     task_audio_filepath = os.path.join(output_base_dir, seg["label"], f"{participant_name}.wav")
+        
+    #     if os.path.exists(task_audio_filepath):
+    #         part_result = clapperboard_detection(
+    #             audio_path=task_audio_filepath,
+    #             config=config,
+    #             threshold=config.preprocessing.splited_threshold,
+    #             min_distance_sec=0.5, # Shorter distance since we only expect 1 clap here
+    #             save_json=False,
+    #             clapperboard_path=participant_clap_path
+    #         )
+            
+    #         split_onset_second_pass(
+    #             task_audio_file=task_audio_filepath,
+    #             result_splited_position=part_result,
+    #             participant_name=participant_name,
+    #         )
 
-
-if __name__ == "__main__":
-    main()
+    # return {"status": "success", "file": participant_name, "message": "Two-stage splitting completed."}
