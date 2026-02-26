@@ -92,32 +92,6 @@ def clapperboard_detection(
     clapperboard_positions_seconds = [i / sr_raw_audio for i in clapperboard_position_samples]
     clapperboard_positions_ms = [int(pos / sr_raw_audio * 1000) for pos in clapperboard_position_samples]
 
-    # # Create result dictionary
-    # result = {
-    #     "audio_file": audio_path,
-    #     "sample_rate": sr_raw_audio,
-    #     "audio_duration_sec": len(mono_raw_audio_array_norm) / sr_raw_audio,
-    #     "audio_duration_ms": int(len(mono_raw_audio_array_norm) / sr_raw_audio * 1000),
-    #     "clapperboard_duration_sec": len(mono_clapperboard_sound_effect_array_norm) / sr_raw_audio,
-    #     "clapperboard_duration_ms": int(len(mono_clapperboard_sound_effect_array_norm) / sr_raw_audio * 1000),
-    #     "num_clapperboard_found": len(clapperboard_position_samples),
-    #     "min_distance_sec": min_distance_sec,
-    #     "clapperboard_positions": [
-    #         {
-    #             "index": i,
-    #             "sample": int(pos_sample),
-    #             "time_sec": round(pos_sec, 3),
-    #             "time_ms": pos_ms,
-    #             "time_formatted": uAudio.format_time(pos_sec),
-    #             "correlation_score": round(corr, 4)
-    #         }
-    #         for i, (pos_sample, pos_sec, pos_ms, corr) in enumerate(
-    #             zip(clapperboard_position_samples, clapperboard_positions_seconds, 
-    #                 clapperboard_positions_ms, correlation_values)
-    #         )
-    #     ]
-    # }
-
     result = {
         "audio_file": audio_path,
         "sample_rate": sr_raw_audio,
@@ -163,74 +137,6 @@ def split_tasks_first_pass(
     _, raw_audio = uAudio.load_audio_pydub(audio_file, mono=False)
     audio_length_ms = len(raw_audio)
 
-    # # Extract clapperboard position in milliseconds
-    # clapperboard_time_ms = [pos["time_ms"] for pos in result_splited_position["clapperboard_positions"]]
-    # clapperboard_duration_ms = result_splited_position["clapperboard_duration_ms"]
-
-    # # Calculate segment boudaries
-    # segments = []
-    # segment_counter = 0
-    # for i in range(len(clapperboard_time_ms)+1):
-    #     if i == 0: 
-    #     # First clapperboard position in audio
-    #         start = 0
-    #         if remove_clapperboard:
-    #             end = clapperboard_time_ms[0]
-    #         else:
-    #             end = clapperboard_time_ms[0] + clapperboard_duration_ms
-    #         label = "intro"
-    #         clap_ref_index = 0
-    #     elif i < len(clapperboard_time_ms):
-    #         prev_clap_end = clapperboard_time_ms[i - 1] + clapperboard_duration_ms
-            
-    #         if remove_clapperboard:
-    #             start = prev_clap_end + clapperboard_buffer_ms
-    #             end = clapperboard_time_ms[i]
-    #         else:
-    #             start = prev_clap_end + clapperboard_buffer_ms
-    #             end = clapperboard_time_ms[i] + clapperboard_duration_ms
-            
-    #         label = f"segment_{i}"
-    #         clap_ref_index = i
-
-    #     elif i == len(clapperboard_time_ms):
-    #         prev_clap_end = clapperboard_time_ms[-1] + clapperboard_duration_ms
-    #         start = prev_clap_end + clapperboard_buffer_ms
-    #         end = audio_length_ms
-    #         label = "outro"
-    #         clap_ref_index = len(clapperboard_time_ms) - 1
-
-    #     duration_sec = (end - start) / 1000.0
-    #     if duration_sec >= min_segment_duration_sec:
-    #         segments.append({
-    #             "segment_id": segment_counter,
-    #             "clapperboard_index": clap_ref_index,
-    #             "start_ms": int(start),
-    #             "end_ms": int(end),
-    #             "duration_sec": round(duration_sec, 3),
-    #             "clapperboard_time": uAudio.format_time(clapperboard_time_ms[clap_ref_index] / 1000),
-    #             "label": label,
-    #         })
-    #         segment_counter += 1
-    #     else:
-    #         print(f"Skip Segment {segment_counter}: {label} [{start}ms - {end}ms] = {duration_sec:.3f}s\n")
-
-
-    # # Export json and audio file
-    # audio_name = result_splited_position["audio_file"].split('/')[-1]
-    # file_name = audio_name.split('.')[0]
-    # # Save segment
-    # for seg in tqdm(segments, desc=f"Processing segments {file_name}"):
-    #     # Extract segment
-    #     segment_audio = raw_audio[seg["start_ms"]:seg["end_ms"]]
-    #     output_path = os.path.join(output_dir, f"{file_name}_{seg["segment_id"]:03d}.wav")
-    #     # Export file
-    #     segment_audio.export(output_path, format="wav")
-
-    # if save_json:
-    #     uFile.save_json(segments, output_dir, f"{file_name}_segments", config)
-
-    # return segments
 
     claps_ms = [pos["time_ms"] for pos in result_splited_position["clapperboard_positions"]]
     clap_dur_ms = result_splited_position["clapperboard_duration_ms"]
@@ -303,15 +209,12 @@ def run_split_audio_file(config: DictConfig, audio_path:str) -> dict:
     """
     """
     task_clap_path = config.preprocessing.task_clapperboard_path
-    # participant_clap_path = config.preprocessing.participant_clapperboard_path
+    participant_clap_path = config.preprocessing.participant_clapperboard_path
     output_base_dir = config.preprocessing.output_audio_segment_path
     task_names = config.preprocessing.task_names
-    
-    # Validation check
-    if not raw_audio_path or not os.path.exists(raw_audio_path):
-        return {"status": "error", "file": raw_audio_path, "message": "File not found or path is empty."}
+
         
-    participant_name = os.path.basename(raw_audio_path).split('.')[0]
+    participant_name = os.path.basename(audio_path).split('.')[0]
 
     # --- STAGE 1: Splitting Audio by Task ---
     task_result = clapperboard_detection(
@@ -336,27 +239,25 @@ def run_split_audio_file(config: DictConfig, audio_path:str) -> dict:
         clapperboard_buffer_ms=config.preprocessing.clapperboard_buffer_ms,
     )
 
-    # # --- STAGE 2: Splitting Task Audio by Participant Onset ---
-    # for seg in task_segments:
-    #     if seg["label"] in ["intro", "outro"] or seg["label"].startswith("extra"):
-    #         continue # Skip non-task folders
-            
-    #     task_audio_filepath = os.path.join(output_base_dir, seg["label"], f"{participant_name}.wav")
-        
-    #     if os.path.exists(task_audio_filepath):
-    #         part_result = clapperboard_detection(
-    #             audio_path=task_audio_filepath,
-    #             config=config,
-    #             threshold=config.preprocessing.splited_threshold,
-    #             min_distance_sec=0.5, # Shorter distance since we only expect 1 clap here
-    #             save_json=False,
-    #             clapperboard_path=participant_clap_path
-    #         )
-            
-    #         split_onset_second_pass(
-    #             task_audio_file=task_audio_filepath,
-    #             result_splited_position=part_result,
-    #             participant_name=participant_name,
-    #         )
 
-    # return {"status": "success", "file": participant_name, "message": "Two-stage splitting completed."}
+    for seg in task_segments:
+                if seg["label"] in ["intro", "outro"] or seg["label"].startswith("extra"):
+                    continue # Skip non-task folders
+                    
+                task_audio_filepath = os.path.join(output_base_dir, seg["label"], f"{participant_name}.wav")
+                
+                if os.path.exists(task_audio_filepath):
+                    part_result = clapperboard_detection(
+                        audio_path=task_audio_filepath,
+                        config=config,
+                        threshold=config.preprocessing.splited_threshold,
+                        min_distance_sec=0.5, # Shorter distance since we only expect 1 clap here
+                        save_json=False,
+                        clapperboard_path=participant_clap_path
+                    )
+                    
+                    split_onset_second_pass(
+                        task_audio_file=task_audio_filepath,
+                        result_splited_position=part_result,
+                        participant_name=participant_name,
+                    )
