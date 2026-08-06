@@ -1760,8 +1760,31 @@ class TestAdultNeuroMorphologyMissingLayers:
         assert by_feature["morph_dep_root_ratio"][0].code == "MISSING_ANNOTATION"
         _assert_task9_nan_issue_pairing(features, rows, issues)
 
+    def test_dependency_empty_or_blank_relation_rejects_all_17_keys(self):
+        # A dependent with a valid head chain but a missing/blank relation
+        # must fail the whole dependency structure: every target word token
+        # needs a non-empty string relation (Agy MAJOR finding).
+        for invalid in (None, "", "   "):
+            document = _dep_rejection_document(
+                DocumentUtterance(
+                    id="u1",
+                    speaker_id="p1",
+                    start_s=0.0,
+                    end_s=5.0,
+                    tokens=(
+                        _morph_token("t1", "mèo", "NOUN", "root", None),
+                        _morph_token("t2", "đi", "VERB", invalid, "t1"),
+                    ),
+                ),
+            )
+            features, rows, issues = extract_morphosyntax_features(document)
+            for key in _DEP_STRUCTURE_KEYS:
+                assert math.isnan(features[key]), f"{invalid!r} left {key} computed"
+            by_feature = _issues_by_feature(issues)
+            for key in _DEP_STRUCTURE_KEYS:
+                assert by_feature[key][0].code == "MISSING_ANNOTATION", f"{invalid!r} {key}"
+            _assert_task9_nan_issue_pairing(features, rows, issues)
 
-class TestAdultNeuroConversation:
     def test_hand_calculated_recording_timing_measures(self):
         features, _, _ = extract_morphosyntax_features(
             _conversation_document(), target_speaker="p1"

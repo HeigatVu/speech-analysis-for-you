@@ -281,6 +281,10 @@ def _dependency_analysis(target_utterances):
         word_tokens = [token for token in utterance.tokens if token.kind == "word"]
         if not word_tokens:
             continue
+        if any(
+            not isinstance(token.dep_rel, str) or not token.dep_rel.strip() for token in word_tokens
+        ):
+            return None
         positions = {token.id: index for index, token in enumerate(utterance.tokens)}
         by_id = {token.id: token for token in utterance.tokens}
         roots = [token for token in word_tokens if _normalise(token.dep_rel or "") == "root"]
