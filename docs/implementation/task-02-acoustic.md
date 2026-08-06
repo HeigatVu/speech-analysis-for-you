@@ -108,8 +108,7 @@ $ git diff --check
 
 ## Commit ID
 
-`feat: add math-first acoustic features` — commit will be recorded here after
-commit (see Resolution / next-step note).
+`d64a14c` — commit message: `feat: add math-first acoustic features`.
 
 ## Skipped scope
 
