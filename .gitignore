@@ -30,3 +30,6 @@ __pycache__/
 
 # log dir
 log/
+
+# Superpowers execution artifacts
+.superpowers/

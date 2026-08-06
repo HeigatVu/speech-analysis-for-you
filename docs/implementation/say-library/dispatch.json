@@ -1,0 +1,38 @@
+{
+  "version": 1,
+  "plan": "docs/superpowers/plans/2026-08-06-say-vietnamese-speech-library.md",
+  "implementer": {
+    "tool": "opencode",
+    "agent": "build",
+    "model": "deepseek/deepseek-v4-flash",
+    "variant": "max"
+  },
+  "reviewer": {
+    "tool": "agy",
+    "agent": "code-reviewer",
+    "model": "gemini-3.6-flash-high",
+    "effort": "high",
+    "mode": "plan"
+  },
+  "workflow": [
+    "opencode-red-green-implementation",
+    "agy-spec-and-quality-review",
+    "opencode-fix",
+    "agy-scoped-re-review",
+    "controller-verify-and-advance"
+  ],
+  "tasks": [
+    {"id": 1, "slug": "packaging"},
+    {"id": 2, "slug": "document-model"},
+    {"id": 3, "slug": "chat-interchange"},
+    {"id": 4, "slug": "catalog-results"},
+    {"id": 5, "slug": "acoustic-core-timing"},
+    {"id": 6, "slug": "acoustic-phonation-prosody"},
+    {"id": 7, "slug": "acoustic-resonance-spectrum-rhythm"},
+    {"id": 8, "slug": "linguistic-lexical-disfluency"},
+    {"id": 9, "slug": "linguistic-morphosyntax-conversation"},
+    {"id": 10, "slug": "pipeline-cli"},
+    {"id": 11, "slug": "legacy-notebooks"},
+    {"id": 12, "slug": "documentation-release"}
+  ]
+}
