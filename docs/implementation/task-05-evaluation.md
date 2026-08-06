@@ -59,9 +59,14 @@ under Resolution.
   - **Labels separate from features.** `labels` is a required, distinct
     argument; a row's `features` dict never carries the label. ID / label /
     provenance / non-numeric / invalid feature columns are dropped before
-    modelling (modulespace `_EXCLUDED_PATTERNS`: `id`, `hash`, `path`,
-    `diagnos`, `label`, `provenance`, `task`), and all-`NaN` or
-    single-distinct-value columns are dropped too.
+    modelling via precise **token/key filtering** (`_EXCLUDED_TOKENS`: `id`,
+    `hash`, `hashes`, `sha`, `path`, `diagnos`, `diagnosis`, `label`,
+    `provenance`, `task`, `recording`, `participant` — matched against the
+    underscore/non-alphanumeric tokens of each feature name, never a raw
+    substring), so a domain feature like `idea_coverage`, `idea_density` or
+    `valid_words` is kept even though it contains the substring `"id"`, while
+    `participant_id`, `input_hashes`, `recording_path` and `diagnosis` are
+    excluded. All-`NaN` or single-distinct-value columns are dropped too.
   - **One case per participant.** Each participant's recordings are aggregated
     to a single participant-level case — mean across the participant's
     recordings, NaN-aware — so a participant with more recordings is never
@@ -75,8 +80,10 @@ under Resolution.
   - **Grouped splits.** Outer `StratifiedGroupKFold` (default 5 folds, `shuffle`
     with a seed that advances per repeat) splits on participants; the inner
     grouped CV (default 4) selects the L2 `C` from `[0.01, 0.1, 1, 10, 100]` by
-    AUROC/balanced-accuracy on participant groups. No participant ever straddles
-    a train/test boundary.
+    balanced accuracy on participant groups. All `C` candidates are scored on
+    the **same** inner folds (the split iterator is materialised once), and the
+    selected `C` is `_pick_c`: highest score wins, ties fall back to the smaller
+    numeric `C`. No participant ever straddles a train/test boundary.
   - **10 seed-controlled outer repeats.** `random_state=seed + repeat` drives
     each repeated outer split; the whole run is seed-reproducible.
   - **Research-only output, no score target.** Returns fold metrics (AUROC,
@@ -143,14 +150,32 @@ Initial implementation had five failing tests; each was converted into a fix:
 | 4 | `TestMetricOutputs::*` | `balanced_accuracy_score` was referenced before its import was restored; re-imported. (Ruff F401 caught the initial over-removal only after the build; the import is now present and used.) |
 | 5 | `_metrics` / outer-fit single-class folds | Outer training folds with a single class would crash logistic regression; they now predict the majority-class prevalence with a warning. Added `TestInsufficientCohortWarnings::test_cohort_without_two_of_each_class_warns_and_skips_folds` as a regression lock. |
 
+### Correction commit (`fix: correct evaluation feature selection`)
+
+Follow-up fix commit correcting three defects in the C-selection and feature
+filtering, each locked by a regression test added red-first:
+
+| # | Defect (RED) | Fix |
+|---|--------------|-----|
+| 1 | The inner split **iterator was consumed by the first `C`**, so only `C=0.01` was ever scored and every fold selected `0.01`. | `_select_c` now materialises the inner splits into a list **once** (`inner_splits = list(...)`) so every `C` candidate is scored on the same folds. |
+| 2 | `max(scores, key=scores.get)` had **no tie-break** and depended on dict order. | New `_pick_c(scores)` selects the `C` with the highest score, ties resolving to the **smaller numeric `C`**; `_select_c` delegates to it. |
+| 3 | Broad **substring** `_EXCLUDED_PATTERNS` (`id`, …) falsely dropped valid domain features such as `idea_coverage`, `idea_density` and `valid_words` (they contain `"id"`). | Replaced with precise **token/key** filtering (`_EXCLUDED_TOKENS` matched against underscore/non-alphanumeric tokens), retaining `idea_*`, `valid_*`, `time_*`, etc. while still excluding `participant_id`, `input_hashes`, `recording_path`, `diagnosis`, `label`, `provenance`, `audio_path`, `sha256`, `task_id`. |
+
+The inner `C` score is **balanced accuracy** (threshold-based, matching the
+build brief's "AUROC/balanced-accuracy"), so L2 regularisation genuinely
+trades off across `C` — a monotonically-scaled score (AUROC) is invariant to
+the L2 shrinkage factor and would make every `C` tie. Regression tests added:
+`TestNoLabelLeakageAndFeatureFiltering::test_{domain_features_with_id_like_substrings_are_preserved,task_and_provenance_and_hash_fields_excluded_precisely}`
+and `TestInnerCandidateEvaluation::{test_every_candidate_is_evaluated_and_best_c_selected,test_tie_break_selects_smaller_c}`.
+
 ### Final verification (after Resolution)
 
 ```
 $ uv run pytest tests/speech_features/test_evaluation.py -q
-15 passed in 1.24s
+19 passed in 2.09s
 
 $ uv run pytest tests/speech_features -q
-157 passed in 1.68s
+161 passed in 2.49s
 
 $ uv run ruff check src/speech_features tests/speech_features
 All checks passed!

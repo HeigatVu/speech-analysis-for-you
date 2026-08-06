@@ -21,7 +21,10 @@ import numpy as np
 import pytest
 
 from speech_features.evaluation import (
+    C_GRID,
     _default_pipe,
+    _pick_c,
+    _select_c,
     bootstrap_ci,
     evaluate_ad_baseline,
 )
@@ -157,6 +160,48 @@ class TestNoLabelLeakageAndFeatureFiltering:
         with pytest.raises(TypeError):
             evaluate_ad_baseline(rows)  # labels are a required, separate argument
 
+    def test_domain_features_with_id_like_substrings_are_preserved(self):
+        # The old broad substring patterns ("id", "task", ...) wrongly dropped
+        # valid domain features such as idea_coverage, idea_density and
+        # valid_* (which contain the substring "id" in "idea"/"valid"). These
+        # must survive precise filtering.
+        rows = _cohort_rows(noise=0.1)
+        labels = _labels(rows)
+        for i, r in enumerate(rows):
+            f = r["features"]
+            f["idea_coverage"] = float(0.1 * (i % 5))
+            f["idea_density"] = float(0.2 + 0.05 * (i % 4))
+            f["valid_words"] = float(50 + i)
+            f["time_ratio"] = float(0.3 + 0.01 * (i % 7))
+        result = evaluate_ad_baseline(
+            rows, labels, seed=7, outer_splits=3, outer_repeats=1, inner_splits=2
+        )
+        for kept in ("idea_coverage", "idea_density", "valid_words", "time_ratio"):
+            assert kept in result.feature_columns, f"{kept} was wrongly dropped"
+        for dropped in ("participant_id", "input_hashes", "recording_path", "diagnosis"):
+            assert dropped not in result.feature_columns, f"{dropped} leaked into features"
+
+    def test_task_and_provenance_and_hash_fields_excluded_precisely(self):
+        # Precise identifier filtering excludes genuine metadata/provenance/
+        # label/path/hash/task fields even when they do not collide with a
+        # domain feature's substring.
+        rows = _cohort_rows()
+        labels = _labels(rows)
+        for r in rows:
+            f = r["features"]
+            f["recording_id"] = "rec"
+            f["label"] = "AD"
+            f["provenance"] = "p"
+            f["audio_path"] = "/x"
+            f["sha256"] = "ab" * 16
+            f["task_id"] = "t"
+        result = evaluate_ad_baseline(
+            rows, labels, seed=7, outer_splits=3, outer_repeats=1, inner_splits=2
+        )
+        for dropped in ("recording_id", "label", "provenance", "audio_path", "sha256", "task_id"):
+            assert dropped not in result.feature_columns, f"{dropped} leaked into features"
+        assert set(result.feature_columns).issubset({"f1", "f2", "f3"})
+
 
 class TestTrainingOnlyImputationAndScaling:
     def test_preprocessing_statistics_come_from_training_fold_only(self):
@@ -252,6 +297,47 @@ class TestDeterminism:
         assert a.participant_predictions == b.participant_predictions
         assert a.selected_cs == b.selected_cs
         assert [m["auroc"] for m in a.fold_metrics] == [m["auroc"] for m in b.fold_metrics]
+
+
+class TestInnerCandidateEvaluation:
+    def _training_block(self, n_per_class=50, signal=0.8):
+        # One noisy, *overlapping* signal feature so that C=0.01's heavy L2
+        # shrinkage genuinely under-fits the training subset relative to a
+        # larger C when selecting on balanced accuracy over a grouped inner CV.
+        # (A cleanly separable feature makes every C tie, since balanced
+        # accuracy and AUROC are invariant to monotone scaling of the score.)
+        rng = np.random.RandomState(0)
+        x = np.concatenate(
+            [rng.normal(signal, 2.0, n_per_class), rng.normal(-signal, 2.0, n_per_class)]
+        )
+        y = np.array([1] * n_per_class + [0] * n_per_class)
+        groups = np.arange(2 * n_per_class)
+        return x.reshape(-1, 1), y, groups
+
+    def test_every_candidate_is_evaluated_and_best_c_selected(self):
+        # Regression: the inner split iterator was consumed by the first C, so
+        # only C=0.01 was ever measured and every fold picked 0.01 regardless of
+        # the data. On a tuneable training block a stronger-but-regularized C
+        # must be selectable.
+        X, y, groups = self._training_block()
+        best = _select_c(
+            X,
+            y,
+            groups,
+            inner_use=4,
+            c_grid=C_GRID,
+            random_state=42,
+            warnings_list=[],
+        )
+        assert best > 0.01, f"larger C was never selected (got {best!r})"
+
+    def test_tie_break_selects_smaller_c(self):
+        # Deterministic tie-breaking: equal C scores resolve to the smaller
+        # numeric C, independent of candidate-container ordering.
+        assert _pick_c({1.0: 0.7, 0.01: 0.7, 10.0: 0.7}) == 0.01
+        assert _pick_c({0.1: 0.9, 0.01: 0.9}) == 0.01
+        assert _pick_c({10.0: 0.8, 100.0: 0.8}) == 10.0
+        assert _pick_c({0.01: 0.6, 1.0: 0.9}) == 1.0  # higher score still wins
 
 
 class TestBootstrapReproducibility:

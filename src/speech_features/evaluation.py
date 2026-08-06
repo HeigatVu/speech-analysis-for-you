@@ -6,7 +6,8 @@ binary labels supplied **separately** from the features. Notes on honesty:
 * **Labels are separate.** ``evaluate_ad_baseline`` takes ``labels`` as a
   required argument keyed by participant; a row's feature dict never carries the
   label. ID / label / provenance / non-numeric / invalid feature columns are
-  dropped before modelling.
+  dropped before modelling, via precise token/key filtering that keeps domain
+  features such as ``idea_*`` and ``valid_*``.
 * **One case per participant.** Each participant's recordings are aggregated to
   a single participant-level case (mean across the participant's recordings,
   NaN-aware), so a participant with more recordings never gets duplicated
@@ -50,8 +51,27 @@ KNOWN_TASKS = (
 )
 C_GRID = (0.01, 0.1, 1.0, 10.0, 100.0)
 
-# Column patterns that must never enter the model feature matrix.
-_EXCLUDED_PATTERNS = ("id", "hash", "path", "diagnos", "label", "provenance", "task")
+# Precise feature-key tokens that must never enter the model feature matrix.
+# Filtering is token/key based (split on non-alpha), so a substring such as
+# "id" never falsely drops a domain feature like *idea_coverage* or
+# *valid_words* while still excluding genuine ID / hash / path / label /
+# provenance / task metadata.
+_EXCLUDED_TOKENS = frozenset(
+    {
+        "id",
+        "hash",
+        "hashes",
+        "sha",
+        "path",
+        "diagnos",
+        "diagnosis",
+        "label",
+        "provenance",
+        "task",
+        "recording",
+        "participant",
+    }
+)
 
 
 # ---------------------------------------------------------------------------
@@ -151,9 +171,9 @@ def _select_and_collect(by_participant, warnings_list):
 
     def _keep(name):
         lower = name.lower()
-        for pat in _EXCLUDED_PATTERNS:
-            if pat in lower or re.search(pat, lower):
-                return False
+        tokens = {t for t in re.split(r"[^a-z]", lower) if t}
+        if tokens & _EXCLUDED_TOKENS:
+            return False
         return columns[name]["numeric"]
 
     selected = [name for name in columns if _keep(name)]
@@ -199,26 +219,38 @@ def _default_pipe(c: float):
     )
 
 
+def _pick_c(scores):
+    """Pick the best ``C`` from ``{C: score}`` (higher score wins, ties → smaller C)."""
+    best = None
+    for c, s in scores.items():
+        if best is None or s > scores[best] or (s == scores[best] and c < best):
+            best = c
+    return best
+
+
 def _select_c(Xt, yt, inner_groups, inner_use, *, c_grid, random_state, warnings_list):
     """Pick the best L2 ``C`` on the outer training fold via a grouped inner CV.
 
-    Inner folds whose training subset has a single class are skipped (logistic
-    regression needs both); when no inner split is feasible it returns a default
-    ``C`` and warns instead of failing.
+    Candidates are scored by balanced accuracy (threshold-based, so L2
+    regularisation genuinely trades off across ``C``); inner folds whose
+    training subset has a single class are skipped (logistic regression needs
+    both); when no inner split is feasible it returns a default ``C`` and warns
+    instead of failing. The inner splits are materialised once as a list so every
+    ``C`` candidate is scored on the *same* folds.
     """
     if inner_use < 2 or np.unique(yt).size < 2:
         warnings_list.append("inner CV not feasible; using default C=1.0")
         return 1.0
     try:
         inner = StratifiedGroupKFold(n_splits=inner_use, shuffle=True, random_state=random_state)
-        inner_splits_iter = inner.split(Xt, yt, groups=inner_groups)
+        inner_splits = list(inner.split(Xt, yt, groups=inner_groups))
     except ValueError as exc:
         warnings_list.append(f"inner CV not feasible; using default C=1.0 ({exc})")
         return 1.0
     scores = {}
     for c in c_grid:
         c_scores = []
-        for i_tr, i_va in inner_splits_iter:
+        for i_tr, i_va in inner_splits:
             if np.unique(yt[i_tr]).size < 2:
                 continue  # skip a single-class training subset
             pipe = _default_pipe(c)
@@ -230,9 +262,9 @@ def _select_c(Xt, yt, inner_groups, inner_use, *, c_grid, random_state, warnings
                 # balanced accuracy 1 only by chance, so score it at chance.
                 c_scores.append(0.5)
             else:
-                c_scores.append(float(roc_auc_score(y_va_true, y_va_prob)))
+                c_scores.append(float(balanced_accuracy_score(y_va_true, y_va_prob >= 0.5)))
         scores[c] = float(np.mean(c_scores)) if c_scores else float("-inf")
-    return max(scores, key=scores.get)
+    return _pick_c(scores)
 
 
 def _metrics(y_true, y_score, pos_label=1):
