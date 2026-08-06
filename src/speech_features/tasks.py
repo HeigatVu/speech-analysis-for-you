@@ -71,11 +71,22 @@ def match_alias(text: str, aliases, threshold: float = SIMILARITY_THRESHOLD) -> 
 def match_key(
     text, aliases_by_key: dict, threshold: float = SIMILARITY_THRESHOLD
 ) -> tuple[str | None, str | None]:
-    """Match text to the first ``(key, alias)`` hit in spec iteration order."""
+    """Match text to a ``(key, alias)`` pair, exact aliases first.
+
+    All aliases across every key are scanned for an exact NFC/casefold match
+    before any fuzzy pass, so an earlier key's fuzzy alias never shadows a later
+    key's exact one. Fuzzy matches fall back to the first hit in spec iteration
+    order; each text maps to at most one key.
+    """
+    norm = normalise_token(text)
     for key, aliases in aliases_by_key.items():
-        hit = match_alias(text, aliases, threshold)
-        if hit is not None:
-            return key, hit
+        for alias in aliases:
+            if normalise_token(alias) == norm:
+                return key, alias
+    for key, aliases in aliases_by_key.items():
+        for alias in aliases:
+            if normalised_similarity(norm, normalise_token(alias)) >= threshold:
+                return key, alias
     return None, None
 
 
@@ -247,19 +258,26 @@ def score_semantic(transcript, spec: dict) -> dict[str, float]:
     """
     items = spec["item_aliases"]
     subcategories = spec.get("subcategories", {})
+    responses = _responses(transcript)
 
-    matched_categories = []
     counts: dict[str, int] = defaultdict(int)
-    for resp in _responses(transcript):
+    for resp in responses:
         key, _ = match_key(resp, items)
         if key is not None:
             counts[key] += 1
-            matched_categories.append(subcategories.get(key))
 
     valid_unique = len(counts)
     valid_count = sum(counts.values())
     repeats = valid_count - valid_unique
-    n = len(matched_categories)
+
+    # Clusters/switches describe transitions between consecutive responses in the
+    # same vs. different subcategory; responses whose matched item has no
+    # declared subcategory are excluded from this sequence.
+    matched_categories = []
+    for resp in responses:
+        key, _ = match_key(resp, items)
+        if key is not None and key in subcategories:
+            matched_categories.append(subcategories[key])
 
     clusters = 0
     switches = 0
@@ -270,9 +288,10 @@ def score_semantic(transcript, spec: dict) -> dict[str, float]:
         if prev is not None and cat != prev:
             switches += 1
         prev = cat
+    n = len(responses)
 
     return {
-        "fluency_response_count": float(len(_responses(transcript))),
+        "fluency_response_count": float(n),
         "fluency_valid_count": float(valid_count),
         "fluency_valid_unique": float(valid_unique),
         "fluency_repeats": float(repeats),

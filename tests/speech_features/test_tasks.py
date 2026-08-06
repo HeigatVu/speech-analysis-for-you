@@ -46,6 +46,17 @@ class TestLevenshteinSimilarity:
         assert 0.0 <= tasks.SIMILARITY_THRESHOLD <= 1.0
         assert tasks.SIMILARITY_THRESHOLD >= 0.80
 
+    def test_match_key_prefers_later_exact_over_earlier_fuzzy_alias(self):
+        # A fuzzy alias in an earlier key must never shadow an exact alias in a
+        # later key: scan every key exactly before any fuzzy pass.
+        aliases = {
+            "first": ["con mêo"],  # ~0.857 similarity to "con mèo" (>= 0.85)
+            "second": ["con mèo"],  # exact
+        }
+        key, alias = tasks.match_key("con mèo", aliases)
+        assert key == "second"
+        assert alias == "con mèo"
+
 
 # --------------------------------------------------------------------------- #
 # Picture
@@ -255,10 +266,51 @@ class TestSemanticScorer:
         assert r["fluency_valid_unique"] == 1
         assert r["fluency_valid_count"] == 1
 
-    def test_no_items_returns_nans(self):
+    def test_unmatched_responses_yield_zero_rate(self):
+        # One participant response, nothing matched -> rate 0/1 = 0.0.
         tr = _tr(_utt(("word", "not-an-item")))
         r = tasks.score_semantic(tr, _semantic_spec())
+        assert r["fluency_response_count"] == 1
+        assert r["fluency_valid_unique"] == 0
+        assert r["fluency_rate"] == pytest.approx(0.0)
+
+    def test_no_responses_returns_nan_rate(self):
+        r = tasks.score_semantic(_tr(), _semantic_spec())
         assert math.isnan(r["fluency_rate"])
+        assert r["fluency_response_count"] == 0
+
+    def test_rate_uses_total_participant_response_count(self):
+        # fluency_rate's denominator is the total number of participant responses
+        # (matched or not), consistent with score_phonemic.
+        tr = _tr(
+            _utt(("word", "mèo")),
+            _utt(("word", "not-an-item")),  # response that matches nothing
+            _utt(("word", "chó")),
+        )
+        r = tasks.score_semantic(tr, _semantic_spec())
+        assert r["fluency_response_count"] == 3
+        assert r["fluency_valid_unique"] == 2
+        assert r["fluency_rate"] == pytest.approx(2 / 3)
+
+    def test_excludes_missing_subcategory_from_cluster_switches(self):
+        # A matched item with no declared subcategory stays a valid item but is
+        # excluded from the cluster/switch transition sequence.
+        spec = {
+            "version": 1,
+            "task": "semantic_fluency",
+            "item_aliases": {"cat": ["mèo"], "dog": ["chó"], "apple": ["táo"]},
+            "subcategories": {"cat": "animal", "dog": "animal"},  # apple: none
+        }
+        tr = _tr(
+            _utt(("word", "mèo")),  # animal
+            _utt(("word", "táo")),  # apple, no subcategory -> excluded
+            _utt(("word", "chó")),  # animal
+        )
+        r = tasks.score_semantic(tr, spec)
+        assert r["fluency_valid_unique"] == 3
+        assert r["fluency_clusters"] == 1
+        assert r["fluency_switches"] == 0
+        assert r["fluency_rate"] == pytest.approx(3 / 3)
 
 
 # --------------------------------------------------------------------------- #

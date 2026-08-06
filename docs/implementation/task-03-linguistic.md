@@ -99,38 +99,80 @@ diagnosis/labels are read anywhere; no librosa/openSMILE/spaCy/torch/ASR.
 
 ## 2. Agy Review
 
-Reviewer: `agy:code-reviewer`. Pending (this is the build commit; findings, if
-any, are resolved below in Section 3 before approval).
+Reviewer: `agy:code-reviewer`. Three behavioural findings on the build commit
+`53aac09`, each fixed test-first in a review-fix commit.
+
+1. **`match_key` exact aliases can be shadowed by an earlier fuzzy alias.**
+   `match_key` iterated keys in order and called `match_alias` per key, which
+   does an exact-then-fuzzy search *within that one key's aliases* before moving
+   on. So a fuzzy alias belonging to an earlier key (e.g. `con mêo`,
+   similarity ≈ 0.857 to `con mèo`) could bind a text before a later key's
+   *exact* alias (e.g. `con mèo`) was ever examined. A word must map to the
+   exact alias wherever it appears; fix: run an exact NFC/casefold scan across
+   **all keys** first, then a fuzzy scan across all keys.
+
+2. **`score_semantic` `fluency_rate` denominator is inconsistent with
+   `score_phonemic`.** `score_phonemic` rates against the *total participant
+   response count* (`fluency_response_count`); `score_semantic` rated against
+   the number of *matched* responses, inflating rate whenever any response was
+   unmatched (and returning NaN for n responses that all missed). Fix: rate uses
+   the same total participant response count, which is already exposed as
+   `fluency_response_count`.
+
+3. **Matched items with no declared subcategory corrupt cluster/switch counts.**
+   `score_semantic` appended the (possibly `None`) subcategory of every matched
+   item to the transition sequence, so a matched item lacking a `subcategories`
+   entry became a spurious extra "cluster" and generated two bogus `switches`.
+   Fix: such items still count as valid responses for `valid_count`/
+   `valid_unique`/`rate` but are excluded from the cluster/switch transition
+   sequence.
 
 ## 3. Resolution
 
-N/A for the initial build commit — no prior review findings. Three test-side
-corrections were made during iteration (not production bugs): the NFC/casefold
-vector expectation, the character-count total (Mèo+con = 6, not 7), and the
-recall `order_score` returning NaN (not 0.0) when nothing was recalled. All
-were already within the RED→GREEN TDD loop.
+Three regression tests were written first (RED), then the production fixes, then
+GREEN. One existing test-side expectation that the fixed rate semantics invalidated
+(`test_no_items_returns_nans` → `0/1 == 0.0`, not NaN) was updated and split into
+the now-correct `test_unmatched_responses_yield_zero_rate` and
+`test_no_responses_returns_nan_rate`. All other Task 3 tests are unchanged.
+
+### One-response-per-utterance rationale
+
+Both fluency scorers count **one participant utterance that contains word tokens
+as exactly one response item** (`_responses`), and the utterance order is the
+response's time slot. This matches the plan's contract: *"One fluency utterance
+is one response item."* Response count (`fluency_response_count`) is therefore
+the number of such participant utterances, and `fluency_rate` is `valid_unique /
+fluency_response_count` in both `score_phonemic` and `score_semantic`. Because a
+response is an utterance (not a word), multi-word utterances are blockwise
+matched against item aliases as a single response.
 
 ### RED
 
-```
-$ uv run pytest tests/speech_features/test_linguistic.py tests/speech_features/test_tasks.py -q
-2 errors during collection (ModuleNotFoundError)   # modules absent
-```
-
-### GREEN (iterative)
-
-After implementing both modules and the three test corrections:
+Three behavioural regression tests added to `tests/speech_features/test_tasks.py`
+fail before the fix:
 
 ```
-$ uv run pytest tests/speech_features/test_linguistic.py tests/speech_features/test_tasks.py -q
-45 passed in 0.03s
+$ uv run pytest tests/speech_features/test_tasks.py -q -k "prefers_later_exact or total_participant_response_count or missing_subcategory"
+3 failed, 23 deselected
+  - test_match_key_prefers_later_exact_over_earlier_fuzzy_alias
+  - test_rate_uses_total_participant_response_count
+  - test_excludes_missing_subcategory_from_cluster_switches
+```
+
+### GREEN
+
+After the `match_key` / `score_semantic` fixes:
+
+```
+$ uv run pytest tests/speech_features/test_tasks.py tests/speech_features/test_linguistic.py -q
+49 passed in 0.04s
 ```
 
 ### Final verification
 
 ```
 $ uv run pytest tests/speech_features -q
-114 passed in 0.35s
+118 passed in 0.35s
 
 $ uv run ruff check src/speech_features tests/speech_features
 All checks passed!
@@ -148,15 +190,28 @@ four Task 3 owned paths and this report were modified.
 
 ## Changed files
 
+Build commit (`53aac09`):
 - `src/speech_features/linguistic.py` (new)
 - `src/speech_features/tasks.py` (new)
 - `tests/speech_features/test_linguistic.py` (new)
 - `tests/speech_features/test_tasks.py` (new)
 - `docs/implementation/task-03-linguistic.md` (this report, new)
 
+Review-fix commit (this change):
+
+Modifications to the review-fix commit:
+- `src/speech_features/tasks.py` — `match_key` exact-before-fuzzy across all
+  keys; `score_semantic` rate/response-count consistency and cluster/switch
+  missing-subcategory exclusion.
+- `tests/speech_features/test_tasks.py` — three new regression tests plus the
+  rate-semantics test split.
+- `docs/implementation/task-03-linguistic.md` — Agy Review, Resolution, and
+  RED/GREEN updated with the three findings.
+
 ## Commit ID
 
 - Build commit `53aac09` — `feat: add vietnamese linguistic and task scorers`.
+- Review-fix commit added below with message `fix: correct linguistic task scoring`.
 
 ## Skipped scope
 
