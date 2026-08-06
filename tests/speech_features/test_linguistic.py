@@ -1761,9 +1761,6 @@ class TestAdultNeuroMorphologyMissingLayers:
         _assert_task9_nan_issue_pairing(features, rows, issues)
 
     def test_dependency_empty_or_blank_relation_rejects_all_17_keys(self):
-        # A dependent with a valid head chain but a missing/blank relation
-        # must fail the whole dependency structure: every target word token
-        # needs a non-empty string relation (Agy MAJOR finding).
         for invalid in (None, "", "   "):
             document = _dep_rejection_document(
                 DocumentUtterance(
@@ -1785,6 +1782,8 @@ class TestAdultNeuroMorphologyMissingLayers:
                 assert by_feature[key][0].code == "MISSING_ANNOTATION", f"{invalid!r} {key}"
             _assert_task9_nan_issue_pairing(features, rows, issues)
 
+
+class TestAdultNeuroConversation:
     def test_hand_calculated_recording_timing_measures(self):
         features, _, _ = extract_morphosyntax_features(
             _conversation_document(), target_speaker="p1"
