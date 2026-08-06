@@ -7,6 +7,16 @@ and reviewed Vietnamese transcripts. See the feature-library plan under
 
 __version__ = "0.2.0"
 
+from .document import (
+    AnnotationLayer,
+    DocumentSpeaker,
+    DocumentToken,
+    DocumentUtterance,
+    MediaRef,
+    SpeechDocument,
+    load_document,
+    save_document,
+)
 from .pipeline import (
     BatchFailure,
     BatchResult,
@@ -38,8 +48,12 @@ from .schema import (
 )
 
 __all__ = [
+    "AnnotationLayer",
     "BatchFailure",
     "BatchResult",
+    "DocumentSpeaker",
+    "DocumentToken",
+    "DocumentUtterance",
     "ExtractionConfig",
     "ExtractionInputs",
     "FeatureExtractionError",
@@ -50,12 +64,16 @@ __all__ = [
     "InvalidTranscriptError",
     "KNOWN_TASKS",
     "ManifestRow",
+    "MediaRef",
     "MissingInputError",
+    "SpeechDocument",
     "Token",
     "Transcript",
     "UnknownTaskError",
     "Utterance",
+    "load_document",
     "nfc",
+    "save_document",
     "sha256_file",
     "validate_manifest",
     "validate_task_spec",
