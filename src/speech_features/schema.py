@@ -53,19 +53,43 @@ MANIFEST_REQUIRED_FIELDS = frozenset(
 # Structured errors
 # ---------------------------------------------------------------------------
 class FeatureExtractionError(Exception):
-    """Base class for all errors raised by this library."""
+    """Base class for all errors raised by this library.
+
+    ``code`` is a stable machine-readable string suitable for switching on in
+    production code; ``message`` carries the human-readable detail.
+    """
+
+    code = "FEATURE_EXTRACTION_ERROR"
 
 
 class UnknownTaskError(FeatureExtractionError):
     """Raised when a manifest or spec references an unknown task."""
 
+    code = "UNKNOWN_TASK"
+
 
 class InvalidManifestError(FeatureExtractionError):
     """Raised when a manifest mapping is malformed."""
 
+    code = "INVALID_MANIFEST"
+
 
 class InvalidTranscriptError(FeatureExtractionError):
     """Raised when a transcript JSON is malformed."""
+
+    code = "INVALID_TRANSCRIPT"
+
+
+class InvalidTaskSpecError(FeatureExtractionError):
+    """Raised when a task-spec JSON is malformed or references an unknown task."""
+
+    code = "INVALID_TASK_SPEC"
+
+
+class MissingInputError(FeatureExtractionError):
+    """Raised when a required input file (audio/transcript/task-spec) is absent."""
+
+    code = "MISSING_INPUT"
 
 
 # ---------------------------------------------------------------------------
@@ -115,10 +139,13 @@ class FeatureResult:
 # Provenance hashes
 # ---------------------------------------------------------------------------
 def sha256_file(path) -> str:
-    """Return the hexdigest SHA-256 of a file, streaming to bound memory."""
+    """Return the hexdigest SHA-256 of a file, streaming to bound memory.
+
+    Raises :class:`MissingInputError` when the file does not exist.
+    """
     p = Path(path)
     if not p.is_file():
-        raise FeatureExtractionError(f"input file not found: {p}")
+        raise MissingInputError(f"input file not found: {p}")
     digest = hashlib.sha256()
     with p.open("rb") as fh:
         for chunk in iter(lambda: fh.read(65536), b""):
@@ -127,11 +154,12 @@ def sha256_file(path) -> str:
 
 
 def manifest_hashes(manifest: dict) -> dict:
-    """Record SHA-256 provenance for each unique asset path in a manifest.
+    """Record SHA-256 provenance for every distinct asset path in a manifest.
 
-    Returns a mapping from (asset kind, path) to its hexdigest. Different rows
-    may reference different task-spec files, so each unique path is hashed once
-    regardless of how many rows share it.
+    Returns a plain, JSON-serializable mapping ``{kind: {path: sha256}}`` for
+    ``audio``, ``transcript`` and ``task_spec``. Paths are keyed by their string
+    form so shared paths are hashed (and stored) exactly once and a nested dict
+    works with :func:`json.dumps` unchanged.
     """
     if not isinstance(manifest, dict) or manifest.get("version") != 1:
         raise InvalidManifestError("manifest must have version == 1")
@@ -143,11 +171,13 @@ def manifest_hashes(manifest: dict) -> dict:
         "transcript_path": "transcript",
         "task_spec_path": "task_spec",
     }
-    result = {}
+    result = {name: {} for name in kinds.values()}
     for path_key, name in kinds.items():
         for row in rows:
+            if not isinstance(row, dict):
+                raise InvalidManifestError(f"row must be an object, got {type(row).__name__}")
             path = row[path_key]
-            result[(name, path)] = sha256_file(path)
+            result[name][path] = sha256_file(path)
     return result
 
 
@@ -155,23 +185,19 @@ def manifest_hashes(manifest: dict) -> dict:
 # Manifest validation
 # ---------------------------------------------------------------------------
 @dataclass(frozen=True)
-class ManifestRow:
-    """A single (participant_id, task) manifest row."""
+class ExtractionInputs:
+    """The three input files a single extraction needs.
 
-    participant_id: str
-    task: str
-    recording_id: str
-    audio_id: str
-    transcript_id: str
+    Deliberately contains only feature-extraction inputs, never diagnosis or
+    other clinical fields, so callers can pass inputs around without leaking
+    protected attributes.
+    """
+
     audio_path: str
     transcript_path: str
     task_spec_path: str
-    diagnosis: str
-    age: int
-    sex: str
-    education_years: int
 
-    # pathlib.Path helpers keep the row frozen while exposing usable paths
+    # pathlib.Path helpers keep the dataclass frozen while exposing usable paths
     @property
     def audio(self) -> Path:
         return Path(self.audio_path)
@@ -183,6 +209,46 @@ class ManifestRow:
     @property
     def task_spec(self) -> Path:
         return Path(self.task_spec_path)
+
+
+@dataclass(frozen=True)
+class ManifestRow:
+    """A single (participant_id, task) manifest row."""
+
+    participant_id: str
+    task: str
+    recording_id: str
+    audio_id: str
+    transcript_id: str
+    inputs: ExtractionInputs
+    diagnosis: str
+    age: int
+    sex: str
+    education_years: int
+
+    @property
+    def audio_path(self) -> str:
+        return self.inputs.audio_path
+
+    @property
+    def transcript_path(self) -> str:
+        return self.inputs.transcript_path
+
+    @property
+    def task_spec_path(self) -> str:
+        return self.inputs.task_spec_path
+
+    @property
+    def audio(self) -> Path:
+        return self.inputs.audio
+
+    @property
+    def transcript(self) -> Path:
+        return self.inputs.transcript
+
+    @property
+    def task_spec(self) -> Path:
+        return self.inputs.task_spec
 
 
 def validate_manifest(manifest: dict) -> list[ManifestRow]:
@@ -227,9 +293,11 @@ def validate_manifest(manifest: dict) -> list[ManifestRow]:
                 recording_id=nfc(row["recording_id"]),
                 audio_id=nfc(row["audio_id"]),
                 transcript_id=nfc(row["transcript_id"]),
-                audio_path=row["audio_path"],
-                transcript_path=row["transcript_path"],
-                task_spec_path=row["task_spec_path"],
+                inputs=ExtractionInputs(
+                    audio_path=row["audio_path"],
+                    transcript_path=row["transcript_path"],
+                    task_spec_path=row["task_spec_path"],
+                ),
                 diagnosis=row["diagnosis"],
                 age=row["age"],
                 sex=nfc(row["sex"]),
@@ -244,8 +312,12 @@ def validate_manifest(manifest: dict) -> list[ManifestRow]:
 # ---------------------------------------------------------------------------
 @dataclass(frozen=True)
 class Token:
+    """One transcript token. `start_s`/`end_s` are optional, else None."""
+
     kind: str
     text: str
+    start_s: float | None = None
+    end_s: float | None = None
 
 
 @dataclass(frozen=True)
@@ -253,13 +325,46 @@ class Utterance:
     speaker: str
     start_s: float
     end_s: float
-    tokens: list = field(default_factory=list)
+    tokens: tuple = field(default_factory=tuple)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "tokens", tuple(self.tokens))
 
 
-def validate_transcript(transcript: dict) -> list[Utterance]:
-    """Validate transcript JSON v1 and return ordered utterances.
+@dataclass(frozen=True)
+class Transcript:
+    """Validated transcript with preserved identifier and language metadata.
 
-    Enforces finite, ordered timestamps and known speakers and token kinds.
+    ``transcript_id`` is carried through from the source JSON (null when the
+    transcript does not declare it); ``language`` defaults to ``"vi"`` for this
+    Vietnamese corpus. ``utterances`` is a deeply immutable tuple.
+    """
+
+    transcript_id: str | None = None
+    language: str | None = None
+    utterances: tuple = field(default_factory=tuple)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "utterances", tuple(self.utterances))
+
+
+def _coerce_timestamp(utterance: int, field_name: str, value):
+    try:
+        ts = float(value)
+    except (TypeError, ValueError):
+        raise InvalidTranscriptError(f"utterance {utterance} {field_name} must be numeric")
+    if not math.isfinite(ts):
+        raise InvalidTranscriptError(f"utterance {utterance} {field_name} must be finite")
+    return ts
+
+
+def validate_transcript(transcript: dict) -> Transcript:
+    """Validate transcript JSON v1 and return a frozen :class:`Transcript`.
+
+    Enforces finite, ordered utterance timestamps; known speakers and token
+    kinds; and finite, ordered optional token timestamps when present. The
+    result carries the transcript's ``transcript_id`` and ``language`` and a
+    deeply immutable ``utterances`` tuple.
     """
     if not isinstance(transcript, dict) or transcript.get("version") != 1:
         raise InvalidTranscriptError("transcript must have version == 1")
@@ -274,15 +379,8 @@ def validate_transcript(transcript: dict) -> list[Utterance]:
         speaker = utt.get("speaker")
         if speaker not in SPEAKERS:
             raise InvalidTranscriptError(f"utterance {i} speaker must be participant or examiner")
-        start = utt.get("start_s")
-        end = utt.get("end_s")
-        try:
-            start = float(start)
-            end = float(end)
-        except (TypeError, ValueError):
-            raise InvalidTranscriptError(f"utterance {i} timestamps must be numeric")
-        if not (math.isfinite(start) and math.isfinite(end)):
-            raise InvalidTranscriptError(f"utterance {i} timestamps must be finite")
+        start = _coerce_timestamp(i, "start_s", utt.get("start_s"))
+        end = _coerce_timestamp(i, "end_s", utt.get("end_s"))
         if end < start:
             raise InvalidTranscriptError(f"utterance {i} end before start")
 
@@ -296,6 +394,58 @@ def validate_transcript(transcript: dict) -> list[Utterance]:
             kind = tok.get("kind")
             if kind not in TOKEN_KINDS:
                 raise InvalidTranscriptError(f"utterance {i} token {j} unknown kind {kind!r}")
-            tokens.append(Token(kind=kind, text=nfc(tok.get("text", ""))))
+            tok_start = tok.get("start_s")
+            tok_end = tok.get("end_s")
+            tok_start = (
+                None if tok_start is None else _coerce_timestamp(i, f"token {j} start_s", tok_start)
+            )
+            tok_end = None if tok_end is None else _coerce_timestamp(i, f"token {j} end_s", tok_end)
+            if tok_start is not None and tok_end is not None and tok_end < tok_start:
+                raise InvalidTranscriptError(f"utterance {i} token {j} end before start")
+            tokens.append(
+                Token(kind=kind, text=nfc(tok.get("text", "")), start_s=tok_start, end_s=tok_end)
+            )
         parsed.append(Utterance(speaker=speaker, start_s=start, end_s=end, tokens=tokens))
-    return parsed
+
+    return Transcript(
+        transcript_id=transcript.get("transcript_id"),
+        language=transcript.get("language", "vi"),
+        utterances=parsed,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Task-spec validation
+# ---------------------------------------------------------------------------
+TASK_SPEC_FIELDS = {
+    "picture_desc_1": {"concept_aliases", "entity_groups", "action_groups"},
+    "picture_desc_2": {"concept_aliases", "entity_groups", "action_groups"},
+    "immediate_recall": {"idea_aliases"},
+    "delayed_recall": {"idea_aliases"},
+    "phonemic_fluency": {"initials", "exclusions"},
+    "semantic_fluency": {"item_aliases", "subcategories"},
+}
+
+
+def validate_task_spec(spec: dict) -> int:
+    """Validate a versioned task-spec JSON and return its version.
+
+    Enforces a supported ``version`` and the required, task-specific fields the
+    plan documents (concept/entity/action groups for picture specs, idea
+    aliases for recall, initials/exclusions for phonemic, item aliases +
+    subcategories for semantic).
+    """
+    if not isinstance(spec, dict):
+        raise InvalidTaskSpecError("task spec must be a JSON object")
+    version = spec.get("version")
+    if not isinstance(version, int):
+        raise InvalidTaskSpecError("task spec must declare an integer 'version'")
+    if version != 1:
+        raise InvalidTaskSpecError(f"unsupported task-spec version: {version!r}")
+    task = spec.get("task")
+    required = TASK_SPEC_FIELDS.get(task)
+    if required is not None:
+        missing = required - spec.keys()
+        if missing:
+            raise InvalidTaskSpecError(f"task spec for {task!r} missing fields: {sorted(missing)}")
+    return version

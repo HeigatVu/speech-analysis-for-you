@@ -1,5 +1,6 @@
 import dataclasses
 import hashlib
+import json
 
 import pytest
 
@@ -90,7 +91,7 @@ class TestProvenanceHashes:
         assert schema.sha256_file(path) == expected
 
     def test_missing_file_raises_structured_error(self, tmp_path):
-        with pytest.raises(schema.FeatureExtractionError):
+        with pytest.raises(schema.MissingInputError):
             schema.sha256_file(tmp_path / "missing.wav")
 
     def test_manifest_hashes_all_paths(self, tmp_path):
@@ -120,9 +121,9 @@ class TestProvenanceHashes:
             ],
         }
         result = schema.manifest_hashes(manifest)
-        assert result[("audio", str(audio))] == hashlib.sha256(b"audio").hexdigest()
-        assert result[("transcript", str(transcript))] == hashlib.sha256(b"transcript").hexdigest()
-        assert result[("task_spec", str(task_spec))] == hashlib.sha256(b"spec").hexdigest()
+        assert result["audio"][str(audio)] == hashlib.sha256(b"audio").hexdigest()
+        assert result["transcript"][str(transcript)] == hashlib.sha256(b"transcript").hexdigest()
+        assert result["task_spec"][str(task_spec)] == hashlib.sha256(b"spec").hexdigest()
 
     def test_manifest_hashes_all_rows(self, tmp_path):
         spec_a = tmp_path / "a.json"
@@ -153,13 +154,74 @@ class TestProvenanceHashes:
             ],
         }
         result = schema.manifest_hashes(manifest)
-        assert result[("task_spec", str(spec_a))] == hashlib.sha256(b"spec-a").hexdigest()
-        assert result[("task_spec", str(spec_b))] == hashlib.sha256(b"spec-b").hexdigest()
-        assert len(result) == 4  # audio + transcript shared + two distinct task specs
+        assert result["task_spec"][str(spec_a)] == hashlib.sha256(b"spec-a").hexdigest()
+        assert result["task_spec"][str(spec_b)] == hashlib.sha256(b"spec-b").hexdigest()
+        assert isinstance(result["audio"], dict)
+        assert isinstance(result["transcript"], dict)
+        assert len(result["task_spec"]) == 2  # two distinct task specs
+        assert len(result["audio"]) == 1  # shared audio hashed once (dedup)
+
+    def test_manifest_hashes_is_json_serializable(self, tmp_path):
+        audio = tmp_path / "audio.wav"
+        transcript = tmp_path / "t.json"
+        task_spec = tmp_path / "spec.json"
+        audio.write_bytes(b"audio")
+        transcript.write_bytes(b"transcript")
+        task_spec.write_bytes(b"spec")
+        manifest = {
+            "version": 1,
+            "rows": [
+                {
+                    "participant_id": "p-1",
+                    "task": "picture_desc_1",
+                    "recording_id": "rec-1",
+                    "audio_id": "a-1",
+                    "transcript_id": "tr-1",
+                    "audio_path": str(audio),
+                    "transcript_path": str(transcript),
+                    "task_spec_path": str(task_spec),
+                    "diagnosis": "AD",
+                    "age": 72,
+                    "sex": "F",
+                    "education_years": 12,
+                }
+            ],
+        }
+        result = schema.manifest_hashes(manifest)
+        json.dumps(result)  # must not raise
+        assert json.loads(json.dumps(result)) == result
+
+    def test_manifest_hashes_raises_missing_input_code(self, tmp_path):
+        manifest = {
+            "version": 1,
+            "rows": [
+                {
+                    "participant_id": "p-1",
+                    "task": "picture_desc_1",
+                    "recording_id": "rec-1",
+                    "audio_id": "a-1",
+                    "transcript_id": "tr-1",
+                    "audio_path": str(tmp_path / "missing.wav"),
+                    "transcript_path": str(tmp_path / "t.json"),
+                    "task_spec_path": str(tmp_path / "spec.json"),
+                    "diagnosis": "AD",
+                    "age": 72,
+                    "sex": "F",
+                    "education_years": 12,
+                }
+            ],
+        }
+        with pytest.raises(schema.MissingInputError) as e:
+            schema.manifest_hashes(manifest)
+        assert e.value.code == "MISSING_INPUT"
 
     def test_manifest_hashes_rejects_empty_rows(self):
         with pytest.raises(schema.InvalidManifestError):
             schema.manifest_hashes({"version": 1, "rows": []})
+
+    def test_manifest_hashes_rejects_non_dict_row(self):
+        with pytest.raises(schema.InvalidManifestError):
+            schema.manifest_hashes({"version": 1, "rows": ["not-a-dict"]})
 
 
 class TestManifestValidation:
@@ -244,6 +306,8 @@ class TestTranscriptValidation:
     def test_valid_transcript_v1_parses(self):
         transcript = {
             "version": 1,
+            "transcript_id": "tr-1",
+            "language": "vi",
             "utterances": [
                 {
                     "speaker": "examiner",
@@ -262,9 +326,62 @@ class TestTranscriptValidation:
                 },
             ],
         }
-        utterances = schema.validate_transcript(transcript)
-        assert len(utterances) == 2
-        assert utterances[1].tokens[0].kind == "filler"
+        parsed = schema.validate_transcript(transcript)
+        assert len(parsed.utterances) == 2
+        assert parsed.utterances[1].tokens[0].kind == "filler"
+        assert parsed.transcript_id == "tr-1"
+        assert parsed.language == "vi"
+
+    def test_preserves_transcript_id_and_language(self):
+        parsed = schema.validate_transcript(
+            {
+                "version": 1,
+                "transcript_id": "tr-42",
+                "language": "vi",
+                "utterances": [
+                    {
+                        "speaker": "participant",
+                        "start_s": 0.0,
+                        "end_s": 0.5,
+                        "tokens": [{"kind": "word", "text": "con"}],
+                    }
+                ],
+            }
+        )
+        assert parsed.transcript_id == "tr-42"
+        assert parsed.language == "vi"
+        assert len(parsed.utterances) == 1
+
+    def test_transcript_defaults_language_to_vi(self):
+        parsed = schema.validate_transcript(
+            {
+                "version": 1,
+                "transcript_id": "tr-1",
+                "utterances": [],
+            }
+        )
+        assert parsed.language == "vi"
+
+    def test_transcript_is_immutable_and_deeply_immutable(self):
+        parsed = schema.validate_transcript(
+            {
+                "version": 1,
+                "transcript_id": "tr-1",
+                "language": "vi",
+                "utterances": [
+                    {
+                        "speaker": "participant",
+                        "start_s": 0.0,
+                        "end_s": 0.5,
+                        "tokens": [{"kind": "word", "text": "con"}],
+                    }
+                ],
+            }
+        )
+        assert isinstance(parsed.utterances, tuple)
+        assert isinstance(parsed.utterances[0].tokens, tuple)
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            parsed.transcript_id = "other"
 
     def test_rejects_non_finite_timestamps(self):
         transcript = {
@@ -325,6 +442,147 @@ class TestTranscriptValidation:
         }
         with pytest.raises(schema.InvalidTranscriptError):
             schema.validate_transcript(transcript)
+
+    def test_optional_token_timestamps_preserved(self):
+        parsed = schema.validate_transcript(
+            {
+                "version": 1,
+                "transcript_id": "tr-1",
+                "utterances": [
+                    {
+                        "speaker": "participant",
+                        "start_s": 0.0,
+                        "end_s": 2.0,
+                        "tokens": [
+                            {"kind": "word", "text": "con", "start_s": 0.1, "end_s": 0.4},
+                            {"kind": "filler", "text": "\u00e0"},
+                        ],
+                    }
+                ],
+            }
+        )
+        tok = parsed.utterances[0].tokens
+        assert tok[0].start_s == 0.1
+        assert tok[0].end_s == 0.4
+        assert tok[1].start_s is None
+        assert tok[1].end_s is None
+
+    def test_rejects_bad_token_timestamps(self):
+        def make(token):
+            return {
+                "version": 1,
+                "utterances": [
+                    {
+                        "speaker": "participant",
+                        "start_s": 0.0,
+                        "end_s": 2.0,
+                        "tokens": [{"kind": "word", "text": "con", **token}],
+                    }
+                ],
+            }
+
+        with pytest.raises(schema.InvalidTranscriptError):
+            schema.validate_transcript(make({"start_s": 0.5, "end_s": 0.1}))
+        with pytest.raises(schema.InvalidTranscriptError):
+            schema.validate_transcript(make({"start_s": float("inf")}))
+
+
+class TestTaskSpecValidation:
+    @staticmethod
+    def _picture_spec():
+        return {
+            "version": 1,
+            "task": "picture_desc_1",
+            "concept_aliases": {"con": ["con"]},
+            "entity_groups": {"animals": ["con"]},
+            "action_groups": {"motion": ["ch\u1ea1y"]},
+        }
+
+    def test_valid_picture_spec_passes(self):
+        assert schema.validate_task_spec(self._picture_spec()) == 1
+
+    def test_rejects_missing_version(self):
+        spec = self._picture_spec()
+        del spec["version"]
+        with pytest.raises(schema.InvalidTaskSpecError):
+            schema.validate_task_spec(spec)
+
+    def test_rejects_unknown_version(self):
+        spec = self._picture_spec()
+        spec["version"] = 99
+        with pytest.raises(schema.InvalidTaskSpecError):
+            schema.validate_task_spec(spec)
+
+    def test_rejects_missing_task_fields(self):
+        spec = self._picture_spec()
+        del spec["entity_groups"]
+        with pytest.raises(schema.InvalidTaskSpecError):
+            schema.validate_task_spec(spec)
+
+    def test_phonemic_spec_requires_initials_and_exclusions(self):
+        spec = {
+            "version": 1,
+            "task": "phonemic_fluency",
+            "initials": ["b", "c"],
+        }
+        with pytest.raises(schema.InvalidTaskSpecError):
+            schema.validate_task_spec(spec)
+
+    def test_unknown_task_spec_runs_but_validates_shape(self):
+        spec = {"version": 1, "task": "not_a_known_task"}
+        # shape validation is task-agnostic; the task name itself is not enforced here
+        assert schema.validate_task_spec(spec) == 1
+
+
+class TestStructuredErrorCodes:
+    def test_each_error_has_machine_readable_code(self, tmp_path):
+        assert schema.FeatureExtractionError("x").code == "FEATURE_EXTRACTION_ERROR"
+        assert schema.InvalidManifestError("x").code == "INVALID_MANIFEST"
+        assert schema.InvalidTranscriptError("x").code == "INVALID_TRANSCRIPT"
+        assert schema.InvalidTaskSpecError("x").code == "INVALID_TASK_SPEC"
+        assert schema.UnknownTaskError("x").code == "UNKNOWN_TASK"
+
+    def test_missing_file_has_code(self, tmp_path):
+        with pytest.raises(schema.MissingInputError) as e:
+            schema.sha256_file(tmp_path / "nope.wav")
+        assert e.value.code == "MISSING_INPUT"
+
+
+class TestExtractionInputsSeparation:
+    def _manifest(self, tmp_path):
+        return {
+            "version": 1,
+            "rows": [
+                {
+                    "participant_id": "p-1",
+                    "task": "picture_desc_1",
+                    "recording_id": "rec-1",
+                    "audio_id": "a-1",
+                    "transcript_id": "tr-1",
+                    "audio_path": str(tmp_path / "audio.wav"),
+                    "transcript_path": str(tmp_path / "t.json"),
+                    "task_spec_path": str(tmp_path / "spec.json"),
+                    "diagnosis": "AD",
+                    "age": 72,
+                    "sex": "F",
+                    "education_years": 12,
+                }
+            ],
+        }
+
+    def test_row_exposes_extraction_inputs(self, tmp_path):
+        row = schema.validate_manifest(self._manifest(tmp_path))[0]
+        inputs = row.inputs
+        assert isinstance(inputs, schema.ExtractionInputs)
+        assert inputs.audio_path == str(tmp_path / "audio.wav")
+        assert inputs.transcript_path == str(tmp_path / "t.json")
+        assert inputs.task_spec_path == str(tmp_path / "spec.json")
+        assert schema.ExtractionInputs is not None  # only inputs, no diagnosis
+
+    def test_extraction_inputs_is_immutable(self, tmp_path):
+        row = schema.validate_manifest(self._manifest(tmp_path))[0]
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            row.inputs.audio_path = "other.wav"
 
 
 class TestStructuredErrors:

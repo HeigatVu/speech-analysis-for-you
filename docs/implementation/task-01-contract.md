@@ -41,17 +41,24 @@ ModuleNotFoundError: No module named 'speech_features.schema'
   (one `(participant_id, task)` row; recording/audio/transcript IDs and paths;
   diagnosis `AD`/`HC`; age; sex; education years). Rejects unknown version,
   missing fields, unknown tasks (`UnknownTaskError`), invalid diagnosis, negative
-  age/education, and duplicate `(participant_id, task)` pairs.
-- **`Token` / `Utterance` + `validate_transcript`** — parses transcript JSON v1:
-  ordered participant/examiner utterances with finite, ordered timestamps and
-  `word`/`filler`/`fragment`/`noise` tokens.
+  age/education, and duplicate `(participant_id, task)` pairs. Each row exposes a
+  frozen `ExtractionInputs` (audio/transcript/task-spec paths) separate from its
+  clinical fields.
+- **`validate_task_spec`** — validates a versioned task-spec JSON (`version == 1`)
+  and the per-task required fields the plan documents (picture, recall, phonemic,
+  semantic). Raises `InvalidTaskSpecError`.
+- **`Token` / `Utterance` / `Transcript` + `validate_transcript`** — parses
+  transcript JSON v1 into a frozen, deeply immutable `Transcript` carrying
+  `transcript_id` and `language`, with ordered participant/examiner utterances,
+  finite, ordered timestamps, `word`/`filler`/`fragment`/`noise` tokens, and
+  optional token `start_s`/`end_s` that are preserved and validated.
 - **`nfc`** — Unicode NFC normalisation wrapper.
 - **`sha256_file`** + `manifest_hashes` — streaming SHA-256 provenance with a
-  structured error on missing files; `(kind, path) → digest` for every unique
-  asset path across all manifest rows.
-- **Structured errors** — `FeatureExtractionError` base with
-  `InvalidManifestError`, `InvalidTranscriptError`, `UnknownTaskError`
-  subclasses.
+  `MissingInputError` on missing files; returns a **JSON-serializable**,
+  deduplicated `{kind: {path: sha256}}` mapping across all manifest rows.
+- **Structured errors** — every error carries a stable machine-readable
+  `code`: `FEATURE_EXTRACTION_ERROR`, `UNKNOWN_TASK`, `INVALID_MANIFEST`,
+  `INVALID_TRANSCRIPT`, `INVALID_TASK_SPEC`, and `MISSING_INPUT`.
 - **`pyproject.toml`** — added `[tool.ruff]` (line length 100, ignore notebooks)
   and `[tool.pytest.ini_options]` (`pythonpath = ["src"]`, `testpaths`).
   No project dependencies changed.
@@ -64,46 +71,48 @@ Production imports are stdlib only (`hashlib`, `math`, `unicodedata`,
 
 ## 2. Agy Review
 
-Reviewer: `agy:code-reviewer`. Full review of the exact diff (the four owned
-files). Verdict: **REQUEST CHANGES** — no blockers; one major, several minors,
-nits. Verbatim findings, abbreviated:
+Reviewer: `agy:code-reviewer`. Full review of the exact diff and report.
+Verdict: **REQUEST CHANGES** — several contract gaps found. Findings:
 
 | # | Severity | Location | Finding |
 |---|----------|----------|---------|
-| R1 | Major | `schema.py` `manifest_hashes` | Docstring over-promises: hashes only the first row; raises bare `IndexError` on an empty `rows` list instead of a structured error; `first` variable dead. |
-| R2 | Major | `schema.py` `validate_manifest` | Duplicate-key detection runs on the raw (pre-NFC) `participant_id`, so NFC-equivalent IDs (e.g. `"e\u0302"` vs `"\u00ea"`) bypass duplicate rejection while their stored forms collide. |
-| R3 | Minor | `schema.py` | `education_years` is required but never type/range validated; `sex` unconstrained (unlike `diagnosis`). Inconsistent validation depth for a public contract. |
-| R4 | Minor | `test_schema.py` | `test_rejects_unknown_task_spec_name` is misnamed and asserts the base `FeatureExtractionError` instead of concrete `UnknownTaskError`. |
-| R5 | Nit | `test_schema.py` | `pytest.raises(Exception)` immutability assertions are too broad; prefer `FrozenInstanceError` / `TypeError`. |
-| R6 | Nit | `schema.py` | `_finite` reinvents `math.isfinite`. |
-| R7 | Nit | `schema.py` `ManifestRow` | `audio`/`transcript`/`task_spec` Path properties shadow `audio_id`/`transcript_id`. Cosmetic. |
-
-Confirmed-wrong too: NFC-equivalent rows both parse (2 rows returned);
-empty `rows` raises `IndexError`; string `education_years` passes validation.
-
----
+| C1 | Major | `schema.py` | No versioned **task-spec** validation. Task-spec JSON is external and versioned per the plan, but `schema.py` never validates a spec's version or its per-task fields. |
+| C2 | Major | `Utterance.tokens` | Transcript tokens are stored in a mutable `list`; `Utterance` is `frozen` only nominally. Containers must be immutable for a trusted contract. |
+| C3 | Major | `manifest_hashes` | Provenance is not JSON-serializable (tuple keys), not clearly deduplicated, and the missing-file path raises the generic `FeatureExtractionError` with no machine-readable signal. |
+| C4 | Minor | errors | Errors expose a human message only. There is no stable **machine-readable error code**, and no dedicated code for a missing input file. |
+| C5 | Minor | `Token` | Optional **token timestamps** (`start_s`/`end_s`) are dropped: they are neither preserved nor validated. |
+| C6 | Major | transcript result | `validate_transcript` returns a bare `list[Utterance]`; the transcript's **`transcript_id` and `language`** are discarded. No frozen `Transcript` result. |
+| C7 | Minor | `validate_manifest` | `ManifestRow` bundles **extraction inputs** (audio/transcript/task-spec paths) with **diagnosis**. No structural separation of extraction inputs from clinical/diagnosis data. |
 
 ## 3. Resolution
 
-All findings addressed:
+Every finding addressed with TDD (new failing tests first):
 
 | Finding | Resolution |
 |---------|-----------|
-| R1 | Rewrote `manifest_hashes` to validate `version == 1`, reject empty/missing `rows` with `InvalidManifestError`, and hash **every unique asset path across all rows**, returning `(kind, path) → digest`. Docstring now matches behaviour; removed dead `first`. Covered by `test_manifest_hashes_all_rows` and `test_manifest_hashes_rejects_empty_rows`. |
-| R2 | NFC-normalise `participant_id` **before** the duplicate check, then store the normalised value (`schema.py`): covered by `test_duplicate_detection_is_nfc_normalised`. |
-| R3 | Added `isinstance(education_years, int) and >= 0` validation, mirroring `age`: `test_rejects_negative_education_years`. `sex` intentionally left unconstrained (plan does not restrict its values) — noted in `ManifestRow` docs. |
-| R4 | Renamed to `test_rejects_unknown_task` and asserted `pytest.raises(schema.UnknownTaskError)`. |
-| R5 | Tightened immutability assertions to `dataclasses.FrozenInstanceError` (attribute set) and `TypeError` (mapping mutation via `MappingProxyType`). |
-| R6 | Replaced `_finite` with `math.isfinite`. |
-| R7 | Accepted (cosmetic); no functional change. |
+| C1 | Added `validate_task_spec(spec) -> int` enforcing a supported integer `version` and the required per-task fields documented in the plan (picture → concept/entity/action groups; recall → idea aliases; phonemic → initials/exclusions; semantic → item aliases/subcategories). Raises `InvalidTaskSpecError`. Tests: `TestTaskSpecValidation`. |
+| C2 | `Utterance.tokens` is now a `tuple` (coerced in `__post_init__`); `Token`, `Utterance`, and the new `Transcript` are `@dataclass(frozen=True)`. Test: `test_transcript_is_immutable_and_deeply_immutable`. |
+| C3 | `manifest_hashes` now returns a plain, **JSON-serializable** nested dict `{kind: {path: sha256}}`, deduplicating shared paths by string key. `sha256_file` raises `MissingInputError`. Tests: `test_manifest_hashes_is_json_serializable`, `test_manifest_hashes_raises_missing_input_code`, `test_manifest_hashes_all_rows`. |
+| C4 | Added a stable `code` attribute on every error class and a new `MissingInputError(code="MISSING_INPUT")`. Tests: `TestStructuredErrorCodes`. |
+| C5 | `Token.start_s`/`end_s` are preserved (optional, `None` when absent) and validated finite/ordered. Tests: `test_optional_token_timestamps_preserved`, `test_rejects_bad_token_timestamps`. |
+| C6 | `validate_transcript` returns a frozen `Transcript` carrying `transcript_id`, `language`, and a deeply immutable `utterances` tuple. Tests: `test_valid_transcript_v1_parses`, `test_preserves_transcript_id_and_language`. |
+| C7 | Added frozen `ExtractionInputs(audio_path, transcript_path, task_spec_path)`. `ManifestRow` now holds `inputs: ExtractionInputs` plus separate clinical fields; `audio_path`/`transcript_path`/`task_spec_path` remain accessible as properties. Test: `TestExtractionInputsSeparation`. |
 
-Non-trivial additions for resolved findings each include a runnable test.
+### Red run (missing behaviour, before implementation)
+
+```
+$ uv run pytest tests/speech_features/test_schema.py -q
+21 failed, 24 passed
+(collection/assertion failures across TestTaskSpecValidation,
+ TestStructuredErrorCodes, TestExtractionInputsSeparation, and the
+ manifest/transcript immutability + JSON-serializability tests)
+```
 
 ### Final verification (after Resolution)
 
 ```
 $ uv run pytest tests/speech_features/test_schema.py -q
-28 passed in 0.03s
+46 passed in 0.04s
 
 $ uv run ruff check src/speech_features tests/speech_features
 All checks passed!
@@ -117,5 +126,5 @@ $ git diff --check
 
 No notebooks and no future-task files (`acoustic.py`, `linguistic.py`,
 `tasks.py`, `pipeline.py`, `evaluation.py`, docs `task-02..06`) were touched.
-Only Task 1 owned paths and this report were modified. Not committed by this
-report; commit happens separately as `feat: define speech feature input contracts`.
+Only Task 1 owned paths and this report were modified. Commit message:
+`fix: complete speech feature contracts`.
