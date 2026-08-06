@@ -15,9 +15,14 @@ is analysed with the configured ``lpc_order``:
    solved with :func:`scipy.linalg.solve_toeplitz`).
 3. The roots of the prediction polynomial ``1 + a[1] z^-1 + ... + a[order] z^-order``
    are extracted; each conjugate pair is taken once via its root with a
-   positive angle below Nyquist (``imag > 0``). Only stable roots
-   (``abs(root) < 1``) with finite values are kept; unstable or non-finite
-   roots are rejected, never fabricated.
+   positive angle strictly below Nyquist (``0 < angle < pi``, i.e.
+   ``imag > 0`` and ``angle < math.pi``). Only stable roots
+   (``abs(root) < 1``) with finite values are kept; unstable, non-finite,
+   or Nyquist-frequency roots are rejected, never fabricated. A singular or
+   rank-deficient autocorrelation (or a non-finite frame) makes the Toeplitz
+   solve raise a numerical exception; the frame is then rejected with no
+   candidates, so extraction yields the existing per-key insufficiency
+   issues instead of crashing.
 4. A root at angle ``theta`` and radius ``rho`` maps to a formant candidate
    with frequency ``f = theta * sr / (2*pi)`` and bandwidth
    ``b = -sr * log(rho) / pi`` (positive for stable roots).
@@ -66,19 +71,30 @@ def _issue(
 
 
 def _formant_candidates(frame: np.ndarray, sample_rate: int, order: int):
-    """Stable (freq, bandwidth) candidates of one pre-emphasised frame."""
+    """Stable (freq, bandwidth) candidates of one pre-emphasised frame.
+
+    A singular or rank-deficient autocorrelation makes the Toeplitz solve
+    raise ``LinAlgError`` (e.g. an all-zero frame) and a non-finite frame
+    makes it raise ``ValueError``; either numerical failure rejects the
+    frame by returning no candidates, so extraction falls through to the
+    existing per-key insufficiency issues instead of crashing.
+    """
     pre = np.empty_like(frame)
     pre[0] = frame[0]
     pre[1:] = frame[1:] - _PRE_EMPHASIS * frame[:-1]
     r = np.correlate(pre, pre, mode="full")[pre.size - 1 :]
     r = r[: order + 1]
-    a = np.r_[1.0, solve_toeplitz((r[:order], r[:order]), -r[1 : order + 1])]
+    try:
+        a = np.r_[1.0, solve_toeplitz((r[:order], r[:order]), -r[1 : order + 1])]
+        roots = np.roots(a)
+    except (np.linalg.LinAlgError, ValueError):
+        return []
     candidates = []
-    for root in np.roots(a):
+    for root in roots:
         if not np.isfinite(root):
             continue
         angle = np.angle(root)
-        if angle <= 0.0 or abs(root) >= 1.0:
+        if angle <= 0.0 or angle >= math.pi or abs(root) >= 1.0:
             continue
         freq = angle * sample_rate / (2 * math.pi)
         bandwidth = -sample_rate * math.log(abs(root)) / math.pi

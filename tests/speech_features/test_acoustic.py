@@ -32,6 +32,7 @@ from speech_features.document import (
     SpeechDocument,
 )
 from speech_features.features import acoustic as acoustic_pack
+from speech_features.features.acoustic.resonance import _formant_candidates
 from speech_features.pipeline import InvalidAudioError, UnsupportedAudioError
 from speech_features.result import (
     FeatureBundle,
@@ -1744,3 +1745,59 @@ class TestResonanceSpectrumIsolation:
         # tone; a leaked examiner tone would drag it toward 1000.
         assert features["spectral_centroid_mean_hz"] < 900.0
         assert math.isfinite(features["spectral_flux_mean"])
+
+
+# ---------------------------------------------------------------------------
+# Task 7 fix round 1 (Agy review 29d0fbb..548a1fc): LPC candidate rejection
+# ---------------------------------------------------------------------------
+class TestLpcCandidateRejection:
+    """Degenerate frames must be rejected, never raise out of extraction."""
+
+    def test_singular_autocorrelation_frame_rejected_without_raising(self):
+        # A rank-deficient frame (all-zero pre-emphasized frame) makes the
+        # Toeplitz solve singular: scipy raises LinAlgError("Singular
+        # principal minor"). The candidate extractor must reject the frame
+        # (return no candidates) so extraction falls through to the existing
+        # per-key insufficiency issues instead of crashing.
+        frame = np.zeros(400)
+        candidates = _formant_candidates(frame, 16000, 12)
+        assert candidates == []
+
+    def test_nonfinite_autocorrelation_frame_rejected_without_raising(self):
+        # A frame containing NaN makes solve_toeplitz raise ValueError
+        # ("array must not contain infs or NaNs"); the frame must be rejected
+        # as having no candidates rather than propagating the exception.
+        frame = np.zeros(400)
+        frame[10] = np.nan
+        candidates = _formant_candidates(frame, 16000, 12)
+        assert candidates == []
+
+    def test_nyquist_root_is_rejected(self):
+        # An alternating +-1 frame has a real negative LPC pole: its angle is
+        # exactly math.pi, i.e. exactly the Nyquist frequency (sr/2). The
+        # candidate filter must require 0 < angle < pi strictly, so no
+        # candidate may sit at (or within float rounding of) sr/2.
+        frame = np.ones(400)
+        frame[1::2] = -1.0
+        candidates = _formant_candidates(frame, 16000, 12)
+        assert candidates
+        for freq, bandwidth in candidates:
+            assert 0.0 < freq < 8000.0 - 1e-6, (freq, bandwidth)
+            assert bandwidth > 0.0
+
+    def test_rejected_frames_flow_into_existing_insufficiency_behavior(self):
+        # Composition guarantee: a degenerate frame yields no candidates, so
+        # extraction's existing per-key insufficiency branch (fewer than two
+        # accepted formant frames -> INSUFFICIENT_FORMANTS) is what surfaces.
+        # The reachable end-to-end case is a single stable voiced frame, whose
+        # per-key issues are asserted here against the fixed extractor.
+        frame = np.zeros(400)
+        assert _formant_candidates(frame, 16000, 12) == []
+        features, issues = acoustic_pack.extract_acoustic_features(
+            _vowel(duration_s=0.025), 16000, allow_unaligned=True
+        )
+        for key in RESONANCE_KEYS:
+            assert math.isnan(features[key]), key
+            assert any(
+                issue.code == "INSUFFICIENT_FORMANTS" and issue.feature == key for issue in issues
+            ), key
