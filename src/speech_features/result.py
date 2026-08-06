@@ -9,7 +9,7 @@ This module is the single obvious place exposing the complete stable error
 set: :data:`STABLE_ERROR_CODES` lists all ten codes and every class is
 re-exported here, including the pre-existing ``InvalidDocumentError``,
 ``InvalidChatError``, ``InvalidAudioError``, ``UnsupportedAudioError``, and
-``MissingInputError`` (reused from their original modules, never duplicated).
+``MissingInputError`` (reused from their canonical modules, never duplicated).
 New exception classes carry a stable ``.code``.
 """
 
@@ -22,9 +22,9 @@ from typing import Any, Mapping
 
 import pandas as pd
 
+from .audio import InvalidAudioError, UnsupportedAudioError
 from .document import InvalidDocumentError
 from .formats.chat import InvalidChatError
-from .pipeline import InvalidAudioError, UnsupportedAudioError
 from .schema import ExtractionConfig, FeatureExtractionError, MissingInputError
 
 STABLE_ERROR_CODES = frozenset(

@@ -3,10 +3,20 @@
 Research-only, math-first feature extraction from participant WAV recordings
 and reviewed Vietnamese transcripts. See the feature-library plan under
 ``docs/`` for the full contract.
+
+The label-free API is ``extract`` / ``extract_batch`` / ``read_wav`` /
+``list_features``. The 0.1.x AD pipeline names (``BatchFailure``,
+``BatchResult``, ``extract_recording``, ``extract_manifest``) remain
+available with a :class:`DeprecationWarning` through the lazy module
+``__getattr__``; their implementation lives in
+``speech_features.legacy.ad.pipeline``.
 """
 
 __version__ = "0.2.0"
 
+import warnings
+
+from .audio import InvalidAudioError, read_wav
 from .document import (
     AnnotationLayer,
     DocumentSpeaker,
@@ -35,14 +45,6 @@ from .result import (
     TargetSpeakerRequiredError,
     UnknownPackError,
     UnsupportedAudioError,
-)
-from .pipeline import (
-    BatchFailure,
-    BatchResult,
-    InvalidAudioError,
-    extract_manifest,
-    extract_recording,
-    read_wav,
 )
 from .extraction import (
     extract,
@@ -74,6 +76,23 @@ from .schema import (
 # catalog; plain `import speech_features` must expose the full catalog.
 from .features import acoustic as _acoustic_pack  # noqa: F401
 from .features import linguistic as _linguistic_pack  # noqa: F401
+
+_LEGACY_PIPELINE_NAMES = ("BatchFailure", "BatchResult", "extract_manifest", "extract_recording")
+
+
+def __getattr__(name: str):
+    if name in _LEGACY_PIPELINE_NAMES:
+        warnings.warn(
+            f"speech_features.{name} is deprecated; use "
+            f"speech_features.legacy.ad.pipeline.{name} (removal in 0.3.0)",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        from .legacy.ad import pipeline as _legacy_pipeline
+
+        return getattr(_legacy_pipeline, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 __all__ = [
     "AnnotationLayer",

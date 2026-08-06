@@ -21,7 +21,7 @@ import numpy as np
 import pandas as pd
 
 from ...catalog import CATALOG_VERSION
-from ...pipeline import _read_wav_with_width
+from ...audio import _read_wav_with_width
 from ...result import FeatureBundle, FeatureIssue, InvalidAudioError
 from ...schema import ExtractionConfig
 from .definitions import ALL_KEYS, register_acoustic_features
@@ -140,7 +140,7 @@ def extract_acoustic_features(
     and prosody features.
 
     ``audio`` is a mono float array already sampled at ``sample_rate`` (see
-    :func:`speech_features.pipeline.read_wav`). ``document`` is an optional
+    :func:`speech_features.read_wav`). ``document`` is an optional
     :class:`~speech_features.document.SpeechDocument` whose aligned utterances
     select the target speaker's audio; without one, whole-recording analysis
     requires ``allow_unaligned=True`` and emits an ``UNALIGNED_SPEAKER``
@@ -187,7 +187,7 @@ def extract_acoustic_bundle(
 ) -> FeatureBundle:
     """Read a standard PCM WAV and return a recording-level acoustic bundle.
 
-    The shared :func:`speech_features.pipeline.read_wav` decoder is reused:
+    The shared :func:`speech_features.read_wav` decoder is reused:
     malformed WAVs raise ``INVALID_AUDIO``; unsupported media (non-PCM,
     non-standard width or channel count) raise ``UNSUPPORTED_AUDIO``. The
     recordings table carries the identifier columns plus the sorted catalog

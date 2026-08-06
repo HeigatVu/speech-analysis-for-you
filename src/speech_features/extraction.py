@@ -8,7 +8,7 @@ with row/target isolation expressed as severity-``error`` issues.
 
 No diagnosis, labels, tasks, demographics, or clinical values ever enter the
 result tables or provenance. The legacy label-bearing
-:class:`~speech_features.pipeline.BatchResult` is untouched.
+:class:`~speech_features.legacy.ad.pipeline.BatchResult` is untouched.
 """
 
 from __future__ import annotations
@@ -21,12 +21,12 @@ from pathlib import Path
 import pandas as pd
 
 from . import __version__
+from .audio import _read_wav_with_width
 from .catalog import CATALOG_VERSION, PACK_LEVELS, PACKS, list_features
 from .document import SpeechDocument, load_document
 from .features.acoustic import _extract as _extract_acoustic_pack
 from .features.linguistic import extract_adult_neuro_features
 from .formats.json import encode_json
-from .pipeline import _read_wav_with_width
 from .result import (
     ExtractionError,
     FeatureBundle,
