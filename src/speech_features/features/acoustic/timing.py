@@ -81,13 +81,16 @@ TRANSCRIPT_KEYS = (
 )
 
 
-def _issue(recording_id: str, speaker_id: str, code: str, message: str) -> FeatureIssue:
+def _issue(
+    recording_id: str, speaker_id: str, code: str, message: str, feature: str | None = None
+) -> FeatureIssue:
     return FeatureIssue(
         recording_id=recording_id,
         speaker_id=speaker_id,
         code=code,
         severity="warning",
         message=message,
+        feature=feature,
     )
 
 
@@ -210,14 +213,16 @@ def _vad_features(
         pauses.extend(_pauses(voiced, hop_s, config.pause_threshold_s))
 
     if not any_voiced:
-        issues.append(
-            _issue(
-                recording_id,
-                speaker_id,
-                "NO_SPEECH",
-                "no voiced frames in target audio; VAD timing features unavailable",
+        for key in VAD_KEYS:
+            issues.append(
+                _issue(
+                    recording_id,
+                    speaker_id,
+                    "NO_SPEECH",
+                    "no voiced frames in target audio; feature unavailable",
+                    feature=key,
+                )
             )
-        )
         return features
 
     features["time_voiced_segment_mean_s"] = float(np.mean(voiced_runs))
@@ -261,14 +266,16 @@ def _transcript_features(
     features = {key: math.nan for key in TRANSCRIPT_KEYS}
     if document is None or not intervals:
         reason = "no speech document" if document is None else "no aligned target-speaker intervals"
-        issues.append(
-            _issue(
-                recording_id,
-                speaker_id,
-                "MISSING_ANNOTATION",
-                f"{reason}; transcript timing features unavailable",
+        for key in TRANSCRIPT_KEYS:
+            issues.append(
+                _issue(
+                    recording_id,
+                    speaker_id,
+                    "MISSING_ANNOTATION",
+                    f"{reason}; feature unavailable",
+                    feature=key,
+                )
             )
-        )
         return features
 
     speech_s = sum(end - start for start, end in intervals)
@@ -278,14 +285,20 @@ def _transcript_features(
     utterances = [u for u in document.utterances if u.speaker_id == speaker_id]
     counted = _count_words_and_syllables(utterances)
     if counted is None:
-        issues.append(
-            _issue(
-                recording_id,
-                speaker_id,
-                "MISSING_ANNOTATION",
-                "no word tokens for the target speaker; word and syllable rates unavailable",
+        for key in (
+            "time_words_per_min",
+            "time_syllables_per_min",
+            "time_articulation_rate_syllables_per_s",
+        ):
+            issues.append(
+                _issue(
+                    recording_id,
+                    speaker_id,
+                    "MISSING_ANNOTATION",
+                    "no word tokens for the target speaker; feature unavailable",
+                    feature=key,
+                )
             )
-        )
     else:
         words, syllables = counted
         features["time_words_per_min"] = float(words / (speech_s / 60.0))
@@ -296,13 +309,15 @@ def _transcript_features(
     for utterance in document.utterances:
         if utterance.speaker_id != speaker_id:
             continue
-        preceding = [
-            u
-            for u in document.utterances
-            if u.speaker_id != speaker_id and u.end_s <= utterance.start_s
-        ]
-        if preceding:
-            latencies.append(utterance.start_s - max(u.end_s for u in preceding))
+        candidates = [u for u in document.utterances if u.end_s <= utterance.start_s]
+        if not candidates:
+            continue
+        previous = max(candidates, key=lambda u: u.end_s)
+        # A target-speaker continuation right after the target's own turn is
+        # not a response to the examiner; only an immediate non-target
+        # predecessor counts as a response latency.
+        if previous.speaker_id != speaker_id:
+            latencies.append(utterance.start_s - previous.end_s)
     if latencies:
         features["time_response_latency_s"] = float(sum(latencies) / len(latencies))
     else:
@@ -311,7 +326,8 @@ def _transcript_features(
                 recording_id,
                 speaker_id,
                 "MISSING_ANNOTATION",
-                "no examiner-to-participant response pairs; response latency unavailable",
+                "no examiner-to-participant response pairs; feature unavailable",
+                feature="time_response_latency_s",
             )
         )
 
@@ -322,7 +338,8 @@ def _transcript_features(
                 recording_id,
                 speaker_id,
                 "MISSING_ANNOTATION",
-                "no non-target utterances; overlap unavailable",
+                "no non-target utterances; feature unavailable",
+                feature="time_overlap_s",
             )
         )
     else:

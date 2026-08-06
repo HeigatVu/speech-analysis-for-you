@@ -21,7 +21,7 @@ import numpy as np
 import pandas as pd
 
 from ...catalog import CATALOG_VERSION
-from ...pipeline import read_wav
+from ...pipeline import _read_wav_with_width
 from ...result import FeatureBundle, FeatureIssue, InvalidAudioError
 from ...schema import ExtractionConfig
 from .definitions import ALL_KEYS, register_acoustic_features
@@ -51,6 +51,7 @@ def _extract(
     allow_unaligned: bool,
     config: ExtractionConfig,
     recording_id: str,
+    clipping_boundary: float = 1.0,
 ) -> tuple[dict[str, float], list[FeatureIssue], str]:
     """Quality + timing features, issues, and the resolved speaker id."""
     timing, issues, speaker_id = timing_features(
@@ -62,7 +63,10 @@ def _extract(
         config=config,
         recording_id=recording_id,
     )
-    features = {**quality_features(audio, sample_rate), **timing}
+    features = {
+        **quality_features(audio, sample_rate, clipping_boundary=clipping_boundary),
+        **timing,
+    }
     if math.isnan(features["audio_rms_dbfs"]):
         issues.append(
             FeatureIssue(
@@ -141,10 +145,14 @@ def extract_acoustic_bundle(
     non-standard width or channel count) raise ``UNSUPPORTED_AUDIO``. The
     recordings table carries the identifier columns plus the sorted catalog
     keys with float values; the utterances table stays empty with its
-    identifier columns; issues carry the stable codes above.
+    identifier columns; issues carry the stable codes above. Clipping is
+    measured against the source width's positive full-scale boundary
+    (``1 - 2^-(width*8-1)``), so positive and negative full-scale PCM of every
+    supported width count as clipped.
     """
     cfg = config if config is not None else ExtractionConfig()
-    audio = read_wav(audio_path, sample_rate=cfg.sample_rate)
+    audio, width = _read_wav_with_width(audio_path, sample_rate=cfg.sample_rate)
+    clipping_boundary = 1.0 - 2.0 ** -(width * 8 - 1)
     features, issues, speaker_id = _extract(
         audio,
         cfg.sample_rate,
@@ -153,6 +161,7 @@ def extract_acoustic_bundle(
         allow_unaligned=allow_unaligned,
         config=cfg,
         recording_id=recording_id,
+        clipping_boundary=clipping_boundary,
     )
     columns = ("recording_id", "speaker_id", *sorted(ALL_KEYS))
     recordings = pd.DataFrame(

@@ -66,6 +66,10 @@ from .schema import (
     validate_transcript,
 )
 
+# Importing the built-in packs registers their feature definitions in the
+# catalog; plain `import speech_features` must expose the full catalog.
+from .features import acoustic as _acoustic_pack  # noqa: F401
+
 __all__ = [
     "AnnotationLayer",
     "BatchFailure",

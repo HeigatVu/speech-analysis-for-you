@@ -12,8 +12,12 @@ fail ("RED") before the corrected maths and pass ("GREEN") after.
 """
 
 import math
+import os
 import struct
+import subprocess
+import sys
 import wave
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -272,6 +276,28 @@ def _write_pcm_wav(path, mono, sample_rate=16000, n_channels=1, width=2):
         wf.setsampwidth(width)
         wf.setframerate(sample_rate)
         wf.writeframes(_to_pcm(data, width))
+    return str(path)
+
+
+def _write_pcm_codes(path, codes, width):
+    """Write a mono WAV whose payload is the exact integer PCM codes given."""
+    codes = np.asarray(codes)
+    if width == 1:
+        payload = codes.astype(np.uint8).tobytes()
+    elif width == 2:
+        payload = codes.astype("<i2").tobytes()
+    elif width == 3:
+        lo = (codes & 0xFF).astype(np.uint8)
+        mid = ((codes >> 8) & 0xFF).astype(np.uint8)
+        hi = ((codes >> 16) & 0xFF).astype(np.uint8)
+        payload = np.stack([lo, mid, hi], axis=1).reshape(-1).tobytes()
+    else:
+        payload = codes.astype("<i4").tobytes()
+    with wave.open(str(path), "wb") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(width)
+        wf.setframerate(16000)
+        wf.writeframes(payload)
     return str(path)
 
 
@@ -672,3 +698,143 @@ class TestBundleContract:
             "MISSING_ANNOTATION",
         }
         assert math.isnan(bundle.recordings.loc[0, "audio_rms_dbfs"])
+
+
+class TestCatalogRegistrationIsolation:
+    """Agy fix 1: plain package import must register the acoustic pack."""
+
+    def test_fresh_process_sees_all_acoustic_keys(self):
+        src = Path(__file__).resolve().parents[2] / "src"
+        code = (
+            "import speech_features as sf\n"
+            f"expected = {EXPECTED_ACOUSTIC_KEYS!r}\n"
+            "keys = [f.key for f in sf.list_features(pack='acoustic')]\n"
+            "assert keys == list(expected), (keys, expected)\n"
+            "print(len(keys))\n"
+        )
+        env = {**os.environ, "PYTHONPATH": str(src)}
+        completed = subprocess.run(
+            [sys.executable, "-c", code],
+            capture_output=True,
+            text=True,
+            env=env,
+            cwd=src.parent,
+        )
+        assert completed.returncode == 0, completed.stderr
+        assert completed.stdout.strip() == "19"
+
+
+class TestClippingWidthBoundaries:
+    """Agy fix 2: positive full-scale PCM must count as clipped per width."""
+
+    @pytest.mark.parametrize(
+        ("width", "codes", "expected_ratio"),
+        [
+            (1, [255, 0, 128], 2 / 3),
+            (2, [32767, -32768, 0], 2 / 3),
+            (3, [8388607, -8388608, 0], 2 / 3),
+            (4, [2147483647, -2147483648, 0], 2 / 3),
+        ],
+    )
+    def test_full_scale_positive_and_negative_count_as_clipped(
+        self, tmp_path, width, codes, expected_ratio
+    ):
+        path = _write_pcm_codes(tmp_path / f"clip{width}.wav", codes, width)
+        bundle = acoustic_pack.extract_acoustic_bundle(path, allow_unaligned=True)
+        assert bundle.recordings.loc[0, "audio_clipping_ratio"] == pytest.approx(expected_ratio)
+
+    def test_array_path_keeps_unity_boundary(self):
+        signal = _tone(145, 1.0)
+        signal[: int(0.1 * 16000)] = 0.99997
+        features, _ = acoustic_pack.extract_acoustic_features(signal, 16000, allow_unaligned=True)
+        assert features["audio_clipping_ratio"] == 0.0
+
+
+class TestResponseLatencyContinuation:
+    """Agy fix 3: target continuation after an examiner turn is not a latency."""
+
+    def test_continuation_after_examiner_turn_is_not_counted(self):
+        audio = _tone(145, 5.0)
+        doc = _doc(
+            (
+                _utt("u1", "e1", 0.0, 1.0),
+                _utt("u2", "p1", 1.5, 2.5),
+                _utt("u3", "p1", 3.0, 4.0),
+            ),
+            (
+                DocumentSpeaker(id="p1", role="participant"),
+                DocumentSpeaker(id="e1", role="examiner"),
+            ),
+        )
+        features, _ = acoustic_pack.extract_acoustic_features(
+            audio, 16000, document=doc, target_speaker="p1"
+        )
+        # Only u2 (0.5 s after the examiner) is a response; u3 continues the
+        # participant's own turn and must not add a 2.0 s pseudo-latency.
+        assert features["time_response_latency_s"] == pytest.approx(0.5, abs=1e-9)
+
+
+class TestNanIssuePairing:
+    """Agy fix 4: every NaN from a missing prerequisite names its exact key."""
+
+    _TRANSCRIPT_KEYS = (
+        "time_speech_s",
+        "time_speech_ratio",
+        "time_response_latency_s",
+        "time_overlap_s",
+        "time_words_per_min",
+        "time_syllables_per_min",
+        "time_articulation_rate_syllables_per_s",
+    )
+    _VAD_KEYS = (
+        "time_voiced_segment_mean_s",
+        "time_voiced_segment_sd_s",
+        "time_pause_count",
+        "time_pause_rate_per_min",
+        "time_pause_mean_s",
+        "time_pause_sd_s",
+        "time_pause_max_s",
+        "time_long_pause_count",
+    )
+
+    def test_unaligned_nan_transcript_features_named_by_issues(self):
+        features, issues = acoustic_pack.extract_acoustic_features(
+            _tone(145, 2.0), 16000, allow_unaligned=True
+        )
+        for key in self._TRANSCRIPT_KEYS:
+            assert math.isnan(features[key]), key
+            assert any(issue.feature == key for issue in issues), key
+
+    def test_no_voice_nan_vad_features_named_by_issues(self):
+        doc = _doc((_utt("u1", "p1", 0.2, 1.2),), (DocumentSpeaker(id="p1"),))
+        features, issues = acoustic_pack.extract_acoustic_features(
+            np.zeros(16000), 16000, document=doc, target_speaker="p1"
+        )
+        for key in self._VAD_KEYS:
+            assert math.isnan(features[key]), key
+            assert any(issue.feature == key for issue in issues), key
+
+    def test_no_word_tokens_nan_rates_named_by_issues(self):
+        doc = _doc(
+            (_utt("u1", "p1", 0.0, 1.0, tokens=(_tok("t1", "\u00e0", kind="filler"),)),),
+            (DocumentSpeaker(id="p1"),),
+        )
+        features, issues = acoustic_pack.extract_acoustic_features(
+            _tone(145, 1.0), 16000, document=doc
+        )
+        for key in (
+            "time_words_per_min",
+            "time_syllables_per_min",
+            "time_articulation_rate_syllables_per_s",
+        ):
+            assert math.isnan(features[key]), key
+            assert any(issue.feature == key for issue in issues), key
+
+    def test_no_examiner_nan_latency_and_overlap_named_by_issues(self):
+        doc = _doc((_utt("u1", "p1", 0.0, 1.0),), (DocumentSpeaker(id="p1"),))
+        features, issues = acoustic_pack.extract_acoustic_features(
+            _tone(145, 1.0), 16000, document=doc
+        )
+        for key in ("time_response_latency_s", "time_overlap_s"):
+            assert math.isnan(features[key]), key
+            assert any(issue.feature == key for issue in issues), key

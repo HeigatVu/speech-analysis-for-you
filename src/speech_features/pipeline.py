@@ -104,8 +104,8 @@ def _resample(samples: np.ndarray, src_sr: int, target_sr: int) -> np.ndarray:
     return resample_poly(samples, up=target_sr // g, down=src_sr // g)
 
 
-def read_wav(path, *, sample_rate: int = 16000) -> np.ndarray:
-    """Read a standard PCM WAV as a mono float array at ``sample_rate``.
+def _read_wav_with_width(path, sample_rate: int = 16000) -> tuple[np.ndarray, int]:
+    """Read a standard PCM WAV as a mono float array, returning its width too.
 
     Accepts mono or stereo integer PCM (8/16/24/32-bit, standard ``wave``
     formats). Stereo is downmixed to mono by the channel mean; the resulting
@@ -152,11 +152,21 @@ def read_wav(path, *, sample_rate: int = 16000) -> np.ndarray:
             # against any accidental non-finite introduction at the boundary.
             if not np.all(np.isfinite(samples)):
                 raise InvalidAudioError("resampled WAV contains non-finite samples")
-        return samples
+        return samples, width
     except InvalidAudioError:
         raise
     except (ValueError, IndexError, TypeError) as exc:
         raise InvalidAudioError(f"cannot decode WAV {path}: {exc}") from exc
+
+
+def read_wav(path, *, sample_rate: int = 16000) -> np.ndarray:
+    """Read a standard PCM WAV as a mono float array at ``sample_rate``.
+
+    Thin wrapper over :func:`_read_wav_with_width` returning only the samples;
+    see its docstring for the supported formats and raised errors.
+    """
+    samples, _ = _read_wav_with_width(path, sample_rate=sample_rate)
+    return samples
 
 
 # ---------------------------------------------------------------------------
