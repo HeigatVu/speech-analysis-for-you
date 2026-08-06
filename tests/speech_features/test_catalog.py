@@ -198,7 +198,17 @@ def test_list_features_deterministic_order_and_filters():
     assert "audio_test_duration" in [f.key for f in acoustic]
     assert all(f.pack == "acoustic" for f in acoustic)
     assert all(f.level == "recording" for f in list_features(level="recording"))
-    assert [f.key for f in list_features(pack="adult_neuro", level="utterance")] == ["lex_test_ttr"]
+    # The real adult_neuro utterance-level keys (Task 9) plus the fixture key
+    # are returned in deterministic sorted order.
+    assert [f.key for f in list_features(pack="adult_neuro", level="utterance")] == sorted(
+        [
+            "lex_test_ttr",
+            "discourse_response_latency_s",
+            "discourse_turn_overlap_s",
+            "discourse_turn_syllable_count",
+            "discourse_turn_word_count",
+        ]
+    )
 
 
 def test_list_features_rejects_unknown_pack():

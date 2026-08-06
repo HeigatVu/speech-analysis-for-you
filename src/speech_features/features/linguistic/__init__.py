@@ -413,9 +413,16 @@ def extract_lexical_features(
     return features, tuple(issues)
 
 
+from .morphosyntax import (  # noqa: E402  (re-export after helpers resolve)
+    extract_adult_neuro_features,
+    extract_morphosyntax_features,
+)
+
 __all__ = [
     "ALL_KEYS",
     "LEMMA_DIVERSITY_KEYS",
     "SURFACE_DIVERSITY_KEYS",
+    "extract_adult_neuro_features",
     "extract_lexical_features",
+    "extract_morphosyntax_features",
 ]
