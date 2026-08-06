@@ -21,7 +21,7 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Mapping
 
-from .schema import MissingInputError, nfc
+from .schema import MissingInputError, nfc, sha256_file
 
 LANGUAGE = "vie"
 
@@ -100,7 +100,12 @@ class AnnotationLayer:
 
 @dataclass(frozen=True)
 class SpeechDocument:
-    """Validated speech document. All collection fields are deeply immutable."""
+    """Validated speech document. All collection fields are deeply immutable.
+
+    ``source`` records the input origin and ``source_sha256`` the input file
+    hash when a format records them (e.g. CHAT); ``warnings`` carries
+    structured load-time warnings such as ``UNSUPPORTED_CHAT_TIER``.
+    """
 
     document_id: str
     language: str = LANGUAGE
@@ -109,6 +114,9 @@ class SpeechDocument:
     utterances: tuple = field(default_factory=tuple)
     annotations: tuple = field(default_factory=tuple)
     raw_tiers: Mapping = field(default_factory=dict)
+    source: str = ""
+    source_sha256: str | None = None
+    warnings: tuple = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "media", tuple(self.media))
@@ -116,6 +124,7 @@ class SpeechDocument:
         object.__setattr__(self, "utterances", tuple(self.utterances))
         object.__setattr__(self, "annotations", tuple(self.annotations))
         object.__setattr__(self, "raw_tiers", MappingProxyType(dict(self.raw_tiers)))
+        object.__setattr__(self, "warnings", tuple(self.warnings))
 
 
 # ---------------------------------------------------------------------------
@@ -352,9 +361,17 @@ def validate_document(data: dict) -> SpeechDocument:
 def _detect_format(path: Path) -> str:
     if path.suffix.lower() == ".json":
         return "json"
+    if path.suffix.lower() == ".cha":
+        return "chat"
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, UnicodeDecodeError, OSError):
+        text = path.read_text(encoding="utf-8")
+    except (UnicodeDecodeError, OSError):
+        raise InvalidDocumentError(f"cannot detect format of {path}; pass format=")
+    if text.lstrip("\ufeff \t").startswith("@Begin"):
+        return "chat"
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
         raise InvalidDocumentError(f"cannot detect format of {path}; pass format=")
     if isinstance(data, dict) and data.get("version") in (1, 2):
         return "json"
@@ -363,7 +380,8 @@ def _detect_format(path: Path) -> str:
 
 def load_document(path, *, format=None) -> SpeechDocument:
     """Load a speech document, detecting the format by extension or content
-    when ``format`` is None. JSON v1 is migrated deterministically to v2."""
+    when ``format`` is None. JSON v1 is migrated deterministically to v2;
+    CHAT records its origin and SHA-256 input hash on the document."""
     from .formats import FORMATS  # deferred: formats/json imports this module
 
     p = Path(path)
@@ -372,7 +390,10 @@ def load_document(path, *, format=None) -> SpeechDocument:
     fmt = format or _detect_format(p)
     if fmt not in FORMATS:
         raise InvalidDocumentError(f"unknown document format: {fmt!r}")
-    return FORMATS[fmt]["decode"](p.read_text(encoding="utf-8"))
+    payload = p.read_text(encoding="utf-8")
+    if fmt == "chat":
+        return FORMATS[fmt]["decode"](payload, source=str(p), sha256=sha256_file(p))
+    return FORMATS[fmt]["decode"](payload)
 
 
 def save_document(document: SpeechDocument, path, *, format=None, force=False) -> None:
@@ -385,7 +406,9 @@ def save_document(document: SpeechDocument, path, *, format=None, force=False) -
             f"document must be a SpeechDocument, got {type(document).__name__}"
         )
     p = Path(path)
-    fmt = format or ("json" if p.suffix.lower() == ".json" else None)
+    fmt = format or (
+        "chat" if p.suffix.lower() == ".cha" else "json" if p.suffix.lower() == ".json" else None
+    )
     if fmt is None:
         raise InvalidDocumentError(f"cannot infer format from extension {p.suffix!r}; pass format=")
     if fmt not in FORMATS:
