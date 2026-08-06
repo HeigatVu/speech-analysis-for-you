@@ -508,6 +508,100 @@ class TestIO:
         assert load_document(p) == doc
 
 
+class TestRequiredFields:
+    """Malformed required fields must raise InvalidDocumentError, never raw
+    TypeError/KeyError."""
+
+    @pytest.mark.parametrize(
+        "override",
+        [
+            ({"media": [{"kind": "audio"}]}),
+            ({"media": [{"id": None}]}),
+            ({"speakers": [{"name": "x"}]}),
+            ({"speakers": [{"id": None}]}),
+            ({"utterances": [{"speaker_id": "p1", "start_s": 0.0, "end_s": 1.0}]}),
+            ({"utterances": [{"id": None, "speaker_id": "p1", "start_s": 0.0, "end_s": 1.0}]}),
+            (
+                {
+                    "utterances": [
+                        {
+                            "id": "u0001",
+                            "speaker_id": "p1",
+                            "start_s": 0.0,
+                            "end_s": 1.0,
+                            "tokens": [{"text": "a"}],
+                        }
+                    ]
+                }
+            ),
+            (
+                {
+                    "utterances": [
+                        {
+                            "id": "u0001",
+                            "speaker_id": "p1",
+                            "start_s": 0.0,
+                            "end_s": 1.0,
+                            "tokens": [{"id": None, "text": "a"}],
+                        }
+                    ]
+                }
+            ),
+            ({"annotations": [{"values": {}}]}),
+            ({"annotations": [{"layer": None}]}),
+        ],
+        ids=[
+            "absent-media-id",
+            "null-media-id",
+            "absent-speaker-id",
+            "null-speaker-id",
+            "absent-utterance-id",
+            "null-utterance-id",
+            "absent-token-id",
+            "null-token-id",
+            "absent-annotation-layer",
+            "null-annotation-layer",
+        ],
+    )
+    def test_absent_or_null_required_ids_rejected(self, tmp_path, override):
+        with pytest.raises(InvalidDocumentError, match="must be a non-empty string"):
+            load_document(_write(tmp_path, "doc.json", _v2(**override)))
+
+    def test_missing_or_null_document_id_rejected(self, tmp_path):
+        data = _v2()
+        del data["document_id"]
+        with pytest.raises(InvalidDocumentError, match="document_id"):
+            load_document(_write(tmp_path, "doc.json", data))
+        with pytest.raises(InvalidDocumentError, match="document_id"):
+            load_document(_write(tmp_path, "doc.json", _v2(document_id=None)))
+
+    @pytest.mark.parametrize(
+        "override",
+        [
+            ({"utterances": [{"id": "u0001", "start_s": 0.0, "end_s": 1.0}]}),
+            ({"utterances": [{"id": "u0001", "speaker_id": None, "start_s": 0.0, "end_s": 1.0}]}),
+        ],
+        ids=["absent-speaker-reference", "null-speaker-reference"],
+    )
+    def test_missing_speaker_reference_rejected(self, tmp_path, override):
+        with pytest.raises(InvalidDocumentError, match="speaker"):
+            load_document(_write(tmp_path, "doc.json", _v2(**override)))
+
+    @pytest.mark.parametrize(
+        "utterance",
+        [
+            {"id": "u0001", "speaker_id": "p1", "end_s": 1.0},
+            {"id": "u0001", "speaker_id": "p1", "start_s": None, "end_s": 1.0},
+            {"id": "u0001", "speaker_id": "p1", "start_s": 0.0},
+            {"id": "u0001", "speaker_id": "p1", "start_s": 0.0, "end_s": None},
+        ],
+        ids=["absent-start", "null-start", "absent-end", "null-end"],
+    )
+    def test_absent_or_null_utterance_timestamps_rejected(self, tmp_path, utterance):
+        with pytest.raises(InvalidDocumentError, match="must be a number"):
+            load_document(_write(tmp_path, "doc.json", _v2(utterances=[utterance])))
+
+
 class TestRootExports:
     def test_new_document_api_reexported_from_root(self):
         for name in NEW_ROOT_API:

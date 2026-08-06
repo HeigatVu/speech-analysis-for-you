@@ -124,15 +124,19 @@ class SpeechDocument:
 def _require_str(data: dict, key: str, *, allow_empty: bool = True, default=None) -> str | None:
     value = data.get(key, default)
     if value is None:
+        if not allow_empty:
+            raise InvalidDocumentError(f"{key} must be a non-empty string, got None")
         return None
     if not isinstance(value, str) or (not allow_empty and not value):
         raise InvalidDocumentError(f"{key} must be a non-empty string, got {value!r}")
     return value
 
 
-def _require_number(data: dict, key: str, *, default=None) -> float | None:
+def _require_number(data: dict, key: str, *, required: bool = False, default=None) -> float | None:
     value = data.get(key, default)
     if value is None:
+        if required:
+            raise InvalidDocumentError(f"{key} must be a number, got None")
         return None
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise InvalidDocumentError(f"{key} must be numeric, got {value!r}")
@@ -186,9 +190,9 @@ def _parse_speakers(speakers: list) -> tuple[DocumentSpeaker, ...]:
     return tuple(parsed)
 
 
-def _parse_tokens(tokens: list, utterance: dict, known_ids: set) -> tuple[DocumentToken, ...]:
-    utt_start = float(utterance["start_s"])
-    utt_end = float(utterance["end_s"])
+def _parse_tokens(
+    tokens: list, utt_start: float, utt_end: float, known_ids: set
+) -> tuple[DocumentToken, ...]:
     parsed = []
     for entry in tokens:
         if not isinstance(entry, dict):
@@ -236,13 +240,14 @@ def _parse_utterances(
         speaker_id = _require_str(entry, "speaker_id", allow_empty=False)
         if speaker_id not in speaker_ids:
             raise InvalidDocumentError(f"utterance {uid} references unknown speaker {speaker_id!r}")
-        start = _require_number(entry, "start_s")
-        end = _require_number(entry, "end_s")
+        start = _require_number(entry, "start_s", required=True)
+        end = _require_number(entry, "end_s", required=True)
         if end < start:
             raise InvalidDocumentError(f"utterance {uid} end before start")
         tokens = _parse_tokens(
             entry.get("tokens", []) if isinstance(entry.get("tokens"), list) else [],
-            entry,
+            start,
+            end,
             token_ids,
         )
         parsed.append(
@@ -289,8 +294,6 @@ def validate_document(data: dict) -> SpeechDocument:
     if data.get("version") != 2:
         raise InvalidDocumentError("document must have version == 2")
     document_id = _require_str(data, "document_id", allow_empty=False)
-    if document_id is None:
-        raise InvalidDocumentError("document_id must be a non-empty string")
     language = _require_str(data, "language", default=LANGUAGE)
     if language != LANGUAGE:
         raise InvalidDocumentError(
