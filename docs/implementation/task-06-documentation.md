@@ -165,7 +165,7 @@ $ grep -rnE "librosa|opensmile|spacy|spaCy|torch|transformers|soundfile|pydub" s
 
 ### Commit ID
 
-`<commit-id>` — `docs: document feature library and verification`.
+`faa35bf` — `docs: document feature library and verification`.
 
 ### Skipped scope
 
