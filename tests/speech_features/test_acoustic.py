@@ -46,6 +46,13 @@ def _tone(freq, duration_s, sample_rate=16000, amplitude=0.5):
     return amplitude * np.sin(2 * math.pi * freq * t)
 
 
+def _chirp(f0, f1, duration_s, sample_rate=16000, amplitude=0.5):
+    n = int(round(sample_rate * duration_s))
+    t = np.arange(n) / sample_rate
+    phase = 2 * math.pi * (f0 * t + 0.5 * (f1 - f0) / duration_s * t**2)
+    return amplitude * np.sin(phase)
+
+
 class TestExtractAcoustic:
     def test_returns_plain_numeric_features_and_flags(self):
         result = acoustic.extract_acoustic(_tone(145, 1.0), 16000)
@@ -247,6 +254,70 @@ EXPECTED_ACOUSTIC_KEYS = (
     "time_voiced_segment_mean_s",
     "time_voiced_segment_sd_s",
     "time_words_per_min",
+    "voice_cpp_iqr_db",
+    "voice_cpp_mean_db",
+    "voice_cpp_median_db",
+    "voice_cpp_sd_db",
+    "voice_f0_abs_change_hz",
+    "voice_f0_cv",
+    "voice_f0_iqr_hz",
+    "voice_f0_mean_hz",
+    "voice_f0_median_hz",
+    "voice_f0_range_5_95_hz",
+    "voice_f0_sd_hz",
+    "voice_f0_slope_hz_per_s",
+    "voice_hnr_iqr_db",
+    "voice_hnr_mean_db",
+    "voice_hnr_median_db",
+    "voice_hnr_sd_db",
+    "voice_intensity_iqr_db",
+    "voice_intensity_mean_dbfs",
+    "voice_intensity_median_dbfs",
+    "voice_intensity_sd_db",
+    "voice_intensity_slope_db_per_s",
+    "voice_jitter_local",
+    "voice_shimmer_local",
+    "voice_voiced_ratio",
+)
+
+# The 24 Task 6 keys in their formula groups (sorted order is the catalog's).
+VOICE_F0_KEYS = (
+    "voice_f0_mean_hz",
+    "voice_f0_median_hz",
+    "voice_f0_sd_hz",
+    "voice_f0_cv",
+    "voice_f0_iqr_hz",
+    "voice_f0_range_5_95_hz",
+    "voice_f0_slope_hz_per_s",
+    "voice_f0_abs_change_hz",
+)
+VOICE_INTENSITY_KEYS = (
+    "voice_intensity_mean_dbfs",
+    "voice_intensity_median_dbfs",
+    "voice_intensity_sd_db",
+    "voice_intensity_iqr_db",
+    "voice_intensity_slope_db_per_s",
+)
+VOICE_HNR_KEYS = (
+    "voice_hnr_mean_db",
+    "voice_hnr_median_db",
+    "voice_hnr_sd_db",
+    "voice_hnr_iqr_db",
+)
+VOICE_CPP_KEYS = (
+    "voice_cpp_mean_db",
+    "voice_cpp_median_db",
+    "voice_cpp_sd_db",
+    "voice_cpp_iqr_db",
+)
+VOICE_KEYS = (
+    *VOICE_F0_KEYS,
+    "voice_voiced_ratio",
+    *VOICE_INTENSITY_KEYS,
+    "voice_jitter_local",
+    "voice_shimmer_local",
+    *VOICE_HNR_KEYS,
+    *VOICE_CPP_KEYS,
 )
 
 
@@ -334,9 +405,10 @@ def _tok(tid, text, kind="word", word_id=None):
 
 
 class TestAcousticPackCatalog:
-    def test_exact_nineteen_quality_and_timing_keys_registered(self):
+    def test_exact_forty_three_keys_registered(self):
         features = list_features(pack="acoustic")
         assert [f.key for f in features] == list(EXPECTED_ACOUSTIC_KEYS)
+        assert sorted(VOICE_KEYS) == list(EXPECTED_ACOUSTIC_KEYS[19:])
 
     def test_definitions_carry_full_metadata(self):
         for definition in list_features(pack="acoustic"):
@@ -696,8 +768,11 @@ class TestBundleContract:
             "NO_AUDIO",
             "NO_SPEECH",
             "MISSING_ANNOTATION",
+            "INSUFFICIENT_VOICED_FRAMES",
+            "INSUFFICIENT_CYCLES",
         }
         assert math.isnan(bundle.recordings.loc[0, "audio_rms_dbfs"])
+        assert math.isnan(bundle.recordings.loc[0, "voice_f0_mean_hz"])
 
 
 class TestCatalogRegistrationIsolation:
@@ -721,7 +796,7 @@ class TestCatalogRegistrationIsolation:
             cwd=src.parent,
         )
         assert completed.returncode == 0, completed.stderr
-        assert completed.stdout.strip() == "19"
+        assert completed.stdout.strip() == "43"
 
 
 class TestClippingWidthBoundaries:
@@ -838,3 +913,235 @@ class TestNanIssuePairing:
         for key in ("time_response_latency_s", "time_overlap_s"):
             assert math.isnan(features[key]), key
             assert any(issue.feature == key for issue in issues), key
+
+
+# ---------------------------------------------------------------------------
+# Task 6: acoustic phonation and prosody (brief keys and behaviors)
+# ---------------------------------------------------------------------------
+class TestPhonationTone:
+    """A deterministic 200 Hz tone; F0 lands on an autocorrelation lag."""
+
+    def _voice(self, signal):
+        features, _ = acoustic_pack.extract_acoustic_features(signal, 16000, allow_unaligned=True)
+        return features
+
+    def test_f0_summaries_match_tone(self):
+        f = self._voice(_tone(200, 1.0))
+        for key in ("voice_f0_mean_hz", "voice_f0_median_hz"):
+            assert 195.0 < f[key] < 210.0, key
+        assert f["voice_f0_sd_hz"] < 1.0
+        assert f["voice_f0_cv"] < 0.01
+        assert f["voice_f0_iqr_hz"] < 1.0
+        assert f["voice_f0_range_5_95_hz"] < 1.0
+        assert abs(f["voice_f0_slope_hz_per_s"]) < 0.5
+        assert f["voice_f0_abs_change_hz"] < 0.1
+        assert f["voice_voiced_ratio"] > 0.9
+
+    def test_intensity_summaries_match_tone_level(self):
+        f = self._voice(_tone(200, 1.0, amplitude=0.5))
+        # Hamming-windowed frame RMS: 0.5/sqrt(2) * sqrt(mean(hamming^2)).
+        assert f["voice_intensity_mean_dbfs"] == pytest.approx(-13.0, abs=0.5)
+        assert f["voice_intensity_median_dbfs"] == pytest.approx(-13.0, abs=0.5)
+        assert f["voice_intensity_sd_db"] < 0.1
+        assert f["voice_intensity_iqr_db"] < 0.1
+        assert abs(f["voice_intensity_slope_db_per_s"]) < 0.5
+
+    def test_jitter_and_shimmer_vanish_on_a_steady_tone(self):
+        f = self._voice(_tone(200, 1.0))
+        assert f["voice_jitter_local"] < 0.001
+        assert f["voice_shimmer_local"] < 0.001
+
+    def test_hnr_positive_and_cpp_prominent_on_tone(self):
+        f = self._voice(_tone(200, 1.0))
+        for key in VOICE_HNR_KEYS:
+            assert math.isfinite(f[key]), key
+        assert f["voice_hnr_mean_db"] > 3.0
+        assert f["voice_hnr_median_db"] > 3.0
+        for key in VOICE_CPP_KEYS:
+            assert math.isfinite(f[key]), key
+        assert f["voice_cpp_mean_db"] > 0.02
+        assert f["voice_cpp_median_db"] > 0.02
+
+    def test_all_voice_keys_finite_on_tone(self):
+        f = self._voice(_tone(200, 1.0))
+        for key in VOICE_KEYS:
+            assert math.isfinite(f[key]), key
+
+
+class TestF0SlopeAndChange:
+    def test_chirp_slope_is_ols_over_voiced_frame_times(self):
+        # Linear 150 -> 250 Hz sweep over 2 s: slope 50 Hz/s. The shared
+        # mean-energy VAD keeps most frames voiced; the OLS slope over the
+        # actual voiced frame times must track the nominal rate.
+        f, _ = acoustic_pack.extract_acoustic_features(
+            _chirp(150, 250, 2.0), 16000, allow_unaligned=True
+        )
+        assert f["voice_f0_slope_hz_per_s"] == pytest.approx(50.0, abs=5.0)
+        assert f["voice_f0_sd_hz"] > 10.0
+        # Mean absolute change of consecutive voiced F0 estimates: with 10 ms
+        # hops, the nominal per-hop sweep step is 0.5 Hz; lag quantization
+        # widens it, so the assertion is a broad band around the formula.
+        assert 0.3 < f["voice_f0_abs_change_hz"] < 1.2
+        assert math.isfinite(f["voice_f0_mean_hz"])
+        assert math.isfinite(f["voice_f0_median_hz"])
+
+    def test_flat_tone_has_no_slope_and_no_change(self):
+        f, _ = acoustic_pack.extract_acoustic_features(_tone(200, 2.0), 16000, allow_unaligned=True)
+        assert abs(f["voice_f0_slope_hz_per_s"]) < 0.5
+        assert f["voice_f0_abs_change_hz"] < 0.1
+
+
+class TestAmplitudeModulation:
+    def _am(self, depth, duration_s=1.0):
+        n = int(round(16000 * duration_s))
+        t = np.arange(n) / 16000
+        a = 1.0 - depth * 0.5 * (1.0 + np.cos(2 * math.pi * 5.0 * t))
+        return a * np.sin(2 * math.pi * 200.0 * t)
+
+    def test_shimmer_rises_with_amplitude_modulation(self):
+        modulated, _ = acoustic_pack.extract_acoustic_features(
+            self._am(0.8), 16000, allow_unaligned=True
+        )
+        flat, _ = acoustic_pack.extract_acoustic_features(
+            self._am(0.0), 16000, allow_unaligned=True
+        )
+        assert modulated["voice_shimmer_local"] > 0.02
+        assert modulated["voice_shimmer_local"] > flat["voice_shimmer_local"] + 0.01
+        assert flat["voice_shimmer_local"] < 0.001
+
+    def test_intensity_variability_tracks_modulation(self):
+        modulated, _ = acoustic_pack.extract_acoustic_features(
+            self._am(0.8), 16000, allow_unaligned=True
+        )
+        flat, _ = acoustic_pack.extract_acoustic_features(
+            self._am(0.0), 16000, allow_unaligned=True
+        )
+        assert modulated["voice_intensity_sd_db"] > 0.5
+        assert modulated["voice_intensity_sd_db"] > flat["voice_intensity_sd_db"] + 0.5
+
+
+class TestPeriodModulation:
+    def _fm(self, deviation, duration_s=1.0):
+        n = int(round(16000 * duration_s))
+        t = np.arange(n) / 16000
+        phase = (
+            2
+            * math.pi
+            * (200.0 * t - deviation / (2 * math.pi * 5.0) * np.cos(2 * math.pi * 5.0 * t))
+        )
+        return 0.5 * np.sin(phase)
+
+    def test_jitter_rises_with_period_modulation(self):
+        modulated, _ = acoustic_pack.extract_acoustic_features(
+            self._fm(20.0), 16000, allow_unaligned=True
+        )
+        flat, _ = acoustic_pack.extract_acoustic_features(
+            self._fm(0.0), 16000, allow_unaligned=True
+        )
+        assert modulated["voice_jitter_local"] > 0.01
+        assert modulated["voice_jitter_local"] > flat["voice_jitter_local"] + 0.005
+        assert flat["voice_jitter_local"] < 0.001
+
+    def test_f0_change_and_variability_track_modulation(self):
+        modulated, _ = acoustic_pack.extract_acoustic_features(
+            self._fm(20.0), 16000, allow_unaligned=True
+        )
+        assert modulated["voice_f0_abs_change_hz"] > 1.0
+        assert modulated["voice_f0_sd_hz"] > 5.0
+
+
+class TestHnrMonotonicity:
+    def test_hnr_decreases_as_additive_noise_increases(self):
+        rng = np.random.default_rng(7)
+        base = _tone(200, 1.0)
+        means = []
+        for noise_amplitude in (0.0, 0.1, 0.5):
+            signal = base + noise_amplitude * rng.normal(0.0, 1.0, 16000)
+            f, _ = acoustic_pack.extract_acoustic_features(signal, 16000, allow_unaligned=True)
+            assert math.isfinite(f["voice_hnr_mean_db"])
+            means.append(f["voice_hnr_mean_db"])
+        assert means[0] > means[1] + 0.5
+        assert means[1] > means[2] + 0.5
+
+
+class TestCppOrdering:
+    def test_tonal_signal_has_higher_cpp_than_noisy_signal(self):
+        # A harmonic-rich sawtooth has a prominent cepstral peak at the pitch
+        # period; adding broadband noise flattens the spectrum and must lower
+        # the cepstral peak prominence while F0 stays detected.
+        rng = np.random.default_rng(11)
+        n = 16000
+        t = np.arange(n) / 16000
+        sawtooth = 0.5 * (2.0 * ((200.0 * t) % 1.0) - 1.0)
+        noisy = sawtooth + 0.2 * rng.normal(0.0, 1.0, n)
+        clean, _ = acoustic_pack.extract_acoustic_features(sawtooth, 16000, allow_unaligned=True)
+        degraded, _ = acoustic_pack.extract_acoustic_features(noisy, 16000, allow_unaligned=True)
+        assert math.isfinite(clean["voice_cpp_mean_db"])
+        assert math.isfinite(degraded["voice_cpp_mean_db"])
+        assert clean["voice_cpp_mean_db"] > degraded["voice_cpp_mean_db"] + 0.3
+
+
+class TestPhonationInsufficiency:
+    def test_digital_silence_yields_nan_with_exact_key_issues(self):
+        features, issues = acoustic_pack.extract_acoustic_features(
+            np.zeros(16000), 16000, allow_unaligned=True
+        )
+        for key in VOICE_KEYS:
+            assert math.isnan(features[key]), key
+            assert any(issue.feature == key for issue in issues), key
+        for key in ("voice_jitter_local", "voice_shimmer_local"):
+            assert any(
+                issue.code == "INSUFFICIENT_CYCLES" for issue in issues if issue.feature == key
+            )
+        for key in VOICE_KEYS:
+            if key in ("voice_jitter_local", "voice_shimmer_local"):
+                continue
+            assert any(
+                issue.code == "INSUFFICIENT_VOICED_FRAMES"
+                for issue in issues
+                if issue.feature == key
+            ), key
+
+    def test_single_voiced_frame_is_insufficient(self):
+        # Exactly one 25 ms frame (400 samples): one voiced F0 estimate cannot
+        # characterise phonation; distribution, slope, jitter, shimmer, HNR
+        # and CPP must be NaN with issues, while the ratio stays exact.
+        features, issues = acoustic_pack.extract_acoustic_features(
+            _tone(160, 0.025), 16000, allow_unaligned=True
+        )
+        assert features["voice_voiced_ratio"] == pytest.approx(1.0)
+        for key in (*VOICE_F0_KEYS, *VOICE_INTENSITY_KEYS, *VOICE_HNR_KEYS, *VOICE_CPP_KEYS):
+            assert math.isnan(features[key]), key
+            assert any(
+                issue.code == "INSUFFICIENT_VOICED_FRAMES" and issue.feature == key
+                for issue in issues
+            ), key
+        for key in ("voice_jitter_local", "voice_shimmer_local"):
+            assert math.isnan(features[key]), key
+            assert any(
+                issue.code == "INSUFFICIENT_CYCLES" and issue.feature == key for issue in issues
+            ), key
+
+
+class TestPhonationSpeakerIsolation:
+    def test_examiner_audio_does_not_affect_voice_measures(self):
+        # Loud 1 kHz examiner tone before a quiet 160 Hz participant tone:
+        # every voice measure must describe the participant's clips only.
+        examiner = _tone(1000, 1.0, amplitude=0.9)
+        participant = _tone(160, 1.0, amplitude=0.2)
+        audio = np.concatenate([examiner, np.zeros(int(16000 * 0.5)), participant])
+        doc = _doc(
+            (_utt("u1", "e1", 0.0, 1.0), _utt("u2", "p1", 1.5, 2.5)),
+            (
+                DocumentSpeaker(id="p1", role="participant"),
+                DocumentSpeaker(id="e1", role="examiner"),
+            ),
+        )
+        features, _ = acoustic_pack.extract_acoustic_features(
+            audio, 16000, document=doc, target_speaker="p1"
+        )
+        assert 150.0 < features["voice_f0_mean_hz"] < 175.0
+        assert features["voice_f0_sd_hz"] < 1.0
+        assert features["voice_intensity_mean_dbfs"] == pytest.approx(-21.0, abs=1.5)
+        assert math.isfinite(features["voice_hnr_mean_db"])
+        assert math.isfinite(features["voice_cpp_mean_db"])

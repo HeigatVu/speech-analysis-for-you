@@ -1,16 +1,17 @@
-"""Acoustic core, audio quality, and timing (Task 5).
+"""Acoustic quality, timing, phonation, and prosody (Tasks 5--6).
 
 Public entry points:
 
-- :func:`extract_acoustic_features` — quality + timing features from a mono
-  float array plus an optional :class:`~speech_features.document.SpeechDocument`.
+- :func:`extract_acoustic_features` — quality, timing, phonation, and prosody
+  features from a mono float array plus an optional
+  :class:`~speech_features.document.SpeechDocument`.
 - :func:`extract_acoustic_bundle` — WAV path (reusing the shared PCM reader)
   to a :class:`~speech_features.result.FeatureBundle` with deterministic
   recording columns.
 
-The module registers the acoustic pack's stable quality/timing definitions at
-import time (idempotent). Phonation/prosody (Task 6) and resonance/spectrum/
-rhythm (Task 7) algorithms are intentionally not implemented here.
+The module registers the acoustic pack's stable quality/timing/phonation
+definitions at import time (idempotent). Resonance/spectrum/rhythm (Task 7)
+algorithms are intentionally not implemented here.
 """
 
 from __future__ import annotations
@@ -25,6 +26,7 @@ from ...pipeline import _read_wav_with_width
 from ...result import FeatureBundle, FeatureIssue, InvalidAudioError
 from ...schema import ExtractionConfig
 from .definitions import ALL_KEYS, register_acoustic_features
+from .phonation import phonation_features
 from .quality import quality_features
 from .timing import timing_features
 
@@ -53,8 +55,8 @@ def _extract(
     recording_id: str,
     clipping_boundary: float = 1.0,
 ) -> tuple[dict[str, float], list[FeatureIssue], str]:
-    """Quality + timing features, issues, and the resolved speaker id."""
-    timing, issues, speaker_id = timing_features(
+    """Quality + timing + phonation features, issues, and the resolved speaker id."""
+    timing, issues, speaker_id, intervals = timing_features(
         audio,
         sample_rate,
         document=document,
@@ -67,6 +69,17 @@ def _extract(
         **quality_features(audio, sample_rate, clipping_boundary=clipping_boundary),
         **timing,
     }
+    features.update(
+        phonation_features(
+            audio,
+            sample_rate,
+            intervals=intervals,
+            config=config,
+            recording_id=recording_id,
+            speaker_id=speaker_id,
+            issues=issues,
+        )
+    )
     if math.isnan(features["audio_rms_dbfs"]):
         issues.append(
             FeatureIssue(
@@ -91,7 +104,8 @@ def extract_acoustic_features(
     config: ExtractionConfig | None = None,
     recording_id: str = "",
 ) -> tuple[dict[str, float], tuple[FeatureIssue, ...]]:
-    """Extract the acoustic pack's recording-level quality and timing features.
+    """Extract the acoustic pack's recording-level quality, timing, phonation,
+    and prosody features.
 
     ``audio`` is a mono float array already sampled at ``sample_rate`` (see
     :func:`speech_features.pipeline.read_wav`). ``document`` is an optional
@@ -104,8 +118,9 @@ def extract_acoustic_features(
     Returns ``(features, issues)``: every registered key is present (``NaN``
     when its prerequisite is unavailable) and each ``NaN`` is paired with a
     structured issue. Formula and denominator details are documented in
-    :mod:`speech_features.features.acoustic.quality` and
-    :mod:`speech_features.features.acoustic.timing`.
+    :mod:`speech_features.features.acoustic.quality`,
+    :mod:`speech_features.features.acoustic.timing`, and
+    :mod:`speech_features.features.acoustic.phonation`.
     """
     cfg = config if config is not None else ExtractionConfig()
     try:

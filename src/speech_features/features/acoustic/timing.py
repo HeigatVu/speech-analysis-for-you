@@ -362,11 +362,14 @@ def timing_features(
     allow_unaligned: bool,
     config: ExtractionConfig,
     recording_id: str,
-) -> tuple[dict[str, float], list[FeatureIssue], str]:
+) -> tuple[dict[str, float], list[FeatureIssue], str, list[tuple[float, float]] | None]:
     """Resolve the target speaker and compute all timing features.
 
-    Returns ``(features, issues, speaker_id)``. Every timing key is present in
-    ``features``; unavailable values are ``NaN`` and paired with an issue.
+    Returns ``(features, issues, speaker_id, intervals)``. Every timing key is
+    present in ``features``; unavailable values are ``NaN`` and paired with an
+    issue. ``intervals`` is the merged target-speaker interval list, or ``None``
+    when the whole-recording fallback is in effect; caller modules reuse it so
+    speaker selection happens exactly once per extraction.
     """
     duration_s = float(audio.size) / sample_rate
     speaker_id, intervals, issues = _resolve_target(
@@ -381,4 +384,4 @@ def timing_features(
     features.update(
         _transcript_features(document, speaker_id, intervals, duration_s, recording_id, issues)
     )
-    return features, issues, speaker_id
+    return features, issues, speaker_id, intervals
