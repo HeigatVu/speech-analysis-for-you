@@ -1,17 +1,16 @@
-"""Acoustic quality, timing, phonation, and prosody (Tasks 5--6).
+"""Acoustic quality, timing, phonation, resonance, spectrum, and rhythm (Tasks 5--7).
 
 Public entry points:
 
-- :func:`extract_acoustic_features` — quality, timing, phonation, and prosody
-  features from a mono float array plus an optional
+- :func:`extract_acoustic_features` — quality, timing, phonation, resonance,
+  spectrum, and rhythm features from a mono float array plus an optional
   :class:`~speech_features.document.SpeechDocument`.
 - :func:`extract_acoustic_bundle` — WAV path (reusing the shared PCM reader)
   to a :class:`~speech_features.result.FeatureBundle` with deterministic
   recording columns.
 
-The module registers the acoustic pack's stable quality/timing/phonation
-definitions at import time (idempotent). Resonance/spectrum/rhythm (Task 7)
-algorithms are intentionally not implemented here.
+The module registers the acoustic pack's stable quality/timing/phonation/
+resonance/spectrum/rhythm definitions at import time (idempotent).
 """
 
 from __future__ import annotations
@@ -28,6 +27,9 @@ from ...schema import ExtractionConfig
 from .definitions import ALL_KEYS, register_acoustic_features
 from .phonation import phonation_features
 from .quality import quality_features
+from .resonance import resonance_features
+from .rhythm import rhythm_features
+from .spectrum import spectrum_features
 from .timing import timing_features
 
 register_acoustic_features()
@@ -77,6 +79,36 @@ def _extract(
             config=config,
             recording_id=recording_id,
             speaker_id=speaker_id,
+            issues=issues,
+        )
+    )
+    features.update(
+        resonance_features(
+            audio,
+            sample_rate,
+            intervals=intervals,
+            config=config,
+            recording_id=recording_id,
+            speaker_id=speaker_id,
+            issues=issues,
+        )
+    )
+    features.update(
+        spectrum_features(
+            audio,
+            sample_rate,
+            intervals=intervals,
+            config=config,
+            recording_id=recording_id,
+            speaker_id=speaker_id,
+            issues=issues,
+        )
+    )
+    features.update(
+        rhythm_features(
+            document,
+            speaker_id,
+            recording_id=recording_id,
             issues=issues,
         )
     )

@@ -1,11 +1,14 @@
-"""Stable feature definitions for the built-in acoustic pack (Tasks 5--6).
+"""Stable feature definitions for the built-in acoustic pack (Tasks 5--7).
 
 Each definition carries the exact key, pack, level, unit, prerequisites,
 population applicability, formula version, and reference required by the
 catalog contract. Formula details are documented on the extracting functions
 in :mod:`speech_features.features.acoustic.quality`,
-:mod:`speech_features.features.acoustic.timing`, and
-:mod:`speech_features.features.acoustic.phonation`.
+:mod:`speech_features.features.acoustic.timing`,
+:mod:`speech_features.features.acoustic.phonation`,
+:mod:`speech_features.features.acoustic.resonance`,
+:mod:`speech_features.features.acoustic.spectrum`, and
+:mod:`speech_features.features.acoustic.rhythm`.
 """
 
 from __future__ import annotations
@@ -64,7 +67,48 @@ PHONATION_KEYS = (
     "voice_cpp_iqr_db",
 )
 
-ALL_KEYS = QUALITY_KEYS + TIMING_KEYS + PHONATION_KEYS
+RESONANCE_KEYS = (
+    "spectral_f1_mean_hz",
+    "spectral_f1_sd_hz",
+    "spectral_f2_mean_hz",
+    "spectral_f2_sd_hz",
+    "spectral_f3_mean_hz",
+    "spectral_f3_sd_hz",
+    "spectral_b1_mean_hz",
+    "spectral_b1_sd_hz",
+    "spectral_b2_mean_hz",
+    "spectral_b2_sd_hz",
+    "spectral_b3_mean_hz",
+    "spectral_b3_sd_hz",
+)
+
+SPECTRUM_KEYS = (
+    "spectral_centroid_mean_hz",
+    "spectral_centroid_sd_hz",
+    "spectral_spread_mean_hz",
+    "spectral_spread_sd_hz",
+    "spectral_slope_mean_db_per_hz",
+    "spectral_slope_sd_db_per_hz",
+    "spectral_rolloff_85_mean_hz",
+    "spectral_rolloff_85_sd_hz",
+    "spectral_flux_mean",
+    "spectral_flux_sd",
+    "spectral_flatness_mean",
+    "spectral_flatness_sd",
+    "spectral_entropy_mean",
+    "spectral_entropy_sd",
+)
+
+RHYTHM_KEYS = (
+    "time_syllable_duration_mean_s",
+    "time_syllable_duration_sd_s",
+    "time_syllable_duration_cv",
+    "time_syllable_duration_npvi",
+)
+
+ALL_KEYS = (
+    QUALITY_KEYS + TIMING_KEYS + PHONATION_KEYS + RESONANCE_KEYS + SPECTRUM_KEYS + RHYTHM_KEYS
+)
 
 _DEFINITIONS = (
     FeatureDefinition(
@@ -412,6 +456,246 @@ _DEFINITIONS = (
         pack="acoustic",
         level="recording",
         unit="dB",
+        population="adult",
+        reference="SAY catalog v1",
+    ),
+    FeatureDefinition(
+        key="spectral_f1_mean_hz",
+        pack="acoustic",
+        level="recording",
+        unit="Hz",
+        population="adult",
+        reference="SAY catalog v1",
+    ),
+    FeatureDefinition(
+        key="spectral_f1_sd_hz",
+        pack="acoustic",
+        level="recording",
+        unit="Hz",
+        population="adult",
+        reference="SAY catalog v1",
+    ),
+    FeatureDefinition(
+        key="spectral_f2_mean_hz",
+        pack="acoustic",
+        level="recording",
+        unit="Hz",
+        population="adult",
+        reference="SAY catalog v1",
+    ),
+    FeatureDefinition(
+        key="spectral_f2_sd_hz",
+        pack="acoustic",
+        level="recording",
+        unit="Hz",
+        population="adult",
+        reference="SAY catalog v1",
+    ),
+    FeatureDefinition(
+        key="spectral_f3_mean_hz",
+        pack="acoustic",
+        level="recording",
+        unit="Hz",
+        population="adult",
+        reference="SAY catalog v1",
+    ),
+    FeatureDefinition(
+        key="spectral_f3_sd_hz",
+        pack="acoustic",
+        level="recording",
+        unit="Hz",
+        population="adult",
+        reference="SAY catalog v1",
+    ),
+    FeatureDefinition(
+        key="spectral_b1_mean_hz",
+        pack="acoustic",
+        level="recording",
+        unit="Hz",
+        population="adult",
+        reference="SAY catalog v1",
+    ),
+    FeatureDefinition(
+        key="spectral_b1_sd_hz",
+        pack="acoustic",
+        level="recording",
+        unit="Hz",
+        population="adult",
+        reference="SAY catalog v1",
+    ),
+    FeatureDefinition(
+        key="spectral_b2_mean_hz",
+        pack="acoustic",
+        level="recording",
+        unit="Hz",
+        population="adult",
+        reference="SAY catalog v1",
+    ),
+    FeatureDefinition(
+        key="spectral_b2_sd_hz",
+        pack="acoustic",
+        level="recording",
+        unit="Hz",
+        population="adult",
+        reference="SAY catalog v1",
+    ),
+    FeatureDefinition(
+        key="spectral_b3_mean_hz",
+        pack="acoustic",
+        level="recording",
+        unit="Hz",
+        population="adult",
+        reference="SAY catalog v1",
+    ),
+    FeatureDefinition(
+        key="spectral_b3_sd_hz",
+        pack="acoustic",
+        level="recording",
+        unit="Hz",
+        population="adult",
+        reference="SAY catalog v1",
+    ),
+    FeatureDefinition(
+        key="spectral_centroid_mean_hz",
+        pack="acoustic",
+        level="recording",
+        unit="Hz",
+        population="adult",
+        reference="SAY catalog v1",
+    ),
+    FeatureDefinition(
+        key="spectral_centroid_sd_hz",
+        pack="acoustic",
+        level="recording",
+        unit="Hz",
+        population="adult",
+        reference="SAY catalog v1",
+    ),
+    FeatureDefinition(
+        key="spectral_spread_mean_hz",
+        pack="acoustic",
+        level="recording",
+        unit="Hz",
+        population="adult",
+        reference="SAY catalog v1",
+    ),
+    FeatureDefinition(
+        key="spectral_spread_sd_hz",
+        pack="acoustic",
+        level="recording",
+        unit="Hz",
+        population="adult",
+        reference="SAY catalog v1",
+    ),
+    FeatureDefinition(
+        key="spectral_slope_mean_db_per_hz",
+        pack="acoustic",
+        level="recording",
+        unit="dB/Hz",
+        population="adult",
+        reference="SAY catalog v1",
+    ),
+    FeatureDefinition(
+        key="spectral_slope_sd_db_per_hz",
+        pack="acoustic",
+        level="recording",
+        unit="dB/Hz",
+        population="adult",
+        reference="SAY catalog v1",
+    ),
+    FeatureDefinition(
+        key="spectral_rolloff_85_mean_hz",
+        pack="acoustic",
+        level="recording",
+        unit="Hz",
+        population="adult",
+        reference="SAY catalog v1",
+    ),
+    FeatureDefinition(
+        key="spectral_rolloff_85_sd_hz",
+        pack="acoustic",
+        level="recording",
+        unit="Hz",
+        population="adult",
+        reference="SAY catalog v1",
+    ),
+    FeatureDefinition(
+        key="spectral_flux_mean",
+        pack="acoustic",
+        level="recording",
+        unit="ratio",
+        population="adult",
+        reference="SAY catalog v1",
+    ),
+    FeatureDefinition(
+        key="spectral_flux_sd",
+        pack="acoustic",
+        level="recording",
+        unit="ratio",
+        population="adult",
+        reference="SAY catalog v1",
+    ),
+    FeatureDefinition(
+        key="spectral_flatness_mean",
+        pack="acoustic",
+        level="recording",
+        unit="ratio",
+        population="adult",
+        reference="SAY catalog v1",
+    ),
+    FeatureDefinition(
+        key="spectral_flatness_sd",
+        pack="acoustic",
+        level="recording",
+        unit="ratio",
+        population="adult",
+        reference="SAY catalog v1",
+    ),
+    FeatureDefinition(
+        key="spectral_entropy_mean",
+        pack="acoustic",
+        level="recording",
+        unit="ratio",
+        population="adult",
+        reference="SAY catalog v1",
+    ),
+    FeatureDefinition(
+        key="spectral_entropy_sd",
+        pack="acoustic",
+        level="recording",
+        unit="ratio",
+        population="adult",
+        reference="SAY catalog v1",
+    ),
+    FeatureDefinition(
+        key="time_syllable_duration_mean_s",
+        pack="acoustic",
+        level="recording",
+        unit="s",
+        population="adult",
+        reference="SAY catalog v1",
+    ),
+    FeatureDefinition(
+        key="time_syllable_duration_sd_s",
+        pack="acoustic",
+        level="recording",
+        unit="s",
+        population="adult",
+        reference="SAY catalog v1",
+    ),
+    FeatureDefinition(
+        key="time_syllable_duration_cv",
+        pack="acoustic",
+        level="recording",
+        unit="ratio",
+        population="adult",
+        reference="SAY catalog v1",
+    ),
+    FeatureDefinition(
+        key="time_syllable_duration_npvi",
+        pack="acoustic",
+        level="recording",
+        unit="ratio",
         population="adult",
         reference="SAY catalog v1",
     ),

@@ -21,6 +21,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+from scipy.signal import butter, sosfilt
 
 import speech_features.acoustic as acoustic
 from speech_features import list_features
@@ -239,6 +240,32 @@ EXPECTED_ACOUSTIC_KEYS = (
     "audio_dc_offset",
     "audio_duration_s",
     "audio_rms_dbfs",
+    "spectral_b1_mean_hz",
+    "spectral_b1_sd_hz",
+    "spectral_b2_mean_hz",
+    "spectral_b2_sd_hz",
+    "spectral_b3_mean_hz",
+    "spectral_b3_sd_hz",
+    "spectral_centroid_mean_hz",
+    "spectral_centroid_sd_hz",
+    "spectral_entropy_mean",
+    "spectral_entropy_sd",
+    "spectral_f1_mean_hz",
+    "spectral_f1_sd_hz",
+    "spectral_f2_mean_hz",
+    "spectral_f2_sd_hz",
+    "spectral_f3_mean_hz",
+    "spectral_f3_sd_hz",
+    "spectral_flatness_mean",
+    "spectral_flatness_sd",
+    "spectral_flux_mean",
+    "spectral_flux_sd",
+    "spectral_rolloff_85_mean_hz",
+    "spectral_rolloff_85_sd_hz",
+    "spectral_slope_mean_db_per_hz",
+    "spectral_slope_sd_db_per_hz",
+    "spectral_spread_mean_hz",
+    "spectral_spread_sd_hz",
     "time_articulation_rate_syllables_per_s",
     "time_long_pause_count",
     "time_overlap_s",
@@ -250,6 +277,10 @@ EXPECTED_ACOUSTIC_KEYS = (
     "time_response_latency_s",
     "time_speech_ratio",
     "time_speech_s",
+    "time_syllable_duration_cv",
+    "time_syllable_duration_mean_s",
+    "time_syllable_duration_npvi",
+    "time_syllable_duration_sd_s",
     "time_syllables_per_min",
     "time_voiced_segment_mean_s",
     "time_voiced_segment_sd_s",
@@ -278,6 +309,44 @@ EXPECTED_ACOUSTIC_KEYS = (
     "voice_jitter_local",
     "voice_shimmer_local",
     "voice_voiced_ratio",
+)
+
+# The 30 Task 7 keys in their formula groups (sorted order is the catalog's).
+RESONANCE_KEYS = (
+    "spectral_f1_mean_hz",
+    "spectral_f1_sd_hz",
+    "spectral_f2_mean_hz",
+    "spectral_f2_sd_hz",
+    "spectral_f3_mean_hz",
+    "spectral_f3_sd_hz",
+    "spectral_b1_mean_hz",
+    "spectral_b1_sd_hz",
+    "spectral_b2_mean_hz",
+    "spectral_b2_sd_hz",
+    "spectral_b3_mean_hz",
+    "spectral_b3_sd_hz",
+)
+SPECTRUM_KEYS = (
+    "spectral_centroid_mean_hz",
+    "spectral_centroid_sd_hz",
+    "spectral_spread_mean_hz",
+    "spectral_spread_sd_hz",
+    "spectral_slope_mean_db_per_hz",
+    "spectral_slope_sd_db_per_hz",
+    "spectral_rolloff_85_mean_hz",
+    "spectral_rolloff_85_sd_hz",
+    "spectral_flux_mean",
+    "spectral_flux_sd",
+    "spectral_flatness_mean",
+    "spectral_flatness_sd",
+    "spectral_entropy_mean",
+    "spectral_entropy_sd",
+)
+RHYTHM_KEYS = (
+    "time_syllable_duration_mean_s",
+    "time_syllable_duration_sd_s",
+    "time_syllable_duration_cv",
+    "time_syllable_duration_npvi",
 )
 
 # The 24 Task 6 keys in their formula groups (sorted order is the catalog's).
@@ -405,10 +474,13 @@ def _tok(tid, text, kind="word", word_id=None):
 
 
 class TestAcousticPackCatalog:
-    def test_exact_forty_three_keys_registered(self):
+    def test_exact_seventy_three_keys_registered(self):
         features = list_features(pack="acoustic")
         assert [f.key for f in features] == list(EXPECTED_ACOUSTIC_KEYS)
-        assert sorted(VOICE_KEYS) == list(EXPECTED_ACOUSTIC_KEYS[19:])
+        assert EXPECTED_ACOUSTIC_KEYS == tuple(sorted(EXPECTED_ACOUSTIC_KEYS))
+        assert sorted(VOICE_KEYS) == list(EXPECTED_ACOUSTIC_KEYS[-24:])
+        assert sorted((*RESONANCE_KEYS, *SPECTRUM_KEYS)) == list(EXPECTED_ACOUSTIC_KEYS[4:30])
+        assert sorted(RHYTHM_KEYS) == list(EXPECTED_ACOUSTIC_KEYS[41:45])
 
     def test_definitions_carry_full_metadata(self):
         for definition in list_features(pack="acoustic"):
@@ -770,6 +842,8 @@ class TestBundleContract:
             "MISSING_ANNOTATION",
             "INSUFFICIENT_VOICED_FRAMES",
             "INSUFFICIENT_CYCLES",
+            "INSUFFICIENT_SPEECH_FRAMES",
+            "INSUFFICIENT_FORMANTS",
         }
         assert math.isnan(bundle.recordings.loc[0, "audio_rms_dbfs"])
         assert math.isnan(bundle.recordings.loc[0, "voice_f0_mean_hz"])
@@ -796,7 +870,7 @@ class TestCatalogRegistrationIsolation:
             cwd=src.parent,
         )
         assert completed.returncode == 0, completed.stderr
-        assert completed.stdout.strip() == "43"
+        assert completed.stdout.strip() == "73"
 
 
 class TestClippingWidthBoundaries:
@@ -1275,3 +1349,398 @@ class TestCycleInsufficiencyAcrossIntervals:
                 issue.code == "INSUFFICIENT_CYCLES" and issue.feature == key for issue in issues
             ), key
         assert math.isfinite(features["voice_f0_mean_hz"])
+
+
+# ---------------------------------------------------------------------------
+# Task 7: acoustic resonance, spectrum, and rhythm (brief keys and behaviors)
+# ---------------------------------------------------------------------------
+def _resonator(x, f, b):
+    """One second-order digital resonator with known pole frequency/bandwidth."""
+    r = math.exp(-math.pi * b / 16000)
+    th = 2 * math.pi * f / 16000
+    out = np.zeros_like(x)
+    for i in range(len(x)):
+        out[i] = x[i] + 2 * r * math.cos(th) * out[i - 1] - r * r * out[i - 2]
+    return out
+
+
+def _vowel(fs=(500.0, 1500.0, 2500.0), bs=(80.0, 120.0, 160.0), f0=100.0, duration_s=1.0):
+    """Deterministic source-filter vowel: impulse train + three resonators.
+
+    The 100 Hz impulse train makes the source exactly periodic over the 400
+    sample frame (4 periods), so every frame is bitwise identical and the
+    shared mean-energy VAD marks all frames voiced; the resonators place
+    spectral peaks at exactly the configured formants.
+    """
+    n = int(round(16000 * duration_s))
+    src = np.zeros(n)
+    src[:: int(round(16000 / f0))] = 1.0
+    y = src.astype(float)
+    for f, b in zip(fs, bs):
+        y = _resonator(y, f, b)
+    y /= np.max(np.abs(y))
+    return 0.5 * y
+
+
+def _lowpass_noise(cutoff, order, seed, duration_s=1.0):
+    rng = np.random.default_rng(seed)
+    sos = butter(order, cutoff, fs=16000, output="sos")
+    return sosfilt(sos, rng.normal(0.0, 1.0, int(round(16000 * duration_s))))
+
+
+class TestResonanceSourceFilterVowel:
+    """LPC formants/bandwidths recovered from a known source-filter vowel.
+
+    Tolerances are intentionally wide where LPC/frame resolution is coarse:
+    the pre-emphasis + short-frame autocorrelation bias shifts F1 by ~9% and
+    bandwidths by up to ~45% on the synthetic vowel, so the assertions bound
+    the estimates around the nominal values instead of demanding exactness.
+    """
+
+    def test_formants_and_bandwidths_match_the_vowel(self):
+        f, _ = acoustic_pack.extract_acoustic_features(_vowel(), 16000, allow_unaligned=True)
+        # F1 within 10%, F2/F3 within 5% (measured 546.6 / 1503.2 / 2481.5).
+        assert f["spectral_f1_mean_hz"] == pytest.approx(500.0, rel=0.10)
+        assert f["spectral_f2_mean_hz"] == pytest.approx(1500.0, rel=0.05)
+        assert f["spectral_f3_mean_hz"] == pytest.approx(2500.0, rel=0.05)
+        # Bandwidths within 50% (measured 115.9 / 73.9 / 190.3 vs 80/120/160).
+        assert f["spectral_b1_mean_hz"] == pytest.approx(80.0, rel=0.50)
+        assert f["spectral_b2_mean_hz"] == pytest.approx(120.0, rel=0.50)
+        assert f["spectral_b3_mean_hz"] == pytest.approx(160.0, rel=0.50)
+
+    def test_formants_ordered_and_stable_across_frames(self):
+        f, _ = acoustic_pack.extract_acoustic_features(_vowel(), 16000, allow_unaligned=True)
+        assert f["spectral_f1_mean_hz"] < f["spectral_f2_mean_hz"] < f["spectral_f3_mean_hz"]
+        # The vowel is exactly periodic in the frame, so per-frame estimates
+        # are nearly constant; a real recording would show larger SDs.
+        for key in RESONANCE_KEYS:
+            assert math.isfinite(f[key]), key
+        for key in ("spectral_f1_sd_hz", "spectral_f2_sd_hz", "spectral_f3_sd_hz"):
+            assert f[key] < 10.0, key
+
+    def test_lpc_order_from_config_is_respected(self):
+        f, _ = acoustic_pack.extract_acoustic_features(
+            _vowel(),
+            16000,
+            allow_unaligned=True,
+            config=ExtractionConfig(lpc_order=10),
+        )
+        assert math.isfinite(f["spectral_f1_mean_hz"])
+
+
+class TestResonanceInsufficiency:
+    def test_digital_silence_yields_nan_with_exact_key_issues(self):
+        features, issues = acoustic_pack.extract_acoustic_features(
+            np.zeros(16000), 16000, allow_unaligned=True
+        )
+        for key in RESONANCE_KEYS:
+            assert math.isnan(features[key]), key
+            assert any(
+                issue.code == "INSUFFICIENT_SPEECH_FRAMES" and issue.feature == key
+                for issue in issues
+            ), key
+
+    def test_noise_yields_nan_formants_with_speech_frame_issues(self):
+        # White noise is VAD-voiced but has no stable periodic excitation, so
+        # no frame qualifies as a stable voiced frame; no formant is invented.
+        rng = np.random.default_rng(7)
+        features, issues = acoustic_pack.extract_acoustic_features(
+            0.3 * rng.normal(0.0, 1.0, 16000), 16000, allow_unaligned=True
+        )
+        for key in RESONANCE_KEYS:
+            assert math.isnan(features[key]), key
+            assert any(
+                issue.code == "INSUFFICIENT_SPEECH_FRAMES" and issue.feature == key
+                for issue in issues
+            ), key
+
+    def test_single_voiced_frame_yields_insufficient_formants(self):
+        # One 25 ms frame of the vowel: one stable voiced frame is not enough
+        # to characterise the distribution; no mean/SD is fabricated.
+        features, issues = acoustic_pack.extract_acoustic_features(
+            _vowel(duration_s=0.025), 16000, allow_unaligned=True
+        )
+        for key in RESONANCE_KEYS:
+            assert math.isnan(features[key]), key
+            assert any(
+                issue.code == "INSUFFICIENT_FORMANTS" and issue.feature == key for issue in issues
+            ), key
+
+
+class TestSpectrumToneAndNoise:
+    """Centroid/spread/slope/rolloff/flatness/entropy on tone vs noise."""
+
+    def test_tone_spectrum_matches_its_frequency(self):
+        f, _ = acoustic_pack.extract_acoustic_features(
+            _tone(1000, 1.0), 16000, allow_unaligned=True
+        )
+        assert f["spectral_centroid_mean_hz"] == pytest.approx(1000.0, abs=40.0)
+        assert f["spectral_rolloff_85_mean_hz"] == pytest.approx(1000.0, abs=80.0)
+        assert f["spectral_spread_mean_hz"] < 300.0
+        assert f["spectral_flatness_mean"] < 0.05
+        assert f["spectral_entropy_mean"] < 0.3
+        assert abs(f["spectral_slope_mean_db_per_hz"]) < 0.02
+        # A steady tone has identical frames: near-zero per-frame variability.
+        assert f["spectral_centroid_sd_hz"] < 1.0
+        assert f["spectral_flux_mean"] < 1e-3
+
+    def test_white_noise_spectrum_is_flat_and_broad(self):
+        rng = np.random.default_rng(7)
+        f, _ = acoustic_pack.extract_acoustic_features(
+            0.3 * rng.normal(0.0, 1.0, 16000), 16000, allow_unaligned=True
+        )
+        # Uniform power over 0..8 kHz: centroid at SR/4 = 4000, 85% rolloff at
+        # 0.85 * 8000 = 6800, near-flat dB slope, high flatness/entropy.
+        assert f["spectral_centroid_mean_hz"] == pytest.approx(4000.0, rel=0.15)
+        assert f["spectral_rolloff_85_mean_hz"] == pytest.approx(6800.0, abs=500.0)
+        assert f["spectral_spread_mean_hz"] > 1500.0
+        assert abs(f["spectral_slope_mean_db_per_hz"]) < 0.005
+        assert 0.3 < f["spectral_flatness_mean"] < 0.8
+        assert f["spectral_entropy_mean"] > 0.85
+        assert f["spectral_centroid_sd_hz"] > 50.0
+
+    def test_lowpass_noise_has_negative_slope_and_low_rolloff(self):
+        f, _ = acoustic_pack.extract_acoustic_features(
+            _lowpass_noise(2000, 4, seed=8), 16000, allow_unaligned=True
+        )
+        # Butterworth LP at 2 kHz: most power below the cutoff, dB level
+        # falling with frequency -> OLS slope clearly negative.
+        assert f["spectral_slope_mean_db_per_hz"] < -0.005
+        assert f["spectral_centroid_mean_hz"] < 2000.0
+        assert f["spectral_rolloff_85_mean_hz"] < 3000.0
+        assert f["spectral_flatness_mean"] < 0.1
+
+    def test_all_spectrum_keys_finite_on_noise(self):
+        rng = np.random.default_rng(9)
+        f, _ = acoustic_pack.extract_acoustic_features(
+            0.3 * rng.normal(0.0, 1.0, 16000), 16000, allow_unaligned=True
+        )
+        for key in SPECTRUM_KEYS:
+            assert math.isfinite(f[key]), key
+
+
+class TestSpectrumFlux:
+    def test_alternating_tones_raise_flux_above_steady_tone(self):
+        n = 16000
+        t = np.arange(n) / 16000
+        freq = 200.0 + 100.0 * (np.arange(n) // 400 % 2)  # 200/300 Hz per frame
+        alternating, _ = acoustic_pack.extract_acoustic_features(
+            0.5 * np.sin(2 * math.pi * freq * t), 16000, allow_unaligned=True
+        )
+        steady, _ = acoustic_pack.extract_acoustic_features(
+            _tone(250, 1.0), 16000, allow_unaligned=True
+        )
+        assert alternating["spectral_flux_mean"] > 0.3
+        assert alternating["spectral_flux_mean"] > steady["spectral_flux_mean"] + 0.2
+
+    def test_no_flux_across_disjoint_target_intervals(self):
+        # Two steady disjoint intervals at 200 Hz and 800 Hz: every frame
+        # inside each interval is identical, so intra-interval flux is zero.
+        # If the implementation paired the last frame of the first interval
+        # with the first frame of the second, flux would jump to ~1.4.
+        audio = np.concatenate(
+            [
+                np.zeros(int(16000 * 0.2)),
+                _tone(200, 0.5),
+                np.zeros(int(16000 * 0.5)),
+                _tone(800, 0.5),
+            ]
+        )
+        doc = _doc(
+            (_utt("u1", "p1", 0.2, 0.7), _utt("u2", "p1", 1.2, 1.7)),
+            (DocumentSpeaker(id="p1"),),
+        )
+        features, _ = acoustic_pack.extract_acoustic_features(audio, 16000, document=doc)
+        assert features["spectral_flux_mean"] < 1e-3
+        # Both intervals still contribute to the pooled distribution.
+        assert features["spectral_centroid_mean_hz"] == pytest.approx(500.0, abs=5.0)
+        assert math.isfinite(features["spectral_centroid_sd_hz"])
+
+    def test_flux_needs_a_consecutive_pair_inside_one_interval(self):
+        # Two intervals holding one voiced frame each: no intra-interval
+        # consecutive pair exists, so flux must be NaN with per-key issues.
+        audio = np.concatenate(
+            [
+                np.zeros(int(16000 * 0.2)),
+                _tone(160, 0.025),
+                np.zeros(int(16000 * 0.5)),
+                _tone(200, 0.025),
+            ]
+        )
+        doc = _doc(
+            (_utt("u1", "p1", 0.2, 0.225), (_utt("u2", "p1", 0.725, 0.75))),
+            (DocumentSpeaker(id="p1"),),
+        )
+        features, issues = acoustic_pack.extract_acoustic_features(audio, 16000, document=doc)
+        for key in ("spectral_flux_mean", "spectral_flux_sd"):
+            assert math.isnan(features[key]), key
+            assert any(
+                issue.code == "INSUFFICIENT_SPEECH_FRAMES" and issue.feature == key
+                for issue in issues
+            ), key
+
+
+class TestSpectrumInsufficiency:
+    def test_digital_silence_yields_nan_with_exact_key_issues(self):
+        features, issues = acoustic_pack.extract_acoustic_features(
+            np.zeros(16000), 16000, allow_unaligned=True
+        )
+        for key in SPECTRUM_KEYS:
+            assert math.isnan(features[key]), key
+            assert any(
+                issue.code == "INSUFFICIENT_SPEECH_FRAMES" and issue.feature == key
+                for issue in issues
+            ), key
+
+    def test_single_voiced_frame_is_insufficient(self):
+        features, issues = acoustic_pack.extract_acoustic_features(
+            _tone(160, 0.025), 16000, allow_unaligned=True
+        )
+        for key in SPECTRUM_KEYS:
+            assert math.isnan(features[key]), key
+            assert any(
+                issue.code == "INSUFFICIENT_SPEECH_FRAMES" and issue.feature == key
+                for issue in issues
+            ), key
+
+
+class TestRhythmHandCalculated:
+    """Mean/SD/CV and nPVI from explicit token times, hand-computed."""
+
+    def _doc_with_durations(self, utterance_durations, shared_word_id=False):
+        utterances = []
+        for i, durations in enumerate(utterance_durations):
+            tokens = []
+            start = 0.0
+            for j, d in enumerate(durations):
+                word_id = "w1" if shared_word_id else None
+                tokens.append(
+                    DocumentToken(
+                        id=f"u{i}_t{j}",
+                        text="xa",
+                        kind="word",
+                        start_s=start,
+                        end_s=start + d,
+                        word_id=word_id,
+                    )
+                )
+                start += d
+            utterances.append(_utt(f"u{i}", "p1", 0.0, start, tokens=tokens))
+        return _doc(tuple(utterances), (DocumentSpeaker(id="p1"),))
+
+    def test_hand_calculated_mean_sd_cv_npvi(self):
+        # Durations [0.2, 0.4, 0.6] in u0 and [0.3, 0.5] in u1.
+        # Pooled: mean 0.4; population SD = sqrt(0.1/5) = 0.141421; CV = 0.353553.
+        # nPVI: within u0, pairs (0.2,0.4)->0.6667 and (0.4,0.6)->0.4; within
+        # u1, pair (0.3,0.5)->0.5; pooled mean 0.522222 -> nPVI 52.2222. A
+        # cross-utterance pair (0.6,0.3) would change it to 55.83.
+        doc = self._doc_with_durations([[0.2, 0.4, 0.6], [0.3, 0.5]])
+        features, _ = acoustic_pack.extract_acoustic_features(
+            _tone(145, 2.0), 16000, document=doc, target_speaker="p1"
+        )
+        assert features["time_syllable_duration_mean_s"] == pytest.approx(0.4, abs=1e-9)
+        assert features["time_syllable_duration_sd_s"] == pytest.approx(
+            0.14142135623730953, rel=1e-9
+        )
+        assert features["time_syllable_duration_cv"] == pytest.approx(0.3535533905932738, rel=1e-9)
+        assert features["time_syllable_duration_npvi"] == pytest.approx(52.22222222222222, rel=1e-9)
+
+    def test_shared_word_id_does_not_collapse_syllable_tokens(self):
+        # Two tokens sharing one word_id still contribute two durations:
+        # no Vietnamese word-boundary inference, no syllable merging.
+        doc = self._doc_with_durations([[0.2, 0.3]], shared_word_id=True)
+        features, _ = acoustic_pack.extract_acoustic_features(
+            _tone(145, 1.0), 16000, document=doc, target_speaker="p1"
+        )
+        assert features["time_syllable_duration_mean_s"] == pytest.approx(0.25, abs=1e-9)
+        assert features["time_syllable_duration_sd_s"] == pytest.approx(0.05, abs=1e-9)
+
+    def test_single_utterance_boundaries_never_paired(self):
+        # One duration per utterance: mean/SD/CV are defined over the two
+        # pooled observations, but nPVI needs a consecutive pair inside one
+        # utterance and must never pair across the boundary.
+        doc = self._doc_with_durations([[0.2], [0.4]])
+        features, issues = acoustic_pack.extract_acoustic_features(
+            _tone(145, 2.0), 16000, document=doc, target_speaker="p1"
+        )
+        assert features["time_syllable_duration_mean_s"] == pytest.approx(0.3, abs=1e-9)
+        assert features["time_syllable_duration_sd_s"] == pytest.approx(0.1, abs=1e-9)
+        assert features["time_syllable_duration_cv"] == pytest.approx(0.3333333333333333, rel=1e-9)
+        assert math.isnan(features["time_syllable_duration_npvi"])
+        assert any(
+            issue.code == "MISSING_ANNOTATION" and issue.feature == "time_syllable_duration_npvi"
+            for issue in issues
+        )
+
+
+class TestRhythmInsufficiency:
+    def test_no_document_yields_nan_with_missing_annotation(self):
+        features, issues = acoustic_pack.extract_acoustic_features(
+            _tone(145, 1.0), 16000, allow_unaligned=True
+        )
+        for key in RHYTHM_KEYS:
+            assert math.isnan(features[key]), key
+            assert any(
+                issue.code == "MISSING_ANNOTATION" and issue.feature == key for issue in issues
+            ), key
+
+    def test_no_word_tokens_with_times_yield_nan_with_issues(self):
+        doc = _doc(
+            (_utt("u1", "p1", 0.0, 1.0, tokens=(_tok("t1", "\u00e0", kind="filler"),)),),
+            (DocumentSpeaker(id="p1"),),
+        )
+        features, issues = acoustic_pack.extract_acoustic_features(
+            _tone(145, 1.0), 16000, document=doc
+        )
+        for key in RHYTHM_KEYS:
+            assert math.isnan(features[key]), key
+            assert any(
+                issue.code == "MISSING_ANNOTATION" and issue.feature == key for issue in issues
+            ), key
+
+    def test_tokens_without_times_are_excluded(self):
+        doc = _doc(
+            (
+                _utt(
+                    "u1",
+                    "p1",
+                    0.0,
+                    1.0,
+                    tokens=(DocumentToken(id="t1", text="xa", kind="word"),),
+                ),
+            ),
+            (DocumentSpeaker(id="p1"),),
+        )
+        features, issues = acoustic_pack.extract_acoustic_features(
+            _tone(145, 1.0), 16000, document=doc
+        )
+        for key in RHYTHM_KEYS:
+            assert math.isnan(features[key]), key
+            assert any(
+                issue.code == "MISSING_ANNOTATION" and issue.feature == key for issue in issues
+            ), key
+
+
+class TestResonanceSpectrumIsolation:
+    def test_examiner_audio_does_not_affect_resonance_or_spectrum(self):
+        # Loud 1 kHz examiner tone before a quiet participant vowel: formants
+        # and spectral summaries must describe the vowel clips only.
+        examiner = _tone(1000, 1.0, amplitude=0.9)
+        participant = _vowel(duration_s=1.0)
+        audio = np.concatenate([examiner, np.zeros(int(16000 * 0.5)), participant])
+        doc = _doc(
+            (_utt("u1", "e1", 0.0, 1.0), _utt("u2", "p1", 1.5, 2.5)),
+            (
+                DocumentSpeaker(id="p1", role="participant"),
+                DocumentSpeaker(id="e1", role="examiner"),
+            ),
+        )
+        features, _ = acoustic_pack.extract_acoustic_features(
+            audio, 16000, document=doc, target_speaker="p1"
+        )
+        assert features["spectral_f1_mean_hz"] == pytest.approx(500.0, rel=0.15)
+        assert features["spectral_f2_mean_hz"] == pytest.approx(1500.0, rel=0.10)
+        # The vowel's centroid (~650 Hz) is far below the examiner's 1 kHz
+        # tone; a leaked examiner tone would drag it toward 1000.
+        assert features["spectral_centroid_mean_hz"] < 900.0
+        assert math.isfinite(features["spectral_flux_mean"])
