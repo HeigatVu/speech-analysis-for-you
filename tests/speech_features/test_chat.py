@@ -286,6 +286,25 @@ class TestChatRoundTrip:
         save_document(doc, tmp_path / "doc.json")
         assert _semantic_equals(doc, load_document(tmp_path / "doc.json"))
 
+    def test_no_blank_annotation_tiers_for_code_only_utterance(self, tmp_path):
+        text = """\
+@Begin
+@Languages:\tvie
+@Participants:\tPAR A
+@ID:\tvie|PAR|A|participant|
+@Media:\ta.wav | audio
+*PAR:\t[//]
+%xaud:\ta.wav 0.000 1.000
+@End
+"""
+        doc = load_document(_write(tmp_path, text=text))
+        assert [t.kind for t in doc.utterances[0].tokens] == ["revision"]  # zero content tokens
+        out = tmp_path / "out.cha"
+        save_document(doc, out)
+        encoded = out.read_text(encoding="utf-8")
+        assert "%mor:" not in encoded
+        assert "%gra:" not in encoded
+
 
 class TestChatDispatch:
     def test_detected_by_cha_extension(self, tmp_path):

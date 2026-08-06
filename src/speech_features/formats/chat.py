@@ -343,7 +343,7 @@ def encode_chat(document: SpeechDocument) -> str:
             lines.append(f"%xaud:\t{media_path} {pairs}")
         for name in ("%mor", "%gra"):
             values = layers.get(name[1:], {})
-            if all(t.id in values for t in content):
+            if content and all(t.id in values for t in content):
                 lines.append(name + ":\t" + " ".join(values[t.id] for t in content))
     for name, text in document.raw_tiers.items():
         if name in _KNOWN_HEADERS:
