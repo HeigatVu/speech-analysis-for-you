@@ -44,9 +44,10 @@ ModuleNotFoundError: No module named 'speech_features.schema'
   age/education, and duplicate `(participant_id, task)` pairs. Each row exposes a
   frozen `ExtractionInputs` (audio/transcript/task-spec paths) separate from its
   clinical fields.
-- **`validate_task_spec`** — validates a versioned task-spec JSON (`version == 1`)
-  and the per-task required fields the plan documents (picture, recall, phonemic,
-  semantic). Raises `InvalidTaskSpecError`.
+- **`validate_task_spec`** — validates a versioned task-spec JSON (`version == 1`),
+  the per-task required fields the plan documents (picture, recall, phonemic,
+  semantic), and — when the optional `task` field is present — that it names a
+  known task. Raises `InvalidTaskSpecError`.
 - **`Token` / `Utterance` / `Transcript` + `validate_transcript`** — parses
   transcript JSON v1 into a frozen, deeply immutable `Transcript` carrying
   `transcript_id` and `language`, with ordered participant/examiner utterances,
@@ -71,18 +72,39 @@ Production imports are stdlib only (`hashlib`, `math`, `unicodedata`,
 
 ## 2. Agy Review
 
-Reviewer: `agy:code-reviewer`. Full review of the exact diff and report.
-Verdict: **REQUEST CHANGES** — several contract gaps found. Findings:
+Reviewer: `agy:code-reviewer`. Agy re-reviewed the correction commit and this
+report against the plan and dispatch. Verdict: **APPROVED** (with one follow-up
+gate noted for the follow-up commit).
 
-| # | Severity | Location | Finding |
-|---|----------|----------|---------|
-| C1 | Major | `schema.py` | No versioned **task-spec** validation. Task-spec JSON is external and versioned per the plan, but `schema.py` never validates a spec's version or its per-task fields. |
-| C2 | Major | `Utterance.tokens` | Transcript tokens are stored in a mutable `list`; `Utterance` is `frozen` only nominally. Containers must be immutable for a trusted contract. |
-| C3 | Major | `manifest_hashes` | Provenance is not JSON-serializable (tuple keys), not clearly deduplicated, and the missing-file path raises the generic `FeatureExtractionError` with no machine-readable signal. |
-| C4 | Minor | errors | Errors expose a human message only. There is no stable **machine-readable error code**, and no dedicated code for a missing input file. |
-| C5 | Minor | `Token` | Optional **token timestamps** (`start_s`/`end_s`) are dropped: they are neither preserved nor validated. |
-| C6 | Major | transcript result | `validate_transcript` returns a bare `list[Utterance]`; the transcript's **`transcript_id` and `language`** are discarded. No frozen `Transcript` result. |
-| C7 | Minor | `validate_manifest` | `ManifestRow` bundles **extraction inputs** (audio/transcript/task-spec paths) with **diagnosis**. No structural separation of extraction inputs from clinical/diagnosis data. |
+### Approved verified gates
+
+- **Gated contract surface** — the public contract in `schema.py`
+  (`ExtractionConfig`, `FeatureResult`, `ExtractionInputs`, `ManifestRow`,
+  `Token`, `Utterance`, `Transcript`, `validate_manifest`, `validate_transcript`,
+  `validate_task_spec`, `sha256_file`/`manifest_hashes`) is present, importable,
+  and internally consistent.
+- **Immutability** — config/result/input/transcript types are frozen and
+  deeply immutable (tuple containers for `tokens`/`utterances`; `MappingProxyType`
+  for features/hashes).
+- **Versioned validation** — manifest and transcript validate a supported
+  `version`; task-spec validation enforces `version == 1` and required per-task
+  fields.
+- **Provenance** — `manifest_hashes` returns JSON-serializable, deduplicated
+  hashes and raises a structured `MissingInputError` for absent files.
+- **Error codes** — every error carries a stable machine-readable `code`
+  (including `MISSING_INPUT`, `INVALID_TASK_SPEC`).
+- **Separation of concerns** — `ExtractionInputs` isolates the three input paths
+  from clinical/diagnosis fields on `ManifestRow`.
+- **No-forbidden-imports gate** — production modules import stdlib only.
+
+### Follow-up gate (recorded by Agy, addressed in this commit)
+
+`validate_task_spec` must reject an unknown value when the optional `task` field
+is present, while continuing to accept a spec that omits that optional field
+(per the current contract). Agy approved the preceding work subject to this gate
+being closed in a follow-up. The fix is described in Resolution (I1) below; the
+report wording in this section was reconciled by the implementer, not edited by
+Agy.
 
 ## 3. Resolution
 
@@ -97,6 +119,7 @@ Every finding addressed with TDD (new failing tests first):
 | C5 | `Token.start_s`/`end_s` are preserved (optional, `None` when absent) and validated finite/ordered. Tests: `test_optional_token_timestamps_preserved`, `test_rejects_bad_token_timestamps`. |
 | C6 | `validate_transcript` returns a frozen `Transcript` carrying `transcript_id`, `language`, and a deeply immutable `utterances` tuple. Tests: `test_valid_transcript_v1_parses`, `test_preserves_transcript_id_and_language`. |
 | C7 | Added frozen `ExtractionInputs(audio_path, transcript_path, task_spec_path)`. `ManifestRow` now holds `inputs: ExtractionInputs` plus separate clinical fields; `audio_path`/`transcript_path`/`task_spec_path` remain accessible as properties. Test: `TestExtractionInputsSeparation`. |
+| I1 | Follow-up gate (Agy): `validate_task_spec` now rejects an unknown value when the optional `task` field is present (`task not in KNOWN_TASKS` → `InvalidTaskSpecError`), while still accepting a spec that omits `task`. Tests: `test_rejects_unknown_task_value_when_present`, `test_allows_spec_without_optional_task_field`. |
 
 ### Red run (missing behaviour, before implementation)
 
@@ -108,11 +131,18 @@ $ uv run pytest tests/speech_features/test_schema.py -q
  manifest/transcript immutability + JSON-serializability tests)
 ```
 
+### Follow-up red run (I1 gate, before the fix)
+
+```
+$ uv run pytest tests/speech_features/test_schema.py -q -k "unknown_task_value or without_optional_task"
+1 failed, 1 passed, 45 deselected
+```
+
 ### Final verification (after Resolution)
 
 ```
 $ uv run pytest tests/speech_features/test_schema.py -q
-46 passed in 0.04s
+47 passed in 0.02s
 
 $ uv run ruff check src/speech_features tests/speech_features
 All checks passed!
@@ -127,4 +157,4 @@ $ git diff --check
 No notebooks and no future-task files (`acoustic.py`, `linguistic.py`,
 `tasks.py`, `pipeline.py`, `evaluation.py`, docs `task-02..06`) were touched.
 Only Task 1 owned paths and this report were modified. Commit message:
-`fix: complete speech feature contracts`.
+`fix: validate declared task specs`.

@@ -528,9 +528,13 @@ class TestTaskSpecValidation:
         with pytest.raises(schema.InvalidTaskSpecError):
             schema.validate_task_spec(spec)
 
-    def test_unknown_task_spec_runs_but_validates_shape(self):
+    def test_rejects_unknown_task_value_when_present(self):
         spec = {"version": 1, "task": "not_a_known_task"}
-        # shape validation is task-agnostic; the task name itself is not enforced here
+        with pytest.raises(schema.InvalidTaskSpecError):
+            schema.validate_task_spec(spec)
+
+    def test_allows_spec_without_optional_task_field(self):
+        spec = {"version": 1}
         assert schema.validate_task_spec(spec) == 1
 
 

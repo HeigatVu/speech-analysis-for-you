@@ -433,7 +433,8 @@ def validate_task_spec(spec: dict) -> int:
     Enforces a supported ``version`` and the required, task-specific fields the
     plan documents (concept/entity/action groups for picture specs, idea
     aliases for recall, initials/exclusions for phonemic, item aliases +
-    subcategories for semantic).
+    subcategories for semantic). When the optional ``task`` field is present it
+    must name a known task.
     """
     if not isinstance(spec, dict):
         raise InvalidTaskSpecError("task spec must be a JSON object")
@@ -443,6 +444,8 @@ def validate_task_spec(spec: dict) -> int:
     if version != 1:
         raise InvalidTaskSpecError(f"unsupported task-spec version: {version!r}")
     task = spec.get("task")
+    if task is not None and task not in KNOWN_TASKS:
+        raise InvalidTaskSpecError(f"task spec declares unknown task: {task!r}")
     required = TASK_SPEC_FIELDS.get(task)
     if required is not None:
         missing = required - spec.keys()
