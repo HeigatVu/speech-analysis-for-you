@@ -5,6 +5,14 @@ and reviewed Vietnamese transcripts. See the feature-library plan under
 ``docs/`` for the full contract.
 """
 
+from .pipeline import (
+    BatchFailure,
+    BatchResult,
+    InvalidAudioError,
+    extract_manifest,
+    extract_recording,
+    read_wav,
+)
 from .schema import (
     ExtractionConfig,
     ExtractionInputs,
@@ -28,10 +36,13 @@ from .schema import (
 )
 
 __all__ = [
+    "BatchFailure",
+    "BatchResult",
     "ExtractionConfig",
     "ExtractionInputs",
     "FeatureExtractionError",
     "FeatureResult",
+    "InvalidAudioError",
     "InvalidManifestError",
     "InvalidTaskSpecError",
     "InvalidTranscriptError",
@@ -47,4 +58,7 @@ __all__ = [
     "validate_manifest",
     "validate_task_spec",
     "validate_transcript",
+    "extract_manifest",
+    "extract_recording",
+    "read_wav",
 ]
