@@ -69,6 +69,7 @@ from .schema import (
 # Importing the built-in packs registers their feature definitions in the
 # catalog; plain `import speech_features` must expose the full catalog.
 from .features import acoustic as _acoustic_pack  # noqa: F401
+from .features import linguistic as _linguistic_pack  # noqa: F401
 
 __all__ = [
     "AnnotationLayer",
