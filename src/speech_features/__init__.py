@@ -5,6 +5,8 @@ and reviewed Vietnamese transcripts. See the feature-library plan under
 ``docs/`` for the full contract.
 """
 
+__version__ = "0.2.0"
+
 from .pipeline import (
     BatchFailure,
     BatchResult,

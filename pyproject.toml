@@ -1,32 +1,35 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "speech-analysis-for-you"
-version = "0.1.0"
+version = "0.2.0"
 description = "Add your description here"
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.10"
 dependencies = [
-    "hydra-core>=1.3.2",
-    "import-ipynb>=0.2",
-    "ipykernel>=7.0.1",
-    "librosa>=0.11.0",
-    "nbconvert>=7.16.6",
-    "noisereduce>=3.0.3",
-    "numpy>=2.3.3",
-    "omegaconf>=2.3.0",
-    "opensmile>=2.6.0",
-    "pandas>=2.3.3",
-    "pydub>=0.25.1",
-    "pyloudnorm>=0.1.1",
-    "scikit-learn>=1.7.2",
-    "scipy>=1.16.2",
-    "soundfile>=0.13.1",
-    "tqdm>=4.67.1",
+    "numpy>=1.26",
+    "pandas>=2.1",
+    "scipy>=1.11",
 ]
 
+[project.scripts]
+say-features = "speech_features.cli:main"
+
 [project.optional-dependencies]
+legacy-ad = [
+    "scikit-learn>=1.3",
+]
+legacy-preprocessing = [
+    "hydra-core>=1.3",
+    "omegaconf>=2.3",
+    "pydub>=0.25",
+    "matplotlib>=3.8",
+    "tqdm>=4.67",
+]
 dev = [
     "pytest>=8.0.0",
-    "black>=24.0.0",
     "ruff>=0.1.0",
 ]
 
