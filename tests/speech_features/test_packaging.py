@@ -33,6 +33,12 @@ def test_setuptools_build_backend_and_exact_requirement():
     assert PYPROJECT["build-system"]["requires"] == ["setuptools>=68"]
 
 
+def test_setuptools_discovery_is_restricted_to_speech_features():
+    find = PYPROJECT["tool"]["setuptools"]["packages"]["find"]
+    assert find["where"] == ["src"]
+    assert find["include"] == ["speech_features*"]
+
+
 def test_description_is_an_accurate_research_library_description():
     description = PROJECT["description"]
     assert description != PLACEHOLDER_DESCRIPTION
