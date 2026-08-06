@@ -44,12 +44,29 @@ Baseline: `81f5d17`, 194 tests, Ruff clean. Plan commit: `a0c594b`.
   `tests/speech_features` suite passes with Ruff clean.
 - **Verification:** focused and full pytest, Ruff check and format check,
   `git diff --check`, catalog row count 170, forbidden runtime import scan.
-- **Deferred to controller (sandbox boundary):** `uv lock --check`,
-  `uv build --wheel`, and the isolated Python 3.10 wheel-install smoke
-  (import `speech_features`, version 0.2.0, 170 definitions, no eager
-  `sklearn` import, `say-features --help`, `say-features list-features
-  --pack acoustic`) are **controller-pending** and must be run after this
-  commit; the committed report and this summary mark them as pending.
+- **Round-1 fix:** Task 12 review round 1 (P0: auto-discovered legacy
+  `preprocessing`/`utils` in the wheel; P1: no discovery regression test)
+  was fixed by commit `c1bc35d` (`fix: restrict wheel to speech features
+  package`) — `[tool.setuptools.packages.find]` with
+  `where = ["src"]`, `include = ["speech_features*"]` plus a focused
+  packaging test. Agy's scoped re-review of the fix: **APPROVE**.
+- **Release verification (final, controller-verified):**
+  - `uv lock --check`: clean, 37 packages resolved.
+  - `uv build --wheel`: clean build succeeded.
+  - Wheel contents: only `speech_features/**` and `dist-info/**`;
+    `top_level.txt` lists exactly `speech_features`; no
+    `preprocessing`/`utils`, notebooks, tests, `.serena`,
+    `.superpowers`, or patient/task data.
+  - Fresh Python 3.10.20 venv, wheel installed with only core
+    dependencies; from outside the repository: `__version__ == "0.2.0"`,
+    `list_features()` returns 170 definitions, no eager `sklearn`
+    import, and legacy `preprocessing`/`utils` top-level packages
+    absent.
+  - Installed CLI: `say-features --help` and
+    `say-features list-features --pack acoustic` passed (73 acoustic
+    rows plus header).
+  - 9 packaging tests and 580 full tests passed; Ruff check/format and
+    `git diff --check` clean.
 
 ## Deferred minors (SDD ledger — not fixed in Task 12)
 
@@ -73,10 +90,11 @@ None of these deferred minors were fixed as part of Task 12.
 
 # Agy review
 
-(Ready for the final whole-branch reviewer/controller: this section will
-record the whole-branch review verdict and any fix rounds.)
+(Pending: to be recorded by the final whole-branch reviewer/controller,
+along with any fix rounds. Task 12 round-1 scoped re-review: APPROVE, see
+`OpenCode implementation` above.)
 
 # Resolution
 
-(Ready for the final whole-branch reviewer/controller: this section will
-record the final acceptance run and the closing verdict.)
+(Pending: final whole-branch acceptance run and closing verdict to be
+recorded by the final whole-branch reviewer/controller.)
