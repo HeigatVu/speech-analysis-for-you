@@ -235,8 +235,27 @@ class TestExtract:
     def test_extract_invalid_manifest_exits_two(self, tmp_path, capsys):
         manifest = tmp_path / "manifest.json"
         _write_json(manifest, {"version": 1, "rows": []})
-        assert self._extract(tmp_path, manifest, tmp_path / "out") == 2
+        out = tmp_path / "out"
+        assert self._extract(tmp_path, manifest, out) == 2
         assert "say-features: error:" in capsys.readouterr().err
+        assert not out.exists()
+
+    def test_extract_oserror_returns_two_no_traceback(self, tmp_path, capsys, monkeypatch):
+        import speech_features.cli as cli
+
+        manifest = tmp_path / "manifest.json"
+        _write_json(manifest, _manifest([_row(tmp_path, "r1")]))
+
+        def _denied(*args, **kwargs):
+            raise PermissionError("permission denied")
+
+        monkeypatch.setattr(cli, "extract_batch", _denied)
+        out = tmp_path / "out"
+        assert main(["extract", str(manifest), str(out)]) == 2
+        captured = capsys.readouterr()
+        assert "permission denied" in captured.err
+        assert "Traceback" not in captured.err
+        assert not (out / "recordings.csv").exists()
 
     def test_extract_single_pack_flag(self, tmp_path):
         manifest = tmp_path / "manifest.json"

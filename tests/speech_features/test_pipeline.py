@@ -24,6 +24,7 @@ from speech_features.result import (
     ExtractionError,
     FeatureBundle,
     InvalidConfigError,
+    MissingAnnotationError,
     TargetSpeakerRequiredError,
     UnknownPackError,
 )
@@ -728,7 +729,7 @@ class TestLabelFreeExtraction:
         )
         utterance_only = speech_features.extract(audio, doc, levels=("utterance",))
         assert list(utterance_only.recordings.columns) == ["recording_id", "speaker_id"]
-        assert len(utterance_only.recordings) == 1
+        assert len(utterance_only.recordings) == 0
         assert len(utterance_only.utterances) == 1
 
     def test_pack_order_cannot_change_columns(self, tmp_path):
@@ -786,13 +787,20 @@ class TestLabelFreeExtraction:
         with pytest.raises(InvalidConfigError) as exc:
             speech_features.extract(audio, multi, target_speaker="NOPE")
         assert exc.value.code == "INVALID_CONFIG"
-        bundle = speech_features.extract(audio, multi, target_speaker="EXA")
+        bundle = speech_features.extract(audio, multi, target_speaker="EXA", packs=("adult_neuro",))
         assert bundle.recordings.iloc[0]["speaker_id"] == "EXA"
+
+    def test_missing_alignment_raises_missing_annotation(self, tmp_path):
+        doc = _document(tmp_path, words=None)
+        with pytest.raises(MissingAnnotationError) as exc:
+            speech_features.extract(_write_wav(tmp_path / "a.wav", _tone(145, 1.0)), doc)
+        assert exc.value.code == "MISSING_ANNOTATION"
 
     def test_empty_document_resolves_empty_speaker_id(self, tmp_path):
         bundle = speech_features.extract(
             _write_wav(tmp_path / "a.wav", _tone(145, 1.0)),
             _document(tmp_path, words=None, speakers=()),
+            packs=("adult_neuro",),
         )
         assert bundle.recordings.iloc[0]["speaker_id"] == ""
         assert bundle.provenance["target_speakers"] == [""]
@@ -824,6 +832,27 @@ class TestLabelFreeExtraction:
             with pytest.raises(InvalidConfigError):
                 speech_features.extract(audio, doc, levels=bad)
 
+    def test_selection_validation_trust_boundary(self, tmp_path):
+        audio = _write_wav(tmp_path / "a.wav", _tone(145, 1.0))
+        doc = _document(tmp_path)
+        for bad in (
+            {"acoustic"},
+            frozenset({"acoustic"}),
+            (["acoustic"],),
+            [["acoustic"]],
+            ({"acoustic", "adult_neuro"}),
+            ("acoustic", ["acoustic"]),
+        ):
+            with pytest.raises(InvalidConfigError):
+                speech_features.extract(audio, doc, packs=bad)
+        for bad in ({"recording"}, frozenset({"utterance"}), (["recording"],), [["recording"]]):
+            with pytest.raises(InvalidConfigError):
+                speech_features.extract(audio, doc, levels=bad)
+        with pytest.raises(InvalidConfigError):
+            speech_features.extract(audio, doc, target_speaker=["PAR"])
+        with pytest.raises(InvalidConfigError):
+            speech_features.extract(audio, doc, target_speaker=object())
+
     def test_invalid_config_object_rejected(self, tmp_path):
         with pytest.raises(InvalidConfigError) as exc:
             speech_features.extract(
@@ -851,10 +880,14 @@ class TestLabelFreeExtraction:
         assert issue.speaker_id == "PAR"
         assert "%xspa" in issue.message
         assert "*PAR: some tier" in issue.message
+        assert pd.isna(issue.feature)
+        assert pd.isna(issue.utterance_id)
 
     def test_nan_preserved_and_issues_name_nan_features(self, tmp_path):
         bundle = speech_features.extract(
-            _write_wav(tmp_path / "a.wav", _tone(145, 1.0)), _document(tmp_path, words=None)
+            _write_wav(tmp_path / "a.wav", _tone(145, 1.0)),
+            _document(tmp_path, words=None),
+            packs=("adult_neuro",),
         )
         row = bundle.recordings.iloc[0]
         assert pd.isna(row["lex_token_count"])
@@ -1018,6 +1051,7 @@ class TestLabelFreeBatch:
             [{**good, "target_speakers": []}],
             [{**good, "target_speakers": ["PAR", "PAR"]}],
             [{**good, "target_speakers": [""]}],
+            [{**good, "target_speakers": [["PAR"]]}],
         ]
         for rows in bad_rows:
             with pytest.raises(InvalidManifestError):
@@ -1040,8 +1074,101 @@ class TestLabelFreeBatch:
         }
         assert ("r2", "", "MISSING_INPUT") in errors
         assert bundle.provenance["counts"] == {"total": 2, "success": 1, "failure": 1}
-        assert bundle.provenance["recordings"]["r2"]["error_code"] == "MISSING_INPUT"
-        assert "audio_sha256" not in bundle.provenance["recordings"]["r2"]
+        entry = bundle.provenance["recordings"]["r2"]
+        assert entry["error_code"] == "MISSING_INPUT"
+        assert entry["audio_sha256"] == sha256_file(tmp_path / "a2.wav")
+        assert "transcript_sha256" not in entry
+
+    def test_batch_missing_audio_keeps_available_transcript_hash(self, tmp_path):
+        row = _manifest_row(tmp_path, "r1", audio="missing.wav", transcript="t1.json")
+        (tmp_path / "missing.wav").unlink()
+        bundle = speech_features.extract_batch(_write_manifest(tmp_path, [row]))
+        assert len(bundle.recordings) == 0
+        errors = {
+            (r.recording_id, r.speaker_id, r.code)
+            for r in bundle.issues[bundle.issues["severity"] == "error"].itertuples(index=False)
+        }
+        assert ("r1", "", "MISSING_INPUT") in errors
+        entry = bundle.provenance["recordings"]["r1"]
+        assert entry["error_code"] == "MISSING_INPUT"
+        assert entry["transcript_sha256"] == sha256_file(tmp_path / "t1.json")
+        assert "audio_sha256" not in entry
+
+    def test_batch_invalid_transcript_keeps_both_file_hashes(self, tmp_path):
+        row = _manifest_row(tmp_path, "r1", audio="a1.wav", transcript="bad.json")
+        _write_json(tmp_path / "bad.json", {"version": 2, "document_id": 5})
+        bundle = speech_features.extract_batch(_write_manifest(tmp_path, [row]))
+        errors = {
+            (r.recording_id, r.speaker_id, r.code)
+            for r in bundle.issues[bundle.issues["severity"] == "error"].itertuples(index=False)
+        }
+        assert ("r1", "", "INVALID_DOCUMENT") in errors
+        entry = bundle.provenance["recordings"]["r1"]
+        assert entry["error_code"] == "INVALID_DOCUMENT"
+        assert entry["audio_sha256"] == sha256_file(tmp_path / "a1.wav")
+        assert entry["transcript_sha256"] == sha256_file(tmp_path / "bad.json")
+
+    def test_batch_malformed_document_is_isolated(self, tmp_path):
+        good = _manifest_row(tmp_path, "r1", audio="a1.wav", transcript="t1.json")
+        bad = _manifest_row(tmp_path, "r2", audio="a2.wav", transcript="bad.json")
+        _write_json(tmp_path / "bad.json", {"version": 2, "document_id": 5})
+        bundle = speech_features.extract_batch(_write_manifest(tmp_path, [good, bad]))
+        assert list(bundle.recordings["recording_id"]) == ["r1"]
+        errors = {
+            (r.recording_id, r.speaker_id, r.code)
+            for r in bundle.issues[bundle.issues["severity"] == "error"].itertuples(index=False)
+        }
+        assert ("r2", "", "INVALID_DOCUMENT") in errors
+        assert bundle.provenance["counts"] == {"total": 2, "success": 1, "failure": 1}
+
+    def test_batch_unexpected_loader_exception_is_isolated(self, tmp_path, monkeypatch):
+        import speech_features.extraction as extraction
+
+        good = _manifest_row(tmp_path, "r1", audio="a1.wav", transcript="t1.json")
+        bad = _manifest_row(tmp_path, "r2", audio="a2.wav", transcript="t2.json")
+        original = extraction.load_document
+
+        def boom(path):
+            if "t2" in str(path):
+                raise RuntimeError("loader exploded")
+            return original(path)
+
+        monkeypatch.setattr(extraction, "load_document", boom)
+        bundle = speech_features.extract_batch(_write_manifest(tmp_path, [good, bad]))
+        assert list(bundle.recordings["recording_id"]) == ["r1"]
+        errors = {
+            (r.recording_id, r.speaker_id, r.code)
+            for r in bundle.issues[bundle.issues["severity"] == "error"].itertuples(index=False)
+        }
+        assert ("r2", "", "EXTRACTION_ERROR") in errors
+        assert bundle.provenance["counts"] == {"total": 2, "success": 1, "failure": 1}
+        assert bundle.provenance["recordings"]["r2"]["error_code"] == "EXTRACTION_ERROR"
+
+    def test_batch_missing_alignment_is_isolated(self, tmp_path):
+        row = _manifest_row(tmp_path, "r1", transcript="t1.json")
+        _write_json(tmp_path / "t1.json", _document_json(words=None))
+        bundle = speech_features.extract_batch(_write_manifest(tmp_path, [row]))
+        errors = {
+            (r.recording_id, r.speaker_id, r.code)
+            for r in bundle.issues[bundle.issues["severity"] == "error"].itertuples(index=False)
+        }
+        assert ("r1", "PAR", "MISSING_ANNOTATION") in errors
+        assert bundle.provenance["counts"] == {"total": 1, "success": 0, "failure": 1}
+        assert len(bundle.recordings) == 0
+
+    def test_batch_issues_preserve_nulls(self, tmp_path):
+        row = _manifest_row(tmp_path, "r1", transcript="missing.json")
+        (tmp_path / "missing.json").unlink()
+        bundle = speech_features.extract_batch(_write_manifest(tmp_path, [row]))
+        issue = bundle.issues[bundle.issues["code"] == "MISSING_INPUT"].iloc[0]
+        assert pd.isna(issue["utterance_id"])
+        assert pd.isna(issue["feature"])
+        assert issue["severity"] == "error"
+        rows = [
+            tuple("" if pd.isna(value) else value for value in r)
+            for r in bundle.issues.itertuples(index=False)
+        ]
+        assert rows == sorted(rows)
 
     def test_batch_target_failure_isolation(self, tmp_path):
         row = _manifest_row(tmp_path, "r1", targets=["PAR", "NOPE"])

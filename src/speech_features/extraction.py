@@ -51,7 +51,18 @@ _ISSUE_COLUMNS = (
     "severity",
     "message",
 )
+_RECORDING_ID_COLUMNS = ("recording_id", "speaker_id")
+_UTTERANCE_ID_COLUMNS = ("recording_id", "speaker_id", "utterance_id", "start_s", "end_s")
 _MANIFEST_ROW_KEYS = frozenset({"recording_id", "audio_path", "transcript_path", "target_speakers"})
+
+
+def _sorted_issues(issues_df: pd.DataFrame) -> pd.DataFrame:
+    """Sort issues by all seven columns with nulls ordered as empty strings,
+    preserving the original ``None``/NaN values in the returned frame."""
+    if issues_df.empty:
+        return issues_df
+    order = issues_df.fillna("").sort_values(by=list(_ISSUE_COLUMNS), kind="stable").index
+    return issues_df.loc[order].reset_index(drop=True)
 
 
 # ---------------------------------------------------------------------------
@@ -66,29 +77,51 @@ def _config(config) -> ExtractionConfig:
 
 
 def _canonical_packs(packs) -> tuple[str, ...]:
-    """Validate ``packs`` and return them in static catalog order."""
-    if isinstance(packs, (str, bytes)) or not isinstance(packs, (list, tuple, set, frozenset)):
-        raise InvalidConfigError("packs must be a non-empty duplicate-free sequence of pack names")
-    if not packs or len(packs) != len(set(packs)):
-        raise InvalidConfigError("packs must be a non-empty duplicate-free sequence of pack names")
+    """Validate ``packs`` and return them in static catalog order.
+
+    Accepts only list/tuple selections; every element must be a string, then
+    duplicates are rejected, then unknown names raise ``UNKNOWN_PACK``.
+    """
+    if not isinstance(packs, (list, tuple)):
+        raise InvalidConfigError(
+            "packs must be a non-empty duplicate-free list or tuple of pack names"
+        )
+    if not packs:
+        raise InvalidConfigError(
+            "packs must be a non-empty duplicate-free list or tuple of pack names"
+        )
     for name in packs:
-        if not isinstance(name, str) or name not in PACKS:
+        if not isinstance(name, str):
+            raise InvalidConfigError(f"pack names must be strings, got {name!r}")
+    if len(packs) != len(set(packs)):
+        raise InvalidConfigError(
+            "packs must be a non-empty duplicate-free list or tuple of pack names"
+        )
+    for name in packs:
+        if name not in PACKS:
             raise UnknownPackError(f"unknown feature pack {name!r}; known packs: {sorted(PACKS)}")
     return tuple(name for name in PACKS if name in packs)
 
 
 def _canonical_levels(levels) -> tuple[str, ...]:
     """Validate ``levels`` and return them in the canonical recording, utterance order."""
-    if isinstance(levels, (str, bytes)) or not isinstance(levels, (list, tuple, set, frozenset)):
+    if not isinstance(levels, (list, tuple)):
         raise InvalidConfigError(
-            "levels must be a non-empty duplicate-free sequence of recording/utterance"
+            "levels must be a non-empty duplicate-free list or tuple of recording/utterance"
         )
-    if not levels or len(levels) != len(set(levels)):
+    if not levels:
         raise InvalidConfigError(
-            "levels must be a non-empty duplicate-free sequence of recording/utterance"
+            "levels must be a non-empty duplicate-free list or tuple of recording/utterance"
         )
     for level in levels:
-        if not isinstance(level, str) or level not in PACK_LEVELS:
+        if not isinstance(level, str):
+            raise InvalidConfigError(f"level names must be strings, got {level!r}")
+    if len(levels) != len(set(levels)):
+        raise InvalidConfigError(
+            "levels must be a non-empty duplicate-free list or tuple of recording/utterance"
+        )
+    for level in levels:
+        if level not in PACK_LEVELS:
             raise InvalidConfigError(
                 f"unknown feature level {level!r}; allowed levels: {sorted(PACK_LEVELS)}"
             )
@@ -101,6 +134,8 @@ def _resolve_speaker(document, target_speaker) -> str:
     target; an empty document resolves to the empty speaker id."""
     speaker_ids = {speaker.id for speaker in document.speakers}
     if target_speaker is not None:
+        if not isinstance(target_speaker, str):
+            raise InvalidConfigError(f"target speaker must be a string, got {target_speaker!r}")
         if target_speaker not in speaker_ids:
             raise InvalidConfigError(
                 f"target speaker {target_speaker!r} is not a speaker of the speech document"
@@ -187,7 +222,7 @@ def _extract_bundle(
                 config.sample_rate,
                 document=document,
                 target_speaker=pack_target,
-                allow_unaligned=True,
+                allow_unaligned=False,
                 config=config,
                 recording_id=recording_id,
                 clipping_boundary=1.0 - 2.0 ** -(width * 8 - 1),
@@ -206,16 +241,19 @@ def _extract_bundle(
 
         recording_keys, utterance_keys = _catalog_columns(packs, levels)
 
-        recordings = pd.DataFrame(
-            [
-                [recording_id, speaker_id]
-                + [recording_features.get(key, float("nan")) for key in recording_keys]
-            ],
-            columns=("recording_id", "speaker_id") + recording_keys,
-        )
-        recordings = recordings.sort_values(
-            by=["recording_id", "speaker_id"], kind="stable"
-        ).reset_index(drop=True)
+        if "recording" in levels:
+            recordings = pd.DataFrame(
+                [
+                    [recording_id, speaker_id]
+                    + [recording_features.get(key, float("nan")) for key in recording_keys]
+                ],
+                columns=_RECORDING_ID_COLUMNS + recording_keys,
+            )
+            recordings = recordings.sort_values(
+                by=list(_RECORDING_ID_COLUMNS), kind="stable"
+            ).reset_index(drop=True)
+        else:
+            recordings = pd.DataFrame(columns=_RECORDING_ID_COLUMNS)
 
         if "utterance" in levels and utterance_keys:
             rows = [
@@ -225,18 +263,14 @@ def _extract_bundle(
             ]
             utterances = pd.DataFrame(
                 rows,
-                columns=("recording_id", "speaker_id", "utterance_id", "start_s", "end_s")
-                + utterance_keys,
+                columns=_UTTERANCE_ID_COLUMNS + utterance_keys,
             )
             if len(utterances):
                 utterances = utterances.sort_values(
-                    by=["recording_id", "speaker_id", "start_s", "end_s", "utterance_id"],
-                    kind="stable",
+                    by=list(_UTTERANCE_ID_COLUMNS), kind="stable"
                 ).reset_index(drop=True)
         else:
-            utterances = pd.DataFrame(
-                columns=("recording_id", "speaker_id", "utterance_id", "start_s", "end_s")
-            )
+            utterances = pd.DataFrame(columns=_UTTERANCE_ID_COLUMNS)
 
         level_of = {definition.key: definition.level for definition in list_features()}
         kept: list[FeatureIssue] = [
@@ -262,8 +296,7 @@ def _extract_bundle(
             (i.recording_id, i.speaker_id, i.utterance_id, i.feature, i.code, i.severity, i.message)
             for i in kept
         ]
-        issues_df = pd.DataFrame(issue_rows, columns=_ISSUE_COLUMNS)
-        issues_df = issues_df.fillna("").sort_values(by=list(_ISSUE_COLUMNS), kind="stable")
+        issues_df = _sorted_issues(pd.DataFrame(issue_rows, columns=_ISSUE_COLUMNS))
 
         provenance = {
             "package_version": __version__,
@@ -378,13 +411,13 @@ def _validate_manifest_v2(manifest: dict, base_dir) -> list[dict]:
         if targets is not None:
             if not isinstance(targets, list) or not targets:
                 raise InvalidManifestError(f"row {i} target_speakers must be a non-empty list")
-            if len(targets) != len(set(targets)):
-                raise InvalidManifestError(f"row {i} target_speakers must be unique")
             for target in targets:
                 if not isinstance(target, str) or not target:
                     raise InvalidManifestError(
                         f"row {i} target_speakers entries must be non-empty strings"
                     )
+            if len(targets) != len(set(targets)):
+                raise InvalidManifestError(f"row {i} target_speakers must be unique")
         parsed.append(
             {
                 "recording_id": recording_id,
@@ -404,6 +437,23 @@ def _annotation_sources(document):
         ),
         key=lambda s: (s["layer"], s["source"], s["confidence"]),
     )
+
+
+def _row_provenance_entry(target_speakers, transcript_sha256, audio_sha256, sources, error=None):
+    """One deterministic per-recording provenance entry; every available input
+    hash and annotation source is retained, and an error is recorded without
+    inventing hashes for unavailable inputs."""
+    entry = {"target_speakers": list(target_speakers)}
+    if transcript_sha256 is not None:
+        entry["transcript_sha256"] = transcript_sha256
+    if audio_sha256 is not None:
+        entry["audio_sha256"] = audio_sha256
+    if sources is not None:
+        entry["annotation_sources"] = sources
+    if error is not None:
+        entry["error_code"] = getattr(error, "code", "EXTRACTION_ERROR")
+        entry["error_message"] = str(error)
+    return entry
 
 
 def extract_batch(
@@ -448,22 +498,44 @@ def extract_batch(
 
     for row in rows:
         recording_id = row["recording_id"]
+        transcript_sha256 = None
+        audio_sha256 = None
+        document = None
+        sources = None
+        row_error = None
+
         try:
             transcript_sha256 = sha256_file(row["transcript_path"])
+        except Exception as exc:  # noqa: BLE001 - isolated per-input hashing
+            row_error = row_error or exc
+        try:
             document = load_document(row["transcript_path"])
+            sources = _annotation_sources(document)
+        except Exception as exc:  # noqa: BLE001 - isolate loader failures
+            row_error = row_error or exc
+        try:
             audio_sha256 = sha256_file(row["audio_path"])
-            if "acoustic" in canonical_packs:
+        except Exception as exc:  # noqa: BLE001 - isolated per-input hashing
+            row_error = row_error or exc
+        try:
+            if "acoustic" in canonical_packs and audio_sha256 is not None:
                 audio, width = _read_wav_with_width(row["audio_path"], sample_rate=cfg.sample_rate)
             else:
                 audio, width = None, None
-            sources = _annotation_sources(document)
-        except FeatureExtractionError as exc:
-            batch_issues.append((recording_id, "", None, None, exc.code, "error", str(exc)))
-            per_recording[recording_id] = {
-                "target_speakers": list(row["target_speakers"] or []),
-                "error_code": exc.code,
-                "error_message": str(exc),
-            }
+        except Exception as exc:  # noqa: BLE001 - isolate per-row audio read
+            audio, width = None, None
+            row_error = row_error or exc
+
+        if row_error is not None:
+            code = getattr(row_error, "code", "EXTRACTION_ERROR")
+            batch_issues.append((recording_id, "", None, None, code, "error", str(row_error)))
+            per_recording[recording_id] = _row_provenance_entry(
+                row["target_speakers"] or [],
+                transcript_sha256,
+                audio_sha256,
+                sources,
+                error=row_error,
+            )
             total += 1
             failure += 1
             continue
@@ -476,11 +548,9 @@ def extract_batch(
                 targets = [_resolve_speaker(document, None)]
             except TargetSpeakerRequiredError as exc:
                 batch_issues.append((recording_id, "", None, None, exc.code, "error", str(exc)))
-                per_recording[recording_id] = {
-                    "target_speakers": [],
-                    "error_code": exc.code,
-                    "error_message": str(exc),
-                }
+                per_recording[recording_id] = _row_provenance_entry(
+                    [], transcript_sha256, audio_sha256, sources, error=exc
+                )
                 total += 1
                 failure += 1
                 continue
@@ -507,12 +577,9 @@ def extract_batch(
                 batch_issues.append((recording_id, target, None, None, exc.code, "error", str(exc)))
                 failure += 1
 
-        per_recording[recording_id] = {
-            "target_speakers": list(targets),
-            "audio_sha256": audio_sha256,
-            "transcript_sha256": transcript_sha256,
-            "annotation_sources": sources,
-        }
+        per_recording[recording_id] = _row_provenance_entry(
+            targets, transcript_sha256, audio_sha256, sources
+        )
 
     recordings = (
         pd.concat([bundle.recordings for bundle in bundles], ignore_index=True)
@@ -534,8 +601,7 @@ def extract_batch(
 
     for bundle in bundles:
         batch_issues.extend(bundle.issues.itertuples(index=False))
-    issues_df = pd.DataFrame(batch_issues, columns=_ISSUE_COLUMNS)
-    issues_df = issues_df.fillna("").sort_values(by=list(_ISSUE_COLUMNS), kind="stable")
+    issues_df = _sorted_issues(pd.DataFrame(batch_issues, columns=_ISSUE_COLUMNS))
 
     provenance = {
         "package_version": __version__,

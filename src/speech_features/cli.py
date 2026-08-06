@@ -79,10 +79,14 @@ def _convert_command(input_path: str, output_path: str, force: bool) -> None:
 
 
 def _extract_command(manifest: str, output_dir: str, packs, force: bool) -> int:
-    """Run extract_batch and write the four deterministic output files."""
+    """Run extract_batch and write the four deterministic output files.
+
+    Pack selection and the manifest are validated before any directory is
+    created; pre-existing expected files are checked without ``mkdir`` so
+    invalid global input never leaves an output path behind.
+    """
     canonical_packs = _canonical_packs(packs)  # invalid selection exits before touching disk
     out = Path(output_dir)
-    out.mkdir(parents=True, exist_ok=True)
     existing = [out / name for name in _OUTPUT_FILES if (out / name).exists()]
     if existing and not force:
         raise FileExistsError(
@@ -91,6 +95,7 @@ def _extract_command(manifest: str, output_dir: str, packs, force: bool) -> int:
             + " (pass --force)"
         )
     bundle = extract_batch(manifest, packs=canonical_packs)
+    out.mkdir(parents=True, exist_ok=True)
     bundle.recordings.to_csv(
         out / "recordings.csv", index=False, encoding="utf-8", lineterminator="\n"
     )
@@ -178,7 +183,7 @@ def main(argv=None) -> int:
             sys.stdout.write(_list_features_command(args.pack, args.level))
             return 0
         return 2
-    except (FeatureExtractionError, FileExistsError, ValueError) as exc:
+    except (FeatureExtractionError, OSError, ValueError) as exc:
         print(f"say-features: error: {exc}", file=sys.stderr)
         return 2
 
