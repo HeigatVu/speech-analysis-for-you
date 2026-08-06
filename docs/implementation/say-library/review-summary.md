@@ -90,11 +90,49 @@ None of these deferred minors were fixed as part of Task 12.
 
 # Agy review
 
-(Pending: to be recorded by the final whole-branch reviewer/controller,
-along with any fix rounds. Task 12 round-1 scoped re-review: APPROVE, see
-`OpenCode implementation` above.)
+Final whole-branch review of `a0c594b..1dd36e1`
+(`.superpowers/sdd/2026-08-06-say-vietnamese-speech-library/whole-branch-review.md`):
+
+- **Verdict: APPROVE.**
+- **Findings: none.**
+- **Deferred-minor assessment:** no release-blocking deferred minors.
+  Safely deferred: malformed non-list token strictness; duplicate/empty
+  CHAT header strictness; catalog prerequisite and issue identifier
+  guards; extraction-config numeric ranges and articulation-denominator
+  consolidation; shared acoustic frames/VAD and a zero-variance OLS edge;
+  spectral-entropy one-bin guard for hypothetical frame sizes below
+  three. None of these block the 0.2 release.
+- Scope reviewed: packaging/API boundaries, document and CHAT formats,
+  all 170 feature definitions and extractors, target isolation and label
+  separation, deterministic pipeline/CLI/provenance behavior, legacy
+  compatibility, documentation/clinical honesty, notebook/forbidden-import
+  retirement, Python 3.10 release evidence, and the pediatric extension
+  seam.
+- Task 12 round-1 scoped re-review (`c1bc35d`): APPROVE (see
+  `OpenCode implementation` above).
 
 # Resolution
 
-(Pending: final whole-branch acceptance run and closing verdict to be
-recorded by the final whole-branch reviewer/controller.)
+Fresh post-review acceptance run (all evidence below re-executed after the
+whole-branch review):
+
+- 580 tests passed (3 expected `DeprecationWarning`s from legacy
+  compatibility tests).
+- Ruff check and format pass.
+- `uv lock --check`: clean, 37 packages resolved.
+- `uv build --wheel`: clean build pass.
+- Wheel contents: only `speech_features/**` and `dist-info/**`;
+  `top_level.txt` lists exactly `speech_features`.
+- Fresh Python 3.10.20 core-only wheel smoke from outside the repository:
+  version `0.2.0`, 170 definitions, no eager `sklearn` or legacy
+  `preprocessing`/`utils` top-level packages, installed CLI
+  `say-features --help` and `say-features list-features --pack acoustic`
+  (73 acoustic rows).
+- `git diff --check`: clean.
+- Forbidden runtime import scan (`import_ipynb`/`opensmile`/`librosa`/
+  `spacy`): no matches.
+- `git ls-files '*.ipynb'`: none.
+- Final `git status`: only the pre-existing untracked `.serena/`.
+
+The branch `codex/say-library-refactor` is **ready for integration**; it
+was reviewed and verified but not merged or pushed.
