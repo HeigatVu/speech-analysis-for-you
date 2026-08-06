@@ -147,7 +147,11 @@ class FeatureBundle:
     provenance: Mapping[str, Any]
 
     def __post_init__(self) -> None:
-        for name, table in (("recordings", self.recordings), ("utterances", self.utterances)):
+        for name, table in (
+            ("recordings", self.recordings),
+            ("utterances", self.utterances),
+            ("issues", self.issues),
+        ):
             if not isinstance(table, pd.DataFrame):
                 raise ValueError(
                     f"bundle {name} must be a pandas DataFrame, got {type(table).__name__}"

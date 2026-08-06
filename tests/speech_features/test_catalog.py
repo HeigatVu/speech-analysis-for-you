@@ -352,14 +352,16 @@ def test_bundle_rejects_missing_identifier_columns():
         )
 
 
-def test_bundle_rejects_non_dataframe():
+@pytest.mark.parametrize("field", ["recordings", "utterances", "issues"])
+def test_bundle_rejects_non_dataframe(field):
+    tables = {
+        "recordings": pd.DataFrame(columns=RECORDING_COLUMNS),
+        "utterances": pd.DataFrame(columns=UTTERANCE_COLUMNS),
+        "issues": pd.DataFrame(columns=ISSUE_COLUMNS),
+    }
+    tables[field] = None
     with pytest.raises(ValueError, match="DataFrame"):
-        FeatureBundle(
-            recordings=None,
-            utterances=pd.DataFrame(columns=UTTERANCE_COLUMNS),
-            issues=pd.DataFrame(columns=ISSUE_COLUMNS),
-            provenance={},
-        )
+        FeatureBundle(**tables, provenance={})
 
 
 def test_bundle_preserves_nan_with_issue():
