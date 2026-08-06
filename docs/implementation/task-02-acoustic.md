@@ -175,7 +175,7 @@ $ git diff --check
 ## Commit ID
 
 - Build commit `d64a14c` — `feat: add math-first acoustic features`.
-- Review-fix commit — `fix: correct acoustic feature math` (this commit).
+- Review-fix commit `2a08462` — `fix: correct acoustic feature math`.
 
 ## Skipped scope
 
