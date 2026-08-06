@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "speech-analysis-for-you"
 version = "0.2.0"
-description = "Add your description here"
+description = "Research/descriptive Vietnamese speech feature library with a CLAN-compatible CHAT subset, label-free extraction, and an adult-neuro feature catalog."
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
@@ -35,7 +35,7 @@ dev = [
 
 [tool.ruff]
 line-length = 100
-target-version = "py312"
+target-version = "py310"
 exclude = ["*.ipynb"]
 
 [tool.pytest.ini_options]

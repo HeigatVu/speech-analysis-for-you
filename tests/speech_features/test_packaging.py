@@ -1,3 +1,4 @@
+import re
 import tomllib
 from pathlib import Path
 
@@ -6,10 +7,19 @@ import speech_features
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 PYPROJECT = tomllib.loads((PROJECT_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
 PROJECT = PYPROJECT["project"]
+PLACEHOLDER_DESCRIPTION = "Add your description here"
 
 
 def _names(deps):
-    return sorted(d.split(">=", 1)[0] for d in deps)
+    """Parse dependency names with stdlib only, agnostic to version operators,
+    environment markers, and extras suffixes."""
+    names = []
+    for dep in deps:
+        name = dep.split(";", 1)[0].strip()
+        name = re.split(r"[<>=!~]", name, 1)[0].strip()
+        name = name.split("[", 1)[0].strip()
+        names.append(name)
+    return sorted(names)
 
 
 def test_version_and_python_floor():
@@ -18,8 +28,18 @@ def test_version_and_python_floor():
     assert speech_features.__version__ == "0.2.0"
 
 
-def test_setuptools_build_backend():
+def test_setuptools_build_backend_and_exact_requirement():
     assert PYPROJECT["build-system"]["build-backend"] == "setuptools.build_meta"
+    assert PYPROJECT["build-system"]["requires"] == ["setuptools>=68"]
+
+
+def test_description_is_an_accurate_research_library_description():
+    description = PROJECT["description"]
+    assert description != PLACEHOLDER_DESCRIPTION
+    assert description.strip()
+    lower = description.lower()
+    assert "speech" in lower
+    assert any(marker in lower for marker in ("research", "feature library", "descriptive"))
 
 
 def test_console_script():
@@ -63,3 +83,8 @@ def test_optional_extras():
         )
     )
     assert _names(extras["dev"]) == ["pytest", "ruff"]
+
+
+def test_ruff_target_matches_declared_python_floor():
+    ruff = PYPROJECT["tool"]["ruff"]
+    assert ruff["target-version"] == "py310"

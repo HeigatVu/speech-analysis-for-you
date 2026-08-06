@@ -1,227 +1,175 @@
-# Vietnamese Speech Feature Extraction
+# Feature Extraction
 
-Math-first feature extraction for AD-versus-healthy-control speech research.
-It consumes participant WAV recordings and reviewed, aligned Vietnamese
-transcripts across picture description, immediate/delayed recall, and
-phonemic/semantic fluency tasks.
+This guide documents the 0.2 **label-free** extraction pipeline of SAY:
+audio and document inputs, target-speaker isolation, the `FeatureBundle`
+output tables, issues and provenance, pack/level selection, manifest v2,
+batch behavior, CLI exit codes, and the stable error codes. It replaces the
+0.1 AD-first workflow, which now lives only in the deprecated compatibility
+section at the bottom of this page and in
+[migration-0.2.md](migration-0.2.md). See the [README](../README.md) for
+installation and the quick start.
 
-> **Research-only.** This library is a **research-only** tool for cohort
-> characterisation and hypothesis exploration. It is **not a diagnostic** and
-> it is **not for clinical decision-making.** It does not give a diagnosis and
-> it defines **no fixed score threshold**; a decision based on these features
-> for any individual is not supported and is out of scope. Do not use the
-> outputs as clinical evidence. We do not promise any fixed performance; do not
-> treat any metric shown in this documentation as a guarantee of real-world
-> accuracy.
+> **Research-only.** SAY is a **research/descriptive** library. It is **not a
+> diagnostic**; it gives no diagnosis, defines no screening cutoff or
+> normative range, makes no treatment recommendation, and offers no fixed
+> clinical performance. No trained model, ASR, diarization, forced alignment,
+> or automatic morphosyntactic analysis is performed. Automated tools may
+> prepare annotations externally, but a human reviews them before SAY
+> consumes them. See [transcript-formats.md](transcript-formats.md).
 
----
+## 1. Inputs
 
-## 1. Input contracts
+### Audio: standard PCM WAV
 
-### Audio (standard PCM WAV)
-
-- `read_wav(path, *, sample_rate=16000)` reads standard PCM WAV with the stdlib
-  `wave` module: mono or stereo integer PCM (8/16/24/32-bit), required rate
-  `>= 0` frames, non-empty.
-- Stereo is down-mixed to mono by the channel mean; samples are mapped to a
-  finite float domain in `[-1, 1]` and re-sampled to `ExtractionConfig.sample_rate`
-  (default 16 kHz) with `scipy.signal.resample_poly` (coprime up/down from the
-  source/target GCD). The decoded and re-sampled signals are both checked for
-  finiteness.
-- Non-PCM compression, unsupported width/channel counts, broken headers, and
+- `read_wav(path, *, sample_rate=16000)` decodes standard PCM WAV with the
+  stdlib `wave` module: mono or stereo integer PCM (8/16/24/32-bit),
+  non-empty, with a valid header.
+- Stereo is down-mixed to mono by the channel mean; samples map to a finite
+  float domain in `[-1, 1]` and are **resampled** with
+  `scipy.signal.resample_poly` to the configured `ExtractionConfig.sample_rate`
+  (default 16 kHz). Both the decoded and the resampled signals are checked
+  for finiteness.
+- Broken headers, non-PCM compression, unsupported widths/channels, and
   malformed or truncated payloads raise `InvalidAudioError`
-  (`code = "INVALID_AUDIO"`).
+  (`INVALID_AUDIO`); unknown formats raise `UnsupportedAudioError`
+  (`UNSUPPORTED_AUDIO`).
 
-### Transcript (reviewed, aligned Vietnamese JSON v1)
+### Document: reviewed transcript
 
-- Transcript JSON must declare `version: 1` and an `utterances` list.
-- Each utterance has a `speaker` (`participant` or `examiner`), finite
-  `start_s`/`end_s` with `end_s >= start_s`, and a `tokens` list.
-- Each token has a `kind` from `word`, `filler`, `fragment`, `noise` and an
-  optional finite, ordered `start_s`/`end_s`. Text is normalised to Unicode NFC
-  via `nfc`.
-- **_A transcript, not whitespace, defines Vietnamese word boundaries_**: a
-  token's `text` is the unit of measurement. Acoustic duration, word counts, and
-  all lexical statistics are computed from these explicit tokens — never by
-  splitting on spaces. Tokens with the `filler`/`fragment`/`noise` kinds are
-  counted as disfluencies and are not treated as content words.
-- `validate_transcript` returns a frozen, deeply immutable `Transcript` carrying
-  `transcript_id` and `language` (default `"vi"`).
+`load_document(path)` accepts JSON v2 (native), JSON v1 (deterministically
+migrated), or the CLAN-compatible CHAT subset. A human reviews the
+transcript and its annotations before extraction. Full details, including
+the exact JSON v2 shape and the CHAT subset, are in
+[transcript-formats.md](transcript-formats.md).
 
-### Manifest (one `(participant_id, task)` row)
+## 2. Target-speaker isolation
 
-A manifest is JSON with `version: 1` and a non-empty `rows` list. Each row
-carries: `participant_id`, `task`, `recording_id`, `audio_id`, `transcript_id`,
-`audio_path`, `transcript_path`, `task_spec_path`, `diagnosis` (`AD`/`HC`),
-`age`, `sex`, `education_years`. `validate_manifest` rejects unknown versions,
-missing fields, unknown tasks (`UnknownTaskError`), invalid diagnoses, negative
-age/education, and duplicate `(participant_id, task)` pairs.
+- With **several documented speakers and no target**, extraction raises
+  `TARGET_SPEAKER_REQUIRED`; pass `target_speaker` to isolate one speaker.
+- With **exactly one documented speaker**, that speaker is the implicit
+  target; an explicit target must be a documented speaker (`INVALID_CONFIG`
+  otherwise).
+- Only the target speaker's aligned utterance intervals are analyzed: frames
+  are clipped to those intervals, so examiner audio and the recording's
+  global loudness never contaminate the target's acoustic statistics.
+- **`allow_unaligned` is available only on the direct acoustic pack
+  functions** (`extract_acoustic_features` / `extract_acoustic_bundle`),
+  **not** on the default high-level `extract`. It requests the
+  whole-recording fallback when the target has no aligned intervals and
+  emits an `UNALIGNED_SPEAKER` warning issue; without it, the default path
+  fails with `MISSING_ANNOTATION`.
 
-The three input paths are isolated on an `ExtractionInputs` object, separate
-from the clinical `diagnosis`/`age`/`sex`/`education_years` fields, so inputs
-can be passed around without leaking protected attributes.
-`validate_task_spec` trims each row's external task-spec JSON against the per-task
-contract in the next section.
+## 3. `FeatureBundle` output tables
 
-## 2. Task list and task-spec fields
+`extract(audio_path, document, *, target_speaker=None,
+packs=("acoustic", "adult_neuro"), levels=("recording", "utterance"),
+config=None)` returns a frozen `FeatureBundle`:
 
-The six supported tasks and the required external task-spec JSON fields per task
-(`version: 1`):
+- `recordings` — columns start with the identifier prefix
+  `recording_id`, `speaker_id`, then one column per selected recording-level
+  feature key, sorted lexicographically.
+- `utterances` — the same identifiers plus the prefix
+  `recording_id`, `speaker_id`, `utterance_id`, `start_s`, `end_s`, then the
+  selected utterance-level feature keys.
+- `issues` — exactly `recording_id`, `speaker_id`, `utterance_id`, `feature`,
+  `code`, `severity`, `message`; severity is `warning` or `error`.
+- `provenance` — JSON-serializable mapping with package/catalog versions,
+  packs, levels, configuration, target speakers, input SHA-256 hashes
+  (audio and transcript), the transcript hash kind (`source` for CHAT,
+  `canonical_document` otherwise), and annotation sources (layer, source,
+  confidence).
 
-| Task | Required task-spec fields |
-|------|---------------------------|
-| `picture_desc_1`, `picture_desc_2` | `concept_aliases`, `entity_groups`, `action_groups` |
-| `immediate_recall`, `delayed_recall` | `idea_aliases` |
-| `phonemic_fluency` | `initials`, `exclusions` |
-| `semantic_fluency` | `item_aliases`, `subcategories` |
+Missing values are `NaN` and each is paired with a structured `FeatureIssue`
+(naming the exact feature key) — never a fabricated zero.
 
-When present, the optional task-spec `task` field must name a known task.
-Task specs are external and versioned; patient data and real task lexicons
-remain outside Git.
+## 4. Pack and level selection
 
-## 3. Feature families (math-first formulas)
+- `packs` selects built-in packs by name: `"acoustic"` (73 recording-level
+  keys) and/or `"adult_neuro"` (93 recording-level and 4 utterance-level
+  keys). The tuple must be non-empty and duplicate-free; an unknown pack
+  raises `UNKNOWN_PACK`.
+- `levels` selects `"recording"` and/or `"utterance"` output tables.
+- Selections are canonicalized to static catalog order; when the
+  `adult_neuro` pack is selected without `acoustic`, no audio is decoded.
+- The full catalog is in [feature-catalog-v1.md](feature-catalog-v1.md);
+  `list_features(pack=..., level=...)` queries it.
 
-Context for all acoustic measures: recording duration `T` (seconds), frame
-energy `E_m`, frame voice activity `v_m in {0,1}`, pause durations
-`p_j >= pause_threshold_s`, participant speech time `S`, lexical (content) words
-`N`, fillers `F`, and sets of voiced pitches `F = {f_i}`. Frames use a
-Hamming window and `P_k = |RFFT(wx)_k|^2`.
+## 5. Manifest v2 and batch extraction
 
-### Timing (`time_*`) and acoustic (`ac_*`)
+`extract_batch(manifest_path, *, packs=("acoustic", "adult_neuro"),
+config=None)` runs manifest v2. The manifest is JSON with `version: 2` and a
+non-empty `rows` list; every row has **exactly**:
 
-- `ac_frame_energy_mean/sd/iqr/span` — mean/SD/between-percentile (IQR = P75−P25;
-  span = P95−P5) of per-frame energy `E_m`.
-- Voice activity: a frame is voiced when `E_m > SILENCE_ENERGY_FLOOR (=1e-6)`
-  **and** `E_m >= mean(E_m | E_m > floor)`.
-- Pauses: maximal runs of non-voiced frames with `run >= pause_threshold_s`;
-  `ac_pause_count`, `ac_pause_rate_per_min` (count / `T` in minutes),
-  `ac_pause_mean_s`, `ac_pause_sd_s`, `ac_pause_max_s`, and `ac_long_pause_count`
-  (runs `>= long_pause_threshold_s = 2.0 s`).
-- Pitch (`ac_pitch_voiced_*`): per-frame F0 from the normalised
-  cross-correlation (NCCF) at lags whose period lies in
-  `[pitch_min_hz, pitch_max_hz] = [70, 400]` Hz. The greatest-NCCF lag is the
-  period; a peak below `pitch_autocorr_threshold = 0.30` is explicitly unvoiced.
-  `mean/sd/cv (=sd/mean)/median/iqr/span/delta`, plus `ac_voice_ratio`.
-- HNR (`ac_hnr_*`): `HNR = 10*log10(r / (1 - r))` in dB per voiced frame, from
-  the best NCCF `r` clamped to `<= 0.999`; reports `median` and `iqr`.
-- Spectral — `P_k = |RFFT(wx)_k|^2`:
-  - centroid `mu_1 = sum(P_k * f_k) / sum(P_k)`,
-  - spread `sigma = sqrt(sum(P_k * (f_k - mu_1)^2) / sum(P_k))`,
-  - flatness `exp(mean(log(P_k))) / mean(P_k)` — geometric/arithmetic power
-    ratio, bounded in `[0, 1]` (≈1 white noise, ≈0 tonal).
-- Invalid input, `duration < 1.0 s`, or no voiced/pitched frames return `NaN`
-  statistics together with a flag — never zero.
+- `recording_id` — non-empty string, unique across rows;
+- `audio_path` — non-empty string, resolved relative to the manifest file;
+- `transcript_path` — non-empty string, resolved relative to the manifest
+  file;
+- `target_speakers` — optional non-empty list of unique non-empty speaker
+  ids; when omitted, the single documented speaker is used and multiple
+  speakers without a declared target fail the row.
 
-### Lexical and disfluency (`lex_*`)
+Any extra row key, unknown version, duplicate `recording_id`, or malformed
+`target_speakers` raises `InvalidManifestError` before any extraction
+begins. No diagnosis, labels, tasks, demographics, or clinical values are
+accepted or emitted.
 
-Over participant word forms normalised as `NFC + casefold` (preserving
-`d`/`đ` and diacritics):
+**Batch isolation.** Failures inside a structurally valid row are isolated:
+a failure before a target is known emits one feature-less severity-`error`
+issue with the recording id and an empty speaker id; a target-specific
+failure emits one `error` issue with that target id. Remaining rows still
+complete, and the batch always returns `recordings`/`utterances`/`issues`
+plus a `provenance` mapping with per-recording entries (hashes, annotation
+sources, error code/message when failed) and `counts` (`total`, `success`,
+`failure`). Audio is hashed and decoded at most once per row, shared by all
+declared targets.
 
-- `lex_ttr = V / N` (type-token ratio), where `N` = word tokens, `V` = unique
-  word types.
-- `lex_hapax_ratio = V1 / N`, `V1` = hapax (once-occurring) types.
-- `lex_brunet_w = V^0.172`.
-- `lex_honore_r = 100*log(N) / (1 - V1/V)`; `NaN` when the divisor vanishes
-  (single-type transcript).
-- `lex_repetition_ratio` — share of word tokens that immediately repeat the
-  prior token (adjacent repeats only).
-- Filler/fragment/noise ratios measured against **all** participant tokens.
-- `lex_function_word_ratio` — share of participant word tokens present in an
-  external NFC/casefolded function-word set (`NaN` when no set is supplied).
+## 6. CLI
 
-### Task-specific (`picture_*`, `recall_*`, `fluency_*`)
+`say-features` has four stdlib-`argparse` commands:
 
-Alias matching is exact NFC/casefold equality first, then standard Levenshtein
-edit distance with `normalised_similarity = 1 - d / max(len(a), len(b))` at the
-documented conservative `SIMILARITY_THRESHOLD = 0.85` (near-exact variants only,
-never unrelated words; empty pairs score 0).
+```bash
+say-features validate INPUT                       # validate a document or manifest v2
+say-features convert INPUT OUTPUT [--force]       # convert between JSON v2 and CHAT
+say-features extract MANIFEST OUTPUT_DIR [--pack PACK ...] [--force]
+say-features list-features [--pack PACK] [--level LEVEL]
+```
 
-- **Picture** — `picture_concept_coverage` (distinct matched concepts / total),
-  `picture_concept_density` (distinct matched / words), `picture_repeat_ratio`,
-  `picture_entity_coverage`, `picture_action_coverage` (from `entity_groups` /
-  `action_groups`).
-- **Recall** — same coverage/density/repeat family over `idea_aliases`, plus
-  `recall_order_score` = normalised LCS length of the matched-ideas sequence
-  (in utterance order) against the reference idea order (`NaN` when nothing is
-  recalled).
-- **Phonemic fluency** — one participant utterance containing word tokens is one
-  response item. A response is valid when its first word starts with an initial
-  and the whole response is not excluded. Outputs: `fluency_response_count`,
-  `fluency_valid_count`, `fluency_valid_unique`, `fluency_repeats`,
-  `fluency_intrusions`, `fluency_first_half_valid`, `fluency_second_half_valid`,
-  `fluency_production_change` (second − first half), `fluency_rate` =
-  `valid_unique / response_count`.
-- **Semantic fluency** — items matched to `item_aliases`; `fluency_valid_unique`,
-  `fluency_valid_count`, `fluency_repeats`, `fluency_rate` (same denominator),
-  plus `fluency_clusters` (maximal runs of consecutive responses in the same
-  `subcategory`) and `fluency_switches` (adjacent subcategory changes). Matched
-  responses without a declared subcategory still count as valid but are excluded
-  from the cluster/switch sequence.
+- `extract` writes `recordings.csv`, `utterances.csv`, `issues.csv`, and
+  `provenance.json`; pre-existing outputs are refused without `--force`.
+- **Exit codes:** `0` for success or warnings-only output; `1` when any
+  issue has severity `error` (partial row failures); `2` for invalid global
+  input/configuration, argparse syntax errors, or missing input files, with
+  one concise stderr message and no traceback.
 
-## 4. Quality flags, provenance, and label separation
+## 7. Stable error codes
 
-- **Quality flags** ride on `FeatureResult.quality_flags` and never replace a
-  value with a fabricated zero: `invalid_input`, `too_short` (audio < 1.0 s),
-  `no_voice`, and `no_participant_speech`. Unavailable statistics are `NaN`.
-- **Provenance** — every extracted recording records streaming SHA-256 digests
-  of its audio, transcript, and task-spec files (`sha256_file` /
-  `manifest_hashes`; a missing input raises `MissingInputError`, code
-  `MISSING_INPUT`). This makes each result traceable to its exact inputs.
-- **Label separation** — diagnosis is read only at the batch layer into
-  `BatchResult.labels` (`AD`/`HC` keyed by `(participant_id, task,
-  recording_id)`). It never enters a `FeatureResult` feature or field, and the
-  evaluation function receives labels as a required, **separate** argument keyed
-  by participant.
+All ten stable codes are re-exported as `speech_features.STABLE_ERROR_CODES`
+and attached to the matching exception classes:
 
-## 5. Batch failure behaviour
+| Code | Raised when |
+|---|---|
+| `INVALID_DOCUMENT` | a speech document JSON is malformed or invalid |
+| `INVALID_CHAT` | a CHAT file violates the documented subset |
+| `INVALID_AUDIO` | PCM WAV decoding fails (header/payload) |
+| `UNSUPPORTED_AUDIO` | the media format or encoding is unsupported |
+| `MISSING_INPUT` | a required input file is absent |
+| `TARGET_SPEAKER_REQUIRED` | several speakers exist but no target is given |
+| `MISSING_ANNOTATION` | a required annotation layer or alignment is absent |
+| `UNKNOWN_PACK` | a pack selection names an unknown pack |
+| `INVALID_CONFIG` | configuration or input types are invalid |
+| `EXTRACTION_ERROR` | an unexpected single-feature failure |
 
-`extract_manifest(manifest_path, *, config)` validates the whole manifest, then
-runs every row through `extract_recording`. A failing row is isolated as a
-`BatchFailure` (row key, stable `code`, error type, message) instead of aborting
-the batch, so the remaining rows still complete. Rows that fail with a
-`FeatureExtractionError` are recorded with their stable code (`MISSING_INPUT`,
-`INVALID_AUDIO`, `INVALID_TRANSCRIPT`, `INVALID_TASK_SPEC`, `UNKNOWN_TASK`); an
-unexpected exception inside a row is caught by a generic fallback and recorded
-with `code = "EXTRACTION_ERROR"`. Missing speaker speech (`no_participant_speech`)
-is a flag, not a failure.
+Feature-specific warning codes (for example `UNSUPPORTED_CHAT_TIER`,
+`UNALIGNED_SPEAKER`, `NO_SPEECH`, `INSUFFICIENT_VOICED_FRAMES`,
+`INSUFFICIENT_TOKENS`) appear in the `issues` table and in the
+[feature catalog](feature-catalog-v1.md).
 
-## 6. Cohort minimum and task coverage
+## 8. Deprecated: legacy AD evaluation (0.1 compatibility)
 
-The AD-vs-HC baseline requires at least two participants of each class to form
-any fold, and it warns (rather than crashing) when the cohort is too small. By
-default each participant must contribute at least **5 of the 6 tasks**
-(`min_task_coverage=5`); participants below coverage are listed in `warnings`.
-Recordings are aggregated to **one case per participant** (NaN-aware mean), so a
-participant with more recordings is never duplicated or overweighted, and the
-cohort/task-coverage and feature-missingness summaries are reported on
-`EvaluationResult`.
-
-## 7. Repeated nested grouped-CV research baseline
-
-`evaluate_ad_baseline` runs the leakage-safe research baseline over in-memory
-feature rows with binary labels supplied separately:
-
-- **One case per participant** and **grouped splits** — outer
-  `StratifiedGroupKFold` (default 5 folds) and inner grouped CV (default 4) both
-  split on participants, so a participant never straddles a train/test boundary.
-- **Preprocessing inside the training fold only** — median imputation and
-  scaling are fit on each training fold alone; test participants never
-  contribute to these statistics.
-- **`C` selection** — L2 logistic regression with `C` drawn from
-  `(0.01, 0.1, 1, 10, 100)` chosen by balanced accuracy on the inner grouped CV;
-  all candidates are scored on the same materialised folds; ties fall back to the
-  smaller numeric `C`.
-- **Reproducible seed procedure** — the whole run is seed-controlled from a
-  single `seed` (default 42): each of the `outer_repeats = 10` repeated outer
-  splits uses `random_state = seed + repeat`, the inner `C` selection uses
-  `seed + repeat*1000 + fold_id`, and bootstraps use `random_state=seed`. Passing
-  the same `seed` reproduces the same folds, selected `C`s, metrics, and bootstrap
-  intervals.
-- **Metrics and CIs** — per-fold AUROC, balanced accuracy, sensitivity (AD
-  recall), specificity, plus the mean across folds and participant-bootstrap 95%
-  percentile intervals (`bootstrap_ci`, default 2000 resamples) for each metric.
-- **Outputs** — `EvaluationResult` carries `fold_metrics`, `selected_cs`,
-  `participant_predictions`, `feature_columns`, `cohort_summary`,
-  `task_coverage`, `feature_missingness`, `metrics_summary`, and `warnings`.
-  It does **not** claim diagnostic/clinical performance and defines **no fixed
-  score target**.
+The 0.1 AD-vs-healthy-control evaluation workflow (`evaluate_ad_baseline`,
+task scorers, label-bearing manifest v1, the six-task cohort pipeline) is
+**deprecated** and remains available only behind
+`speech_features.legacy.ad` through `0.2.x`. It is not part of the 0.2
+feature workflow, is not supported by the catalog above, and is eligible for
+removal in `0.3.0`. Do not start new work on it — see
+[migration-0.2.md](migration-0.2.md) for the full migration guide.
