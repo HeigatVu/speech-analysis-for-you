@@ -44,6 +44,10 @@ from .pipeline import (
     extract_recording,
     read_wav,
 )
+from .extraction import (
+    extract,
+    extract_batch,
+)
 from .schema import (
     ExtractionConfig,
     ExtractionInputs,
@@ -116,6 +120,8 @@ __all__ = [
     "validate_manifest",
     "validate_task_spec",
     "validate_transcript",
+    "extract",
+    "extract_batch",
     "extract_manifest",
     "extract_recording",
     "list_features",
