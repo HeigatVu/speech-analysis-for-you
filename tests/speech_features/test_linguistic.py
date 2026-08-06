@@ -841,12 +841,21 @@ class TestAdultNeuroCatalog:
     def test_exactly_42_adult_neuro_keys_with_locked_metadata(self):
         definitions = list_features(pack="adult_neuro")
         assert [d.key for d in definitions] == sorted(ADULT_NEURO_KEYS)
+        by_key = {d.key: d for d in definitions}
         for definition in definitions:
             assert definition.pack == "adult_neuro"
             assert definition.level == "recording"
             assert definition.population == "adult"
             assert definition.formula_version == 1
             assert definition.reference == "SAY catalog v1"
+        # Every count/ratio disfluency pair declares its count dependency,
+        # including the syllable-denominated immediate-repetition ratio.
+        assert by_key["disfluency_immediate_repetition_ratio"].prerequisites == (
+            "disfluency_immediate_repetition_count",
+        )
+        # Brunet W is a dimensionless lexical-richness index, not a count.
+        assert by_key["lex_token_brunet_w"].unit == "index"
+        assert by_key["lex_lemma_brunet_w"].unit == "index"
 
     def test_fresh_import_registers_exactly_42_keys(self):
         src = Path(__file__).resolve().parents[2] / "src"
