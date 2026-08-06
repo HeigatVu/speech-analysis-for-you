@@ -156,7 +156,7 @@ four Task 3 owned paths and this report were modified.
 
 ## Commit ID
 
-- Build commit `<FILLED_ON_COMMIT>` — `feat: add vietnamese linguistic and task scorers`.
+- Build commit `53aac09` — `feat: add vietnamese linguistic and task scorers`.
 
 ## Skipped scope
 
