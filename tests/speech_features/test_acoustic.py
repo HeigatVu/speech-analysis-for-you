@@ -1145,3 +1145,133 @@ class TestPhonationSpeakerIsolation:
         assert features["voice_intensity_mean_dbfs"] == pytest.approx(-21.0, abs=1.5)
         assert math.isfinite(features["voice_hnr_mean_db"])
         assert math.isfinite(features["voice_cpp_mean_db"])
+
+
+# ---------------------------------------------------------------------------
+# Task 6 fix round 1 (Agy review f2e44a1..535b55d): CPP dB scale, interval
+# boundary transitions, intensity observation invariant
+# ---------------------------------------------------------------------------
+def _reference_cpp(signal, sample_rate=16000):
+    """Reference CPP from the documented ``20*log10(|X|)`` cepstrum.
+
+    Mirrors the phonation module formula: real cepstrum of the dB-scaled log
+    magnitude spectrum, peak inside the pitch-period quefrency range, minus
+    the OLS baseline over that same range. A natural-log cepstrum would yield
+    values 20/ln(10) ~ 8.69 times smaller and fail the equality below.
+    """
+    cfg = ExtractionConfig()
+    win = acoustic._frames(signal, cfg.frame_size, cfg.hop_size)
+    energy = (win**2).sum(axis=1)
+    voiced = acoustic._energy_vad(energy)
+    f0, _ = acoustic._f0_per_frame(win, cfg.frame_size, sample_rate, cfg)
+    frames = win[voiced & np.isfinite(f0)]
+    n_min = max(int(math.ceil(sample_rate / cfg.pitch_max_hz)), 1)
+    n_max = min(int(math.floor(sample_rate / cfg.pitch_min_hz)), cfg.frame_size - 1)
+    region = np.arange(n_min, n_max + 1, dtype=float)
+    cepstrum = np.fft.irfft(
+        20.0 * np.log10(np.maximum(np.abs(np.fft.rfft(frames, axis=1)), 1e-12)), axis=1
+    )
+    sub = cepstrum[:, n_min : n_max + 1]
+    centered = region - region.mean()
+    slope = (sub - sub.mean(axis=1, keepdims=True)) @ centered / (centered**2).sum()
+    intercept = sub.mean(axis=1) - slope * region.mean()
+    peak = np.argmax(sub, axis=1)
+    baseline = slope * region[peak] + intercept
+    return float(np.mean(sub[np.arange(sub.shape[0]), peak] - baseline))
+
+
+class TestCppDbScale:
+    """Agy fix 1 (Critical): CPP must be dB-scaled, not natural-log."""
+
+    def test_cpp_matches_db_scaled_reference_formula(self):
+        signal = _tone(200, 0.2)
+        features, _ = acoustic_pack.extract_acoustic_features(signal, 16000, allow_unaligned=True)
+        reference = _reference_cpp(signal)
+        assert features["voice_cpp_mean_db"] == pytest.approx(reference, rel=1e-9)
+        # dB scaling of a 200 Hz tone lands near 0.53 dB; a natural-log
+        # cepstrum stays near 0.06 and must not be mistaken for a dB value.
+        assert features["voice_cpp_mean_db"] > 0.3
+
+
+class TestIntervalBoundaryTransitions:
+    """Agy fix 2 (Important): no cross-boundary F0/period/RMS transitions."""
+
+    def test_disjoint_intervals_create_no_cross_boundary_transitions(self):
+        # Two disjoint steady intervals with different F0 (200 Hz, 400 Hz) and
+        # amplitude (0.5, 0.3): both tones are exactly periodic in the 25 ms
+        # frame, so every intra-interval transition is zero. F0 absolute
+        # change, jitter, and shimmer must stay at zero instead of absorbing
+        # a fake transition across the boundary.
+        audio = np.concatenate(
+            [
+                np.zeros(int(16000 * 0.2)),
+                _tone(200, 0.5, amplitude=0.5),
+                np.zeros(int(16000 * 0.5)),
+                _tone(400, 0.5, amplitude=0.3),
+            ]
+        )
+        doc = _doc(
+            (_utt("u1", "p1", 0.2, 0.7), _utt("u2", "p1", 1.2, 1.7)),
+            (DocumentSpeaker(id="p1"),),
+        )
+        features, _ = acoustic_pack.extract_acoustic_features(audio, 16000, document=doc)
+        assert features["voice_f0_abs_change_hz"] < 0.1
+        assert features["voice_jitter_local"] < 0.001
+        assert features["voice_shimmer_local"] < 0.001
+        # Both intervals still contribute to the distribution summaries.
+        assert 250.0 < features["voice_f0_mean_hz"] < 350.0
+        assert math.isfinite(features["voice_f0_sd_hz"])
+        assert math.isfinite(features["voice_intensity_mean_dbfs"])
+
+
+class TestIntensityInvariant:
+    """Agy fix 3 (Important): prove the intensity observation invariant.
+
+    With at least two voiced F0 frames, every such frame cleared the absolute
+    silence energy floor (1e-6), so its RMS is positive and the intensity
+    summaries always have at least the voiced F0 frames to summarize. The
+    smallest clearing case is exactly two voiced frames (560 samples of a
+    tiled 200 Hz period, two bitwise-identical frames).
+    """
+
+    def test_two_voiced_frames_yield_finite_intensity_summaries(self):
+        # Two bitwise-identical frames: tile one exact 200 Hz period so the
+        # frame energies are exactly equal and the mean-energy VAD marks both
+        # frames voiced (a continuous-phase sine differs in the last ULP and
+        # drops one frame, so it cannot build this minimal case).
+        period = np.sin(2 * math.pi * 200 * np.arange(80) / 16000)
+        features, _ = acoustic_pack.extract_acoustic_features(
+            np.tile(period, 7), 16000, allow_unaligned=True
+        )
+        assert features["voice_voiced_ratio"] == pytest.approx(1.0)
+        assert math.isfinite(features["voice_f0_mean_hz"])
+        for key in VOICE_INTENSITY_KEYS:
+            assert math.isfinite(features[key]), key
+
+
+class TestCycleInsufficiencyAcrossIntervals:
+    """Agy fix 2 edge: voiced frames split across intervals have no pairs."""
+
+    def test_no_intra_interval_transition_yields_nan_with_issues(self):
+        # Two intervals holding one voiced frame each: two voiced frames in
+        # total, but no consecutive pair inside any interval. The diff-based
+        # keys must be NaN with per-key issues, never a cross-boundary value.
+        audio = np.concatenate(
+            [
+                np.zeros(int(16000 * 0.2)),
+                _tone(160, 0.025),
+                np.zeros(int(16000 * 0.5)),
+                _tone(200, 0.025),
+            ]
+        )
+        doc = _doc(
+            (_utt("u1", "p1", 0.2, 0.225), (_utt("u2", "p1", 0.725, 0.75))),
+            (DocumentSpeaker(id="p1"),),
+        )
+        features, issues = acoustic_pack.extract_acoustic_features(audio, 16000, document=doc)
+        for key in ("voice_f0_abs_change_hz", "voice_jitter_local", "voice_shimmer_local"):
+            assert math.isnan(features[key]), key
+            assert any(
+                issue.code == "INSUFFICIENT_CYCLES" and issue.feature == key for issue in issues
+            ), key
+        assert math.isfinite(features["voice_f0_mean_hz"])

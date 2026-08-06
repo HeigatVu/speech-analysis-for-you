@@ -24,13 +24,21 @@ Observation model and formulas (math-first; not Praat-equivalent)
   Frame ``i`` of a region starting at ``start_s`` is timed at
   ``start_s + i * hop_size / sample_rate``.
 - ``voice_f0_abs_change_hz`` is the mean absolute difference of consecutive
-  voiced F0 estimates in time order (gaps left by unvoiced frames are
-  skipped).
+  voiced F0 estimates in time order. Successive differences are computed
+  inside each target interval only, then aggregated, so frames from disjoint
+  intervals (separated by examiner audio or silence) never create artificial
+  boundary transitions. The same intra-interval rule applies to the
+  jitter and shimmer numerators.
 - ``voice_voiced_ratio`` = voiced F0 frames / analyzed target frames, where
   the denominator is every frame in the target regions (including silence).
 - Intensity is frame RMS converted with ``20*log10(rms)`` and summarized only
   over valid target speech frames (VAD-voiced frames, which always have
-  ``rms > 0``); its slope uses their actual frame times, as above.
+  ``rms > 0``); its slope uses their actual frame times, as above. The
+  summaries are computed directly once the voiced-frame guard passes: every
+  VAD-voiced frame cleared the absolute silence energy floor (1e-6), so its
+  RMS is positive and the speech-frame set always contains at least the voiced
+  F0 frames — with two or more voiced F0 frames there are therefore two or
+  more valid speech frames for any finite input.
 - Local jitter is the mean absolute consecutive period difference divided by
   the mean period, with the period estimated per voiced frame as ``1/f0``::
 
@@ -44,12 +52,15 @@ Observation model and formulas (math-first; not Praat-equivalent)
   the best normalized autocorrelation peak ``r`` per voiced frame, with the
   shared finite ceiling (``r <= 0.999``).
 - ``voice_cpp_*_db`` summarize the real-cepstrum peak prominence per voiced
-  frame: the peak of ``irfft(log(|rfft(frame)|))`` inside the configured
-  pitch-period quefrency range (quefrency ``tau = n / sample_rate`` for
-  cepstrum index ``n``, searched over ``[ceil(sr/pitch_max), floor(sr/pitch_min)]``),
-  measured relative to the ordinary least-squares line fitted over that same
-  local quefrency range: ``cpp = peak - line(tau_peak)``. The log magnitude
-  is floored at ``1e-12`` so the cepstrum stays finite.
+  frame: the peak of ``irfft(20*log10(|rfft(frame)|))`` — the cepstrum of the
+  dB-scaled log magnitude spectrum, floored at ``1e-12`` — inside the
+  configured pitch-period quefrency range (quefrency ``tau = n / sample_rate``
+  for cepstrum index ``n``, searched over
+  ``[ceil(sr/pitch_max), floor(sr/pitch_min)]``), measured relative to the
+  ordinary least-squares line fitted over that same local quefrency range:
+  ``cpp = peak - line(tau_peak)``. The ``20/ln(10)`` factor makes the values
+  comparable to other dB measures; a natural-log cepstrum would understate
+  them by that factor.
 
 Sufficiency
 -----------
@@ -59,7 +70,10 @@ each has a :class:`~speech_features.result.FeatureIssue` naming that exact key
 with code ``INSUFFICIENT_VOICED_FRAMES``; jitter and shimmer (which need at
 least one consecutive period pair) use ``INSUFFICIENT_CYCLES``. With no voiced
 frame at all, ``voice_voiced_ratio`` is also ``NaN`` (digital silence never
-creates a finite voice feature). No value is fabricated as zero.
+creates a finite voice feature). When two or more voiced frames exist but no
+interval holds two of them, ``voice_f0_abs_change_hz``, jitter, and shimmer
+have no valid intra-interval transition: they are ``NaN`` with per-key
+``INSUFFICIENT_CYCLES`` issues. No value is fabricated as zero.
 """
 
 from __future__ import annotations
@@ -166,7 +180,8 @@ def _cpp_per_frame(frames: np.ndarray, sample_rate: int, config: ExtractionConfi
     if n_max <= n_min:
         return np.full(frames.shape[0], math.nan)
     cepstrum = np.fft.irfft(
-        np.log(np.maximum(np.abs(np.fft.rfft(frames, axis=1)), _CEPSTRUM_FLOOR)), axis=1
+        20.0 * np.log10(np.maximum(np.abs(np.fft.rfft(frames, axis=1)), _CEPSTRUM_FLOOR)),
+        axis=1,
     )
     region = np.arange(n_min, n_max + 1, dtype=float)
     sub = cepstrum[:, n_min : n_max + 1]
@@ -291,6 +306,14 @@ def phonation_features(
     times = np.concatenate(times_at_f0)
     voiced_rms = np.concatenate(rms_at_f0)
 
+    # Successive differences are computed inside each target interval and then
+    # aggregated: the last frame of one interval and the first frame of the
+    # next are not consecutive in time, so a cross-boundary pair would be an
+    # artificial transition.
+    f0_changes = np.concatenate([np.abs(np.diff(arr)) for arr in f0s])
+    period_changes = np.concatenate([np.abs(np.diff(1.0 / arr)) for arr in f0s])
+    rms_changes = np.concatenate([np.abs(np.diff(arr)) for arr in rms_at_f0])
+
     f0_mean = float(np.mean(f0))
     features["voice_f0_mean_hz"] = f0_mean
     features["voice_f0_median_hz"] = float(np.median(f0))
@@ -300,13 +323,25 @@ def phonation_features(
     features["voice_f0_iqr_hz"] = _quantile(f0, 75) - _quantile(f0, 25)
     features["voice_f0_range_5_95_hz"] = _quantile(f0, 95) - _quantile(f0, 5)
     features["voice_f0_slope_hz_per_s"] = _ols_slope(times, f0)
-    features["voice_f0_abs_change_hz"] = float(np.mean(np.abs(np.diff(f0))))
 
-    periods = 1.0 / f0
-    features["voice_jitter_local"] = float(np.mean(np.abs(np.diff(periods))) / np.mean(periods))
-    features["voice_shimmer_local"] = float(
-        np.mean(np.abs(np.diff(voiced_rms))) / np.mean(voiced_rms)
-    )
+    if f0_changes.size == 0:
+        # Two or more voiced frames exist, but no interval holds two of them:
+        # there is no valid intra-interval transition for the diff-based keys.
+        for key in ("voice_f0_abs_change_hz", "voice_jitter_local", "voice_shimmer_local"):
+            features[key] = math.nan
+            issues.append(
+                _issue(
+                    recording_id,
+                    speaker_id,
+                    "INSUFFICIENT_CYCLES",
+                    "no consecutive voiced frames within one target interval; feature unavailable",
+                    feature=key,
+                )
+            )
+    else:
+        features["voice_f0_abs_change_hz"] = float(np.mean(f0_changes))
+        features["voice_jitter_local"] = float(np.mean(period_changes) / np.mean(1.0 / f0))
+        features["voice_shimmer_local"] = float(np.mean(rms_changes) / np.mean(voiced_rms))
 
     hnr = _hnr_db(np.concatenate(nccfs))
     features.update(_summarize(hnr, VOICE_HNR_KEYS))
@@ -316,12 +351,15 @@ def phonation_features(
 
     speech_rms_all = np.concatenate(speech_rms)
     speech_times_all = np.concatenate(speech_times)
-    if speech_rms_all.size >= 2:
-        intensity = 20.0 * np.log10(speech_rms_all)
-        features["voice_intensity_mean_dbfs"] = float(np.mean(intensity))
-        features["voice_intensity_median_dbfs"] = float(np.median(intensity))
-        features["voice_intensity_sd_db"] = float(np.std(intensity))
-        features["voice_intensity_iqr_db"] = _quantile(intensity, 75) - _quantile(intensity, 25)
-        features["voice_intensity_slope_db_per_s"] = _ols_slope(speech_times_all, intensity)
+    # Invariant (see module docstring): with at least two voiced F0 frames,
+    # every one of them is VAD-voiced and therefore clears the silence energy
+    # floor, so its RMS is positive and included here; the speech-frame set
+    # always holds at least the voiced F0 frames. No size guard is needed.
+    intensity = 20.0 * np.log10(speech_rms_all)
+    features["voice_intensity_mean_dbfs"] = float(np.mean(intensity))
+    features["voice_intensity_median_dbfs"] = float(np.median(intensity))
+    features["voice_intensity_sd_db"] = float(np.std(intensity))
+    features["voice_intensity_iqr_db"] = _quantile(intensity, 75) - _quantile(intensity, 25)
+    features["voice_intensity_slope_db_per_s"] = _ols_slope(speech_times_all, intensity)
 
     return features
