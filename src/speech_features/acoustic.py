@@ -22,6 +22,16 @@ from .schema import ExtractionConfig
 # Minimum usable duration before we label a recording too short to characterise.
 MIN_DURATION_S = 1.0
 
+# Absolute silence floor on frame energy. Frames below this are treated as
+# silence regardless of the observed dynamic range, so a very quiet recording
+# (ambient or digital noise far below the floor) reads as no-voice rather than
+# spuriously voiced.
+SILENCE_ENERGY_FLOOR = 1e-6
+
+# Ceiling used when converting a normalized autocorrelation into an HNR (dB)
+# so that near-perfect periodicity does not blow up to infinity.
+_HNR_NCCF_CEILING = 0.999
+
 
 @dataclass(frozen=True)
 class AcousticResult:
@@ -57,34 +67,46 @@ def _frames(audio: np.ndarray, frame_size: int, hop_size: int) -> np.ndarray:
 def _energy_vad(frame_energy: np.ndarray) -> np.ndarray:
     """Adaptive frame-level voice activity from energy.
 
-    A frame is voiced when its energy exceeds the mean frame energy. The mean
-    is a robust-in-practice split point for synthetic tones and, by keeping
-    the threshold relative to the observed distribution, it is agnostic to the
-    absolute recording gain.
+    A frame is voiced only when it (a) clears the absolute silence floor and
+    (b) clears the dynamic range threshold (the mean of the above-floor
+    frames). Combining the two means a genuinely present tone is voiced while
+    quiet noise or near-silent audio — even with large dynamic range relative
+    to itself — is correctly classified as no-voice.
     """
-    return frame_energy > frame_energy.mean()
+    floor = SILENCE_ENERGY_FLOOR
+    active = frame_energy[frame_energy > floor]
+    if active.size == 0:
+        return np.zeros(frame_energy.shape, dtype=bool)
+    dynamic_threshold = active.mean()
+    return (frame_energy > floor) & (frame_energy >= dynamic_threshold)
 
 
 def _pauses(voiced: np.ndarray, hop_s: float, pause_threshold_s: float) -> np.ndarray:
-    """Return durations (seconds) of maximal non-speech runs >= the threshold."""
+    """Return durations (seconds) of maximal non-speech runs >= the threshold.
+
+    Runs are counted in integer frame counts so that a silence whose duration
+    lands exactly on the threshold is never dropped by the float accumulation
+    of ``hop_s``; the count is converted to seconds once, at the end.
+    """
+    min_frames = math.ceil(pause_threshold_s / hop_s)
     runs: list[float] = []
-    gap = 0.0
+    gap = 0
     for is_voiced in voiced:
         if not is_voiced:
-            gap += hop_s
+            gap += 1
         else:
-            if gap >= pause_threshold_s:
-                runs.append(gap)
-            gap = 0.0
-    if gap >= pause_threshold_s:
-        runs.append(gap)
+            if gap >= min_frames:
+                runs.append(gap * hop_s)
+            gap = 0
+    if gap >= min_frames:
+        runs.append(gap * hop_s)
     return np.asarray(runs, dtype=float)
 
 
 def _f0_per_frame(
     win: np.ndarray, frame_size: int, sr: int, config: ExtractionConfig
-) -> np.ndarray:
-    """Normalized-autocorrelation F0 (Hz) per frame; NaN where unvoiced.
+) -> tuple[np.ndarray, np.ndarray]:
+    """Per-frame F0 (Hz) and best NCCF; NaN/0 where unvoiced.
 
     For each Hamming-windowed frame we compute the normalized cross-correlation
     coefficient (NCCF) at every lag whose period lies inside
@@ -93,14 +115,20 @@ def _f0_per_frame(
     while power-only (unvoiced) frames stay far below the threshold. The lag
     with the largest NCCF is the frame's period; if that peak is below
     ``pitch_autocorr_threshold`` the frame is explicitly unvoiced (``NaN``).
-    Bounding the search means a tone outside the configured range never yields
-    a voiced candidate.
+
+    Bounds use ``ceil`` for the shortest lag (so lags whose period would exceed
+    ``pitch_max_hz`` are never admitted) and ``floor`` for the longest lag (so
+    the configured ``pitch_min_hz`` is not undercut), matching the plan's pitch
+    range.
+
+    Returns ``(f0_hz, best_nccf)`` where ``best_nccf`` is 0 for unvoiced frames.
     """
-    min_lag = max(int(sr / config.pitch_max_hz), 1)
-    max_lag = int(sr / config.pitch_min_hz)
+    min_lag = max(int(math.ceil(sr / config.pitch_max_hz)), 1)
+    max_lag = int(math.floor(sr / config.pitch_min_hz))
     max_lag = min(max_lag, frame_size - 1)
     if max_lag <= min_lag:
-        return np.full(win.shape[0], np.nan)
+        n = win.shape[0]
+        return np.full(n, np.nan), np.zeros(n)
 
     out = np.full(win.shape[0], np.nan)
     best_dot = np.zeros(win.shape[0])
@@ -116,7 +144,7 @@ def _f0_per_frame(
         best_dot = np.where(better, nccf, best_dot)
         out = np.where(better, sr / lag, out)
     voiced = best_dot >= config.pitch_autocorr_threshold
-    return np.where(voiced, out, np.nan)
+    return np.where(voiced, out, np.nan), np.where(voiced, best_dot, 0.0)
 
 
 def _spectral(frames: np.ndarray, sr: int) -> dict[str, float]:
@@ -129,8 +157,12 @@ def _spectral(frames: np.ndarray, sr: int) -> dict[str, float]:
 
     centroid = (power * freqs[None, :]).sum(axis=1) / safe_total
     spread = np.sqrt((power * (freqs[None, :] - centroid[:, None]) ** 2).sum(axis=1) / safe_total)
-    eps = 1e-12
-    flatness = np.exp((power + eps).mean(axis=1)) / np.exp((np.log(power + eps)).mean(axis=1))
+    # Spectral flatness is the ratio of geometric to arithmetic power, bounded
+    # in [0, 1]: near 1 for white noise, near 0 for a tonal/spiky spectrum.
+    # Adding a tiny floor to every bin keeps the geometric mean finite without
+    # materially distorting the ratio on well-conditioned spectra.
+    sm = power.mean(axis=1)
+    flatness = np.exp(np.log(power + 1e-12).mean(axis=1)) / np.maximum(sm, 1e-12)
 
     def _mean(arr):
         vals = arr[np.isfinite(arr)]
@@ -146,9 +178,17 @@ def _spectral(frames: np.ndarray, sr: int) -> dict[str, float]:
 _MISSING = {
     "ac_frame_energy_mean": math.nan,
     "ac_frame_energy_sd": math.nan,
+    "ac_frame_energy_iqr": math.nan,
+    "ac_frame_energy_span": math.nan,
     "ac_pitch_voiced_mean": math.nan,
     "ac_pitch_voiced_sd": math.nan,
     "ac_pitch_voiced_cv": math.nan,
+    "ac_pitch_voiced_median": math.nan,
+    "ac_pitch_voiced_iqr": math.nan,
+    "ac_pitch_voiced_span": math.nan,
+    "ac_pitch_voiced_delta": math.nan,
+    "ac_hnr_median": math.nan,
+    "ac_hnr_iqr": math.nan,
     "ac_voice_ratio": math.nan,
     "ac_pause_count": math.nan,
     "ac_pause_rate_per_min": math.nan,
@@ -160,6 +200,24 @@ _MISSING = {
     "ac_spectral_spread_mean": math.nan,
     "ac_spectral_flatness_mean": math.nan,
 }
+
+
+def _quantile(arr: np.ndarray, q: float) -> float:
+    """Robust percentile of a 1-D array; NaN when empty."""
+    if arr.size == 0:
+        return math.nan
+    return float(np.percentile(arr, q))
+
+
+def _hnr_db(best_nccf: np.ndarray) -> np.ndarray:
+    """Harmonic-to-noise ratio (dB) from normalized autocorrelation peaks.
+
+    ``HNR = 10*log10(r / (1 - r))`` for the best NCCF ``r`` per voiced frame.
+    ``r`` is clamped below the ceiling so near-perfect periodicity stays finite
+    instead of dividing by zero.
+    """
+    r = np.clip(best_nccf, 0.0, _HNR_NCCF_CEILING)
+    return 10.0 * np.log10(np.maximum(r, 1e-12) / (1.0 - r))
 
 
 def extract_acoustic(
@@ -210,6 +268,8 @@ def extract_acoustic(
     features = dict(_MISSING)
     features["ac_frame_energy_mean"] = float(np.mean(frame_energy))
     features["ac_frame_energy_sd"] = float(np.std(frame_energy))
+    features["ac_frame_energy_iqr"] = _quantile(frame_energy, 75) - _quantile(frame_energy, 25)
+    features["ac_frame_energy_span"] = _quantile(frame_energy, 95) - _quantile(frame_energy, 5)
 
     spectral = _spectral(win, sample_rate)
     features.update(spectral)
@@ -217,9 +277,11 @@ def extract_acoustic(
     if not np.any(voiced):
         return AcousticResult(features, ("no_voice",))
 
-    f0 = _f0_per_frame(win, cfg.frame_size, sample_rate, cfg)
+    f0, best_nccf = _f0_per_frame(win, cfg.frame_size, sample_rate, cfg)
     pitched = f0[voiced]
+    pitched_nccf = best_nccf[voiced]
     voiced_f0 = pitched[np.isfinite(pitched)]
+    voiced_nccf = pitched_nccf[np.isfinite(pitched)]
 
     if voiced_f0.size == 0:
         return AcousticResult(features, ("no_voice",))
@@ -228,10 +290,20 @@ def extract_acoustic(
     features["ac_voice_ratio"] = voice_ratio
     features["ac_pitch_voiced_mean"] = float(np.mean(voiced_f0))
     features["ac_pitch_voiced_sd"] = float(np.std(voiced_f0))
-    if features["ac_pitch_voiced_mean"]:
-        features["ac_pitch_voiced_cv"] = (
-            features["ac_pitch_voiced_sd"] / features["ac_pitch_voiced_mean"]
-        )
+    mean = features["ac_pitch_voiced_mean"]
+    sd = features["ac_pitch_voiced_sd"]
+    # Guard with an explicit finite check rather than boolean truthiness of a
+    # mean that could be NaN (NaN is truthy, which would otherwise divide by it).
+    if math.isfinite(mean) and mean > 0.0:
+        features["ac_pitch_voiced_cv"] = sd / mean
+    features["ac_pitch_voiced_median"] = float(np.median(voiced_f0))
+    features["ac_pitch_voiced_iqr"] = _quantile(voiced_f0, 75) - _quantile(voiced_f0, 25)
+    features["ac_pitch_voiced_span"] = _quantile(voiced_f0, 95) - _quantile(voiced_f0, 5)
+    features["ac_pitch_voiced_delta"] = float(np.max(voiced_f0) - np.min(voiced_f0))
+
+    hnr = _hnr_db(voiced_nccf)
+    features["ac_hnr_median"] = float(np.median(hnr)) if hnr.size else math.nan
+    features["ac_hnr_iqr"] = _quantile(hnr, 75) - _quantile(hnr, 25)
 
     hop_s = cfg.hop_size / sample_rate
     pauses = _pauses(voiced, hop_s, cfg.pause_threshold_s)
