@@ -144,9 +144,10 @@ prohibition statement ("No ... librosa/openSMILE"); no import anywhere.
 
 ## Agy review
 
-Pending — reviewer (Agy) to verify specification compliance and code quality
-against the brief; verdict to be recorded here.
+APPROVE with no findings (`.superpowers/sdd/2026-08-06-say-vietnamese-speech-library/task-11-review.md`).
+
+Verification summary: `uv run pytest tests/speech_features/test_legacy.py -q` — 19 passed; `uv run pytest tests/speech_features -q` — 571 passed; `uv run ruff check` and `uv run ruff format --check` on `src/speech_features` and `tests/speech_features` — passed; warning-as-error imports of `speech_features` and `speech_features.legacy.ad` — passed without eager `scikit-learn` loading; `git ls-files '*.ipynb'` — no tracked notebooks. Reviewed scope: canonical audio core, lazy legacy package, deprecation shims, root exports, rewired core consumers, migration tests, and all five notebook deletions in `724adb6..c9b3fa3`.
 
 ## Resolution
 
-Pending — controller to close the task after Agy approval.
+Closed. Implementation commit `c9b3fa3` (`refactor: isolate legacy AD workflow and retire notebook logic`), no fix commit required; 571 passing tests, Ruff clean, import isolation clean, and zero tracked notebooks.
