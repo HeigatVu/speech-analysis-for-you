@@ -18,6 +18,7 @@ class TestExtractionConfig:
         assert config.pitch_autocorr_threshold == 0.30
         assert config.pause_threshold_s == 0.20
         assert config.long_pause_threshold_s == 2.0
+        assert config.lpc_order == 12
 
     def test_is_immutable(self):
         with pytest.raises(dataclasses.FrozenInstanceError):

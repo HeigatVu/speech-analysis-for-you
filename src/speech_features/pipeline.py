@@ -51,6 +51,12 @@ class InvalidAudioError(FeatureExtractionError):
     code = "INVALID_AUDIO"
 
 
+class UnsupportedAudioError(FeatureExtractionError):
+    """Raised when a WAV is not standard PCM mono/stereo media."""
+
+    code = "UNSUPPORTED_AUDIO"
+
+
 _SCALE_BY_WIDTH = {2: 32768.0, 3: 8388608.0, 4: 2147483648.0}
 
 # Dispatch from manifest task name to its external task-spec scorer.
@@ -104,8 +110,9 @@ def read_wav(path, *, sample_rate: int = 16000) -> np.ndarray:
     Accepts mono or stereo integer PCM (8/16/24/32-bit, standard ``wave``
     formats). Stereo is downmixed to mono by the channel mean; the resulting
     samples are resampled to ``sample_rate`` with ``resample_poly``. At least
-    finite, non-empty audio is guaranteed; malformed/unsupported files raise
-    :class:`InvalidAudioError`.
+    finite, non-empty audio is guaranteed; malformed files raise
+    :class:`InvalidAudioError` and unsupported media (non-PCM, non-standard
+    width or channel count) raises :class:`UnsupportedAudioError`.
     """
     try:
         with wave.open(str(path), "rb") as wf:
@@ -116,14 +123,19 @@ def read_wav(path, *, sample_rate: int = 16000) -> np.ndarray:
             n_frames = wf.getnframes()
             raw = wf.readframes(int(n_frames))
     except (wave.Error, OSError, EOFError) as exc:
+        # The stdlib wave reader rejects non-PCM format codes at open time
+        # ("unknown format: <code>"); those files are unsupported media, not
+        # malformed PCM, so they surface the stable UNSUPPORTED_AUDIO code.
+        if isinstance(exc, wave.Error) and "unknown format" in str(exc):
+            raise UnsupportedAudioError(f"unsupported WAV (not PCM): {exc}") from exc
         raise InvalidAudioError(f"cannot read WAV {path}: {exc}") from exc
 
     if comptype not in (b"NONE", "NONE", None):
-        raise InvalidAudioError(f"unsupported WAV (not PCM), compression: {comptype!r}")
+        raise UnsupportedAudioError(f"unsupported WAV (not PCM), compression: {comptype!r}")
     if width not in (1, 2, 3, 4):
-        raise InvalidAudioError(f"unsupported sample width in WAV: {width} bytes")
+        raise UnsupportedAudioError(f"unsupported sample width in WAV: {width} bytes")
     if channels not in (1, 2):
-        raise InvalidAudioError(f"unsupported channel count in WAV: {channels}")
+        raise UnsupportedAudioError(f"unsupported channel count in WAV: {channels}")
     if src_sr <= 0 or n_frames <= 0:
         raise InvalidAudioError("WAV is empty or has an invalid sample rate")
 
@@ -324,6 +336,7 @@ __all__ = [
     "BatchResult",
     "InvalidAudioError",
     "MissingInputError",  # re-exported: missing inputs surface through extract_recording
+    "UnsupportedAudioError",
     "extract_manifest",
     "extract_recording",
     "read_wav",

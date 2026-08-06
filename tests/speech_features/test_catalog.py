@@ -176,8 +176,11 @@ def test_definition_is_frozen_and_prerequisites_immutable():
 # ---------------------------------------------------------------------------
 # list_features: ordering, filters, uniqueness
 # ---------------------------------------------------------------------------
-def test_list_features_returns_empty_tuple():
-    assert list_features() == ()
+def test_list_features_mirrors_registered_definitions():
+    assert list_features() == tuple(sorted(catalog._FEATURES, key=lambda d: d.key))
+    assert list_features(pack="acoustic") == tuple(
+        f for f in list_features() if f.pack == "acoustic"
+    )
 
 
 def test_list_features_deterministic_order_and_filters():
@@ -191,7 +194,9 @@ def test_list_features_deterministic_order_and_filters():
     features = list_features()
     assert isinstance(features, tuple)
     assert [f.key for f in features] == sorted(f.key for f in features)
-    assert [f.key for f in list_features(pack="acoustic")] == ["audio_test_duration"]
+    acoustic = list_features(pack="acoustic")
+    assert "audio_test_duration" in [f.key for f in acoustic]
+    assert all(f.pack == "acoustic" for f in acoustic)
     assert all(f.level == "recording" for f in list_features(level="recording"))
     assert [f.key for f in list_features(pack="adult_neuro", level="utterance")] == ["lex_test_ttr"]
 

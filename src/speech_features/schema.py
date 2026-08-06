@@ -105,7 +105,11 @@ def nfc(text: str) -> str:
 # ---------------------------------------------------------------------------
 @dataclass(frozen=True)
 class ExtractionConfig:
-    """Fixed extraction defaults. 25 ms frames / 10 ms hop at 16 kHz."""
+    """Fixed extraction defaults. 25 ms frames / 10 ms hop at 16 kHz.
+
+    ``lpc_order`` calibrates the resonance features (Task 7) and is reserved
+    here so the full calibration surface stays on one config object.
+    """
 
     sample_rate: int = 16000
     frame_size: int = 400  # 25 ms at 16 kHz
@@ -115,6 +119,7 @@ class ExtractionConfig:
     pitch_autocorr_threshold: float = 0.30
     pause_threshold_s: float = 0.20
     long_pause_threshold_s: float = 2.0
+    lpc_order: int = 12
 
 
 @dataclass(frozen=True)

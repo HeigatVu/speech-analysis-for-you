@@ -8,9 +8,9 @@ immutable, population-neutral input shared by feature packs.
 This module is the single obvious place exposing the complete stable error
 set: :data:`STABLE_ERROR_CODES` lists all ten codes and every class is
 re-exported here, including the pre-existing ``InvalidDocumentError``,
-``InvalidChatError``, ``InvalidAudioError``, and ``MissingInputError``
-(reused from their original modules, never duplicated). New exception classes
-carry a stable ``.code``.
+``InvalidChatError``, ``InvalidAudioError``, ``UnsupportedAudioError``, and
+``MissingInputError`` (reused from their original modules, never duplicated).
+New exception classes carry a stable ``.code``.
 """
 
 from __future__ import annotations
@@ -24,7 +24,7 @@ import pandas as pd
 
 from .document import InvalidDocumentError
 from .formats.chat import InvalidChatError
-from .pipeline import InvalidAudioError
+from .pipeline import InvalidAudioError, UnsupportedAudioError
 from .schema import ExtractionConfig, FeatureExtractionError, MissingInputError
 
 STABLE_ERROR_CODES = frozenset(
@@ -60,12 +60,6 @@ _ISSUE_COLUMNS = (
 # ---------------------------------------------------------------------------
 # Stable extraction errors (new classes; pre-existing ones are reused)
 # ---------------------------------------------------------------------------
-class UnsupportedAudioError(FeatureExtractionError):
-    """Raised when an audio input is not supported standard PCM WAV."""
-
-    code = "UNSUPPORTED_AUDIO"
-
-
 class TargetSpeakerRequiredError(FeatureExtractionError):
     """Raised when multiple speakers exist but no target is given."""
 

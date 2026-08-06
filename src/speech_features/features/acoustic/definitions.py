@@ -1,0 +1,210 @@
+"""Stable feature definitions for the built-in acoustic pack (Task 5).
+
+Each definition carries the exact key, pack, level, unit, prerequisites,
+population applicability, formula version, and reference required by the
+catalog contract. Formula details are documented on the extracting functions
+in :mod:`speech_features.features.acoustic.quality` and
+:mod:`speech_features.features.acoustic.timing`.
+"""
+
+from __future__ import annotations
+
+from ...catalog import FeatureDefinition, register_feature
+
+QUALITY_KEYS = (
+    "audio_duration_s",
+    "audio_dc_offset",
+    "audio_clipping_ratio",
+    "audio_rms_dbfs",
+)
+
+TIMING_KEYS = (
+    "time_speech_s",
+    "time_speech_ratio",
+    "time_voiced_segment_mean_s",
+    "time_voiced_segment_sd_s",
+    "time_pause_count",
+    "time_pause_rate_per_min",
+    "time_pause_mean_s",
+    "time_pause_sd_s",
+    "time_pause_max_s",
+    "time_long_pause_count",
+    "time_response_latency_s",
+    "time_overlap_s",
+    "time_words_per_min",
+    "time_syllables_per_min",
+    "time_articulation_rate_syllables_per_s",
+)
+
+ALL_KEYS = QUALITY_KEYS + TIMING_KEYS
+
+_DEFINITIONS = (
+    FeatureDefinition(
+        key="audio_duration_s",
+        pack="acoustic",
+        level="recording",
+        unit="s",
+        population="adult",
+        reference="SAY catalog v1",
+    ),
+    FeatureDefinition(
+        key="audio_dc_offset",
+        pack="acoustic",
+        level="recording",
+        unit="amplitude",
+        population="adult",
+        reference="SAY catalog v1",
+    ),
+    FeatureDefinition(
+        key="audio_clipping_ratio",
+        pack="acoustic",
+        level="recording",
+        unit="ratio",
+        population="adult",
+        reference="SAY catalog v1",
+    ),
+    FeatureDefinition(
+        key="audio_rms_dbfs",
+        pack="acoustic",
+        level="recording",
+        unit="dBFS",
+        population="adult",
+        reference="SAY catalog v1",
+    ),
+    FeatureDefinition(
+        key="time_speech_s",
+        pack="acoustic",
+        level="recording",
+        unit="s",
+        population="adult",
+        reference="SAY catalog v1",
+    ),
+    FeatureDefinition(
+        key="time_speech_ratio",
+        pack="acoustic",
+        level="recording",
+        unit="ratio",
+        prerequisites=("time_speech_s",),
+        population="adult",
+        reference="SAY catalog v1",
+    ),
+    FeatureDefinition(
+        key="time_voiced_segment_mean_s",
+        pack="acoustic",
+        level="recording",
+        unit="s",
+        population="adult",
+        reference="SAY catalog v1",
+    ),
+    FeatureDefinition(
+        key="time_voiced_segment_sd_s",
+        pack="acoustic",
+        level="recording",
+        unit="s",
+        population="adult",
+        reference="SAY catalog v1",
+    ),
+    FeatureDefinition(
+        key="time_pause_count",
+        pack="acoustic",
+        level="recording",
+        unit="count",
+        population="adult",
+        reference="SAY catalog v1",
+    ),
+    FeatureDefinition(
+        key="time_pause_rate_per_min",
+        pack="acoustic",
+        level="recording",
+        unit="count/min",
+        population="adult",
+        reference="SAY catalog v1",
+    ),
+    FeatureDefinition(
+        key="time_pause_mean_s",
+        pack="acoustic",
+        level="recording",
+        unit="s",
+        population="adult",
+        reference="SAY catalog v1",
+    ),
+    FeatureDefinition(
+        key="time_pause_sd_s",
+        pack="acoustic",
+        level="recording",
+        unit="s",
+        population="adult",
+        reference="SAY catalog v1",
+    ),
+    FeatureDefinition(
+        key="time_pause_max_s",
+        pack="acoustic",
+        level="recording",
+        unit="s",
+        population="adult",
+        reference="SAY catalog v1",
+    ),
+    FeatureDefinition(
+        key="time_long_pause_count",
+        pack="acoustic",
+        level="recording",
+        unit="count",
+        population="adult",
+        reference="SAY catalog v1",
+    ),
+    FeatureDefinition(
+        key="time_response_latency_s",
+        pack="acoustic",
+        level="recording",
+        unit="s",
+        population="adult",
+        reference="SAY catalog v1",
+    ),
+    FeatureDefinition(
+        key="time_overlap_s",
+        pack="acoustic",
+        level="recording",
+        unit="s",
+        population="adult",
+        reference="SAY catalog v1",
+    ),
+    FeatureDefinition(
+        key="time_words_per_min",
+        pack="acoustic",
+        level="recording",
+        unit="words/min",
+        prerequisites=("time_speech_s",),
+        population="adult",
+        reference="SAY catalog v1",
+    ),
+    FeatureDefinition(
+        key="time_syllables_per_min",
+        pack="acoustic",
+        level="recording",
+        unit="syllables/min",
+        prerequisites=("time_speech_s",),
+        population="adult",
+        reference="SAY catalog v1",
+    ),
+    FeatureDefinition(
+        key="time_articulation_rate_syllables_per_s",
+        pack="acoustic",
+        level="recording",
+        unit="syllables/s",
+        prerequisites=("time_speech_s",),
+        population="adult",
+        reference="SAY catalog v1",
+    ),
+)
+
+_registered = False
+
+
+def register_acoustic_features() -> None:
+    """Register the acoustic pack definitions (idempotent)."""
+    global _registered
+    if _registered:
+        return
+    for definition in _DEFINITIONS:
+        register_feature(definition)
+    _registered = True
