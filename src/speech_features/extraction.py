@@ -267,7 +267,8 @@ def _extract_bundle(
             )
             if len(utterances):
                 utterances = utterances.sort_values(
-                    by=list(_UTTERANCE_ID_COLUMNS), kind="stable"
+                    by=["recording_id", "speaker_id", "start_s", "end_s", "utterance_id"],
+                    kind="stable",
                 ).reset_index(drop=True)
         else:
             utterances = pd.DataFrame(columns=_UTTERANCE_ID_COLUMNS)

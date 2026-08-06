@@ -732,6 +732,30 @@ class TestLabelFreeExtraction:
         assert len(utterance_only.recordings) == 0
         assert len(utterance_only.utterances) == 1
 
+    def test_utterance_rows_sorted_chronologically_not_by_id(self, tmp_path):
+        audio = _write_wav(tmp_path / "a.wav", _tone(145, 1.0))
+        data = _document_json()
+        data["utterances"] = [
+            {
+                "id": "u2",
+                "speaker_id": "PAR",
+                "start_s": 0.0,
+                "end_s": 1.0,
+                "tokens": [{"id": "u2_t0001", "text": "con", "kind": "word"}],
+            },
+            {
+                "id": "u10",
+                "speaker_id": "PAR",
+                "start_s": 1.5,
+                "end_s": 2.5,
+                "tokens": [{"id": "u10_t0001", "text": "m\u00e8o", "kind": "word"}],
+            },
+        ]
+        doc = load_document(_write_json(tmp_path / "doc.json", data))
+        bundle = speech_features.extract(audio, doc, packs=("adult_neuro",), levels=("utterance",))
+        assert list(bundle.utterances["utterance_id"]) == ["u2", "u10"]
+        assert list(bundle.utterances["start_s"]) == [0.0, 1.5]
+
     def test_pack_order_cannot_change_columns(self, tmp_path):
         audio = _write_wav(tmp_path / "a.wav", _tone(145, 1.0))
         doc = _document(tmp_path)
