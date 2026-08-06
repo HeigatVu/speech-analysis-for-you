@@ -3,6 +3,29 @@
 ## 🎯 Overview
 This pipeline processes speech audio recordings and extracts clinically relevant features that can distinguish between healthy speech patterns and those affected by cognitive decline. The system is designed with modularity and extensibility in mind, allowing for easy integration of machine learning models in future iterations.
 
+### Vietnamese speech feature library (research-only)
+
+The `src/speech_features` package is a **math-first, research-only** feature
+library for AD-versus-healthy-control speech studies. It processes participant
+WAV recordings plus reviewed, aligned Vietnamese transcripts for picture
+description, immediate/delayed recall, and phonemic/semantic fluency tasks. Key
+points you should know before using it:
+
+- **Not a diagnostic and not for clinical decision-making.** These features and
+  the research baseline are for cohort characterisation only. They do not give a
+  diagnosis and define **no fixed score threshold**. We do not promise any fixed
+  performance; do not treat any metric as a guarantee of real-world accuracy.
+- **Math-first extraction.** Feature extraction uses NumPy/SciPy and stdlib
+  primitives only — no librosa, openSMILE, spaCy, ASR, embeddings, or
+  transformer models.
+- **Deterministic contracts.** Standard PCM WAV in (down-mixed to mono and resampled to 16 kHz), reviewed Vietnamese transcript JSON (a transcript, not whitespace, defines word boundaries) in,
+  immutable `FeatureResult` with per-input SHA-256 provenance out. See
+  [Feature Extraction](docs/feature-extraction.md) for the full
+  formulas, manifest/task-spec fields, quality flags, label separation, batch
+  failure behaviour, and the repeated nested grouped-CV research baseline.
+- **Tests first.** Every module was built test-first; the docs are guarded by
+  `tests/speech_features/test_documentation.py`.
+
 ### Key features:
 - 🔧 Robust Preprocessing: 
 - 🎵 Multi-domain Feature Extraction:
@@ -13,6 +36,7 @@ This pipeline processes speech audio recordings and extracts clinically relevant
 - [Speech Analysis for You (SAY)](#speech-analysis-for-you-say)
   - [🎯 Overview](#-overview)
     - [Key features:](#key-features)
+    - [Vietnamese speech feature library (research-only)](#vietnamese-speech-feature-library-research-only)
   - [Table of Contents](#table-of-contents)
   - [🚀 Installation](#-installation)
     - [Prerequisites](#prerequisites)
