@@ -75,13 +75,15 @@ def _bytes_to_samples(raw: bytes, width: int, count: int) -> np.ndarray:
         return np.frombuffer(raw, dtype="<i2").astype(np.int64)[:count]
     if width == 4:
         return np.frombuffer(raw, dtype="<i4").astype(np.int64)[:count]
-    # 24-bit signed PCM has no native width-3 dtype; unpack three bytes per sample.
-    out = np.zeros(count, dtype=np.int64)
-    for i in range(count):
-        lo, mid, hi = raw[3 * i], raw[3 * i + 1], raw[3 * i + 2]
-        v = lo | (mid << 8) | (hi << 16)
-        out[i] = v - 0x1_000000 if v & 0x800000 else v
-    return out
+    # 24-bit signed PCM has no native width-3 dtype; assemble each sample from
+    # three little-endian bytes with vectorised NumPy ops (no per-sample loop).
+    n_bytes = np.frombuffer(raw, dtype=np.uint8).astype(np.int64)
+    if n_bytes.size % 3 != 0:
+        raise ValueError(f"truncated 24-bit PCM buffer ({n_bytes.size} bytes, not a multiple of 3)")
+    three = n_bytes[: count * 3].reshape(-1, 3)
+    lo, mid, hi = three[:, 0], three[:, 1], three[:, 2]
+    u = lo | (mid << 8) | (hi << 16)
+    return np.where(u & 0x800000, u - 0x1_000000, u)
 
 
 def _to_float(samples: np.ndarray, width: int) -> np.ndarray:
@@ -125,16 +127,24 @@ def read_wav(path, *, sample_rate: int = 16000) -> np.ndarray:
     if src_sr <= 0 or n_frames <= 0:
         raise InvalidAudioError("WAV is empty or has an invalid sample rate")
 
-    count = n_frames * channels
-    samples = _to_float(_bytes_to_samples(raw, width, count), width)
-    if channels == 2:
-        samples = samples.reshape(-1, 2).mean(axis=1)
-    if not np.all(np.isfinite(samples)):
-        raise InvalidAudioError("WAV contains non-finite samples")
-
-    if src_sr != sample_rate:
-        samples = _resample(samples, src_sr, sample_rate)
-    return samples
+    try:
+        count = n_frames * channels
+        samples = _to_float(_bytes_to_samples(raw, width, count), width)
+        if channels == 2:
+            samples = samples.reshape(-1, 2).mean(axis=1)
+        if not np.all(np.isfinite(samples)):
+            raise InvalidAudioError("WAV contains non-finite samples")
+        if src_sr != sample_rate:
+            samples = _resample(samples, src_sr, sample_rate)
+            # resample_poly is a polynomial all-pole path; still guard the output
+            # against any accidental non-finite introduction at the boundary.
+            if not np.all(np.isfinite(samples)):
+                raise InvalidAudioError("resampled WAV contains non-finite samples")
+        return samples
+    except InvalidAudioError:
+        raise
+    except (ValueError, IndexError, TypeError) as exc:
+        raise InvalidAudioError(f"cannot decode WAV {path}: {exc}") from exc
 
 
 # ---------------------------------------------------------------------------
@@ -286,6 +296,15 @@ def extract_manifest(manifest_path, *, config: ExtractionConfig | None = None) -
                 BatchFailure(
                     key=key,
                     code=exc.code,
+                    error_type=type(exc).__name__,
+                    message=str(exc),
+                )
+            )
+        except Exception as exc:  # noqa: BLE001 - isolate any per-row failure
+            failure_list.append(
+                BatchFailure(
+                    key=key,
+                    code="EXTRACTION_ERROR",
                     error_type=type(exc).__name__,
                     message=str(exc),
                 )

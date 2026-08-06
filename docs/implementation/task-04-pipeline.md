@@ -27,6 +27,24 @@ ModuleNotFoundError: No module named 'speech_features.pipeline'
 
 So `pipeline.py` did not exist until the tests demanded it.
 
+**RED, review-fix regression tests (written before the production fixes):**
+
+```
+$ uv run pytest tests/speech_features/test_pipeline.py -q
+3 failed, 21 passed in 0.58s
+
+FAILED TestInvalidAudioIsolation::test_truncated_wav_raises_invalid_audio
+FAILED TestInvalidAudioIsolation::test_truncated_wav_is_isolated_as_batch_failure
+FAILED TestGenericRowFallback::test_arbitrary_row_exception_becomes_batch_failure
+```
+
+The three failures were the Agy-finding regressions: a truncated 24-bit WAV
+leaked a raw `IndexError` instead of `InvalidAudioError` (finding 1, 6), and an
+arbitrary row exception aborted the whole batch instead of being isolated
+(finding 2). The 8/24-bit decode and post-resample finiteness tests passed even
+on the build commit; they lock in the vectorised decode (finding 4) and the
+post-resample finiteness guarantee (finding 3) as regressions.
+
 ### What was built
 
 - **`read_wav(path, *, sample_rate=16000) -> np.ndarray`** — reads standard PCM
@@ -83,43 +101,62 @@ torch/ASR and no patient data or lexicons — verified below.
 
 ## 2. Agy Review
 
-Reviewer: `agy:code-reviewer`. Pending review of the exact diff and this report.
+Reviewer: `agy:code-reviewer`. Review of the Task 4 build commit `03d8bde`
+raised one set of hardening findings on the WAV-decode and batch-isolation
+paths. Each finding maps to a TDD fix below (RED regression test written
+first, then production fix), recorded in Resolution.
 
-### Gates this change claims to satisfy
+1. **WAV decode/downmix/resample paths are not uniformly wrapped in
+   `InvalidAudioError`.** Only I/O (`wave.open`) and header guard failures were
+   raised as `InvalidAudioError`; a truncated payload that failed during
+   PCM decode leaked raw `ValueError`/`IndexError` (e.g. stripping one byte
+   from a 24-bit WAV → an uncaught `IndexError`). Every decode/downmix/
+   resample step must yield a structured `InvalidAudioError` (`INVALID_AUDIO`).
+2. **`extract_manifest` catches only `FeatureExtractionError`.** An arbitrary
+   unexpected exception raised inside a row (a scorer bug, a `TypeError`, etc.)
+   propagated out of `extract_recording` and terminated the whole batch instead
+   of being recorded as a `BatchFailure`. The batch needs a generic per-row
+   fallback so any row exception isolates without aborting.
+3. **Finiteness is only asserted before resampling.** `read_wav` checks the
+   decoded PCM is finite but does not re-assert finiteness on the output of
+   `resample_poly`; the boundary guarantee should hold after resampling too.
+4. **24-bit PCM decoding uses a Python sample loop.** `_bytes_to_samples` for
+   `width == 3` iterated per-sample; it should assemble each 24-bit sample from
+   its three little-endian bytes with NumPy vectorised ops.
+5. **8-bit unsigned and 24-bit signed PCM decoding are untested.** The WAV
+   contract advertises 8/16/24/32-bit support but only 16-bit had decoding
+   tests.
+6. **A malformed/truncated WAV is not tested as an isolated batch row** with a
+   stable `INVALID_AUDIO` code.
 
-- **Compose-only pipeline** — no re-implementation of feature maths; each
-  extractor is called as-is and results are merged deterministically.
-- **stdlib WAV PCM + SciPy resample** — `wave` for I/O, `resample_poly` for
-  rate conversion; mono/stereo → finite mono float guaranteed at the boundary.
-- **Validation** — manifest, transcript, and task spec all flow through the
-  Task 1 validators; unknown task spec names are rejected before dispatch.
-- **Diagnosis exclusion** — not a field of `FeatureResult`, absent from all
-  features, and carried only on `BatchResult.labels` for later evaluation.
-- **Failure isolation** — a failing row records a stable `FeatureExtractionError`
-  code and does not stop the rest of the batch.
-- **Immutability** — `FeatureResult` and batch containers are frozen with
-  mapping/tuple wrappers.
-- **Reproducibility** — SHA-256 provenance per recording; deterministic batch
-  ordering and per-key recorded/label tables.
-- **No forbidden imports** — grep for the forbidden libraries in the owned
-  modules returns only a docstring mention (no real import).
+Each of the above was converted into a regression test first (see Resolution),
+confirmed RED against the build commit, then fixed.
 
 ---
 
 ## 3. Resolution
 
-| Finding | Resolution |
-|---------|-----------|
-| (pending) | Awaiting Agy review of the diff and report. |
+All six findings resolved test-first. The three behavioural regressions (1, 2,
+6) genuinely failed on the build commit; the decode-coverage and vectorisation
+findings (3, 4, 5) added missing guarantees/tests alongside the fix.
+
+| # | Failing test (RED) | Fix |
+|---|--------------------|-----|
+| 1 | `TestInvalidAudioIsolation::test_truncated_wav_raises_invalid_audio` | `read_wav` wraps the whole decode/downmix/resample block in a `try` that converts `ValueError`/`IndexError`/`TypeError` into `InvalidAudioError`; a 24-bit payload not a multiple of three now raises `INVALID_AUDIO` at the boundary. |
+| 2 | `TestGenericRowFallback::test_arbitrary_row_exception_becomes_batch_failure` | `extract_manifest` adds a generic `except Exception` fallback that records a `BatchFailure` (`code = "EXTRACTION_ERROR"`, `error_type` = exception class) instead of aborting the batch. |
+| 6 | `TestInvalidAudioIsolation::test_truncated_wav_is_isolated_as_batch_failure` | Proves a truncated-WAV row in a manifest is isolated as `BatchFailure(key, INVALID_AUDIO)` while a sibling good row still extracts. |
+| 3 | `TestInvalidAudioIsolation::test_read_wav_output_is_finite_after_resample` | `read_wav` re-asserts `np.all(np.isfinite(samples))` on the `resample_poly` output and raises `InvalidAudioError` if non-finite. |
+| 4 | `TestPcmWidthDecoding::*` (24-bit round-trip + stereo downmix) | `_bytes_to_samples` for `width == 3` slices bytes into a `(N, 3)` array and assembles samples with vectorised `|`/`<<`/`np.where` — no per-sample loop. |
+| 5 | `TestPcmWidthDecoding::test_8bit_unsigned_pcm_decodes_correctly`, `test_24bit_signed_pcm_decodes_correctly` | Added explicit 8-bit unsigned and 24-bit signed PCM decoding rounds, verifying the `[-1, 1]` mapping matches the writer. |
 
 ### Final verification (after Resolution)
 
 ```
 $ uv run pytest tests/speech_features/test_pipeline.py -q
-16 passed in 0.48s
+24 passed in 0.57s
 
 $ uv run pytest tests/speech_features -q
-134 passed in 0.71s
+142 passed in 0.80s
 
 $ uv run ruff check src/speech_features tests/speech_features
 All checks passed!

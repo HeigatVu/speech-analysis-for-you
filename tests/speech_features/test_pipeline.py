@@ -30,6 +30,25 @@ def _write_json(path, obj):
     return str(path)
 
 
+def _to_pcm(mono, width):
+    """Map a mono float array in [-1, 1] to a PCM byte payload of `width` bytes."""
+    mono = np.clip(np.asarray(mono, dtype=float), -1.0, 1.0)
+    if width == 1:  # unsigned 8-bit
+        pcm = np.round(mono * 128.0 + 128.0).astype(np.uint8)
+        return pcm.tobytes()
+    if width == 2:
+        pcm = np.round(mono * 32767.0).astype(np.int16)
+        return pcm.astype("<i2").tobytes()
+    if width == 3:  # signed 24-bit (little-endian, three bytes)
+        pcm = np.round(mono * 8388607.0).astype(np.int32)
+        lo = (pcm & 0xFF).astype(np.uint8)
+        mid = ((pcm >> 8) & 0xFF).astype(np.uint8)
+        hi = ((pcm >> 16) & 0xFF).astype(np.uint8)
+        return np.stack([lo, mid, hi], axis=1).reshape(-1).tobytes()
+    pcm = np.round(mono * 2147483647.0).astype(np.int32)
+    return pcm.astype("<i4").tobytes()
+
+
 def _write_wav(path, mono, sample_rate=16000, n_channels=1):
     mono = np.asarray(mono, dtype=float)
     if n_channels == 2:
@@ -43,6 +62,21 @@ def _write_wav(path, mono, sample_rate=16000, n_channels=1):
         wf.setsampwidth(2)
         wf.setframerate(sample_rate)
         wf.writeframes(pcm.astype("<i2").tobytes())
+    return str(path)
+
+
+def _write_wav_width(path, mono, width, sample_rate=16000, n_channels=1):
+    """Write a mono or stereo WAV at an arbitrary integer PCM width."""
+    mono = np.asarray(mono, dtype=float)
+    if n_channels == 2:
+        data = np.stack([mono, mono], axis=1).reshape(-1)
+    else:
+        data = mono.copy()
+    with wave.open(str(path), "wb") as wf:
+        wf.setnchannels(n_channels)
+        wf.setsampwidth(width)
+        wf.setframerate(sample_rate)
+        wf.writeframes(_to_pcm(data, width))
     return str(path)
 
 
@@ -329,3 +363,166 @@ class TestReproducibility:
 
     def test_every_known_task_has_a_scorer(self):
         assert set(pipeline._TASK_SCORER) == set(KNOWN_TASKS)
+
+
+class TestPcmWidthDecoding:
+    """Agy finding: 24-bit PCM must decode via NumPy vector ops; 8/24-bit decode must be verified."""
+
+    def test_8bit_unsigned_pcm_decodes_correctly(self, tmp_path):
+        values = np.array([0.0, 0.5, -0.5, 1.0, -1.0], dtype=float)
+        path = _write_wav_width(tmp_path / "u8.wav", values, width=1)
+        samples = pipeline.read_wav(path, sample_rate=16000)
+        expect = (
+            np.round(values * 128.0 + 128.0).astype(np.uint8).astype(np.float64) - 128.0
+        ) / 128.0
+        assert samples.shape == values.shape
+        np.testing.assert_allclose(samples, expect, atol=1e-4)
+
+    def test_24bit_signed_pcm_decodes_correctly(self, tmp_path):
+        values = np.array([0.0, 0.5, -0.5, 1.0, -1.0], dtype=float)
+        path = _write_wav_width(tmp_path / "s24.wav", values, width=3)
+        samples = pipeline.read_wav(path, sample_rate=16000)
+        expect = np.round(values * 8388607.0) / 8388608.0
+        assert samples.shape == values.shape
+        np.testing.assert_allclose(samples, expect, atol=1e-4)
+
+    def test_24bit_signed_pcm_round_trips_a_tone(self, tmp_path):
+        mono = _tone(145, 1.0)
+        path = _write_wav_width(tmp_path / "tone24.wav", mono, width=3)
+        samples = pipeline.read_wav(path, sample_rate=16000)
+        assert samples.ndim == 1
+        assert abs(len(samples) - 16000) < 200
+        assert bool(np.all(np.isfinite(samples)))
+        assert float(np.max(np.abs(samples))) > 0.1
+
+    def test_24bit_stereo_downmixes_to_mono(self, tmp_path):
+        mono = _tone(145, 1.0)
+        path = _write_wav_width(tmp_path / "s24.wav", mono, width=3, n_channels=2)
+        samples = pipeline.read_wav(path, sample_rate=16000)
+        assert samples.ndim == 1
+        assert bool(np.all(np.isfinite(samples)))
+
+
+class TestInvalidAudioIsolation:
+    """Agy findings: decode/downmix/resample must raise InvalidAudioError; a bad row is isolated."""
+
+    def test_truncated_wav_raises_invalid_audio(self, tmp_path):
+        path = tmp_path / "t.wav"
+        _write_wav_width(path, _tone(145, 1.0), width=3)
+        path.write_bytes(path.read_bytes()[:-1])  # strip one byte: payload not a multiple of 3
+        with pytest.raises(pipeline.InvalidAudioError) as e:
+            pipeline.read_wav(path, sample_rate=16000)
+        assert e.value.code == "INVALID_AUDIO"
+
+    def test_truncated_wav_is_isolated_as_batch_failure(self, tmp_path):
+        good_audio = _write_wav(tmp_path / "good.wav", _tone(145, 1.0))
+        good_tr = _write_json(tmp_path / "good.json", _transcript(["con m\u00e8o"]))
+        good_spec = _write_json(tmp_path / "spec1.json", _picture_spec())
+        trunc = tmp_path / "trunc.wav"
+        _write_wav_width(trunc, _tone(145, 1.0), width=3)
+        trunc.write_bytes(trunc.read_bytes()[:-1])  # corrupt payload: not a multiple of 3
+        bad_tr = _write_json(tmp_path / "tr.json", _transcript(["con m\u00e8o"]))
+        bad_spec = _write_json(tmp_path / "spec2.json", _picture_spec())
+
+        manifest = _manifest(
+            [
+                {
+                    "participant_id": "p-1",
+                    "task": "picture_desc_1",
+                    "recording_id": "rec-1",
+                    "audio_id": "a-1",
+                    "transcript_id": "tr-1",
+                    "audio_path": good_audio,
+                    "transcript_path": good_tr,
+                    "task_spec_path": good_spec,
+                    "diagnosis": "AD",
+                    "age": 72,
+                    "sex": "F",
+                    "education_years": 12,
+                },
+                {
+                    "participant_id": "p-2",
+                    "task": "picture_desc_1",
+                    "recording_id": "rec-2",
+                    "audio_id": "a-2",
+                    "transcript_id": "tr-2",
+                    "audio_path": str(trunc),
+                    "transcript_path": bad_tr,
+                    "task_spec_path": bad_spec,
+                    "diagnosis": "HC",
+                    "age": 66,
+                    "sex": "M",
+                    "education_years": 10,
+                },
+            ]
+        )
+        manifest_path = _write_json(tmp_path / "manifest.json", manifest)
+        result = pipeline.extract_manifest(manifest_path)
+
+        assert len(result.recordings) == 1
+        assert len(result.failures) == 1
+        assert result.failures[0].key == ("p-2", "picture_desc_1", "rec-2")
+        assert result.failures[0].code == "INVALID_AUDIO"
+
+    def test_read_wav_output_is_finite_after_resample(self, tmp_path):
+        path = _write_wav(tmp_path / "a.wav", _tone(145, 1.0, 22050), 22050)
+        samples = pipeline.read_wav(path, sample_rate=16000)
+        assert bool(np.all(np.isfinite(samples)))
+        assert abs(len(samples) - 16000) < 200
+
+
+class TestGenericRowFallback:
+    """Agy finding: any per-row exception becomes a BatchFailure, never aborts the batch."""
+
+    def test_arbitrary_row_exception_becomes_batch_failure(self, tmp_path, monkeypatch):
+        good_audio = _write_wav(tmp_path / "good.wav", _tone(145, 1.0))
+        good_tr = _write_json(tmp_path / "good.json", _transcript(["con m\u00e8o"]))
+        good_spec = _write_json(tmp_path / "spec1.json", _picture_spec())
+        bad_tr = _write_json(tmp_path / "bad.json", _transcript(["con m\u00e8o"]))
+        phono_spec = _write_json(tmp_path / "spec2.json", _phonemic_spec())
+
+        def _boom(transcript, spec):
+            raise RuntimeError("arbitrary scorer failure")
+
+        monkeypatch.setitem(pipeline._TASK_SCORER, "phonemic_fluency", _boom)
+
+        manifest = _manifest(
+            [
+                {
+                    "participant_id": "p-1",
+                    "task": "picture_desc_1",
+                    "recording_id": "rec-1",
+                    "audio_id": "a-1",
+                    "transcript_id": "tr-1",
+                    "audio_path": good_audio,
+                    "transcript_path": good_tr,
+                    "task_spec_path": good_spec,
+                    "diagnosis": "AD",
+                    "age": 72,
+                    "sex": "F",
+                    "education_years": 12,
+                },
+                {
+                    "participant_id": "p-2",
+                    "task": "phonemic_fluency",
+                    "recording_id": "rec-2",
+                    "audio_id": "a-2",
+                    "transcript_id": "tr-2",
+                    "audio_path": good_audio,
+                    "transcript_path": bad_tr,
+                    "task_spec_path": phono_spec,
+                    "diagnosis": "HC",
+                    "age": 66,
+                    "sex": "M",
+                    "education_years": 10,
+                },
+            ]
+        )
+        manifest_path = _write_json(tmp_path / "manifest.json", manifest)
+        result = pipeline.extract_manifest(manifest_path)
+
+        assert len(result.recordings) == 1
+        assert len(result.failures) == 1
+        failure = result.failures[0]
+        assert failure.key == ("p-2", "phonemic_fluency", "rec-2")
+        assert failure.error_type == "RuntimeError"
