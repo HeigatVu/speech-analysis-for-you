@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "plan": "docs/vietnamese-alzheimer-feature-library-plan.md",
+  "report_contract": "docs/implementation/task-XX-<slug>.md",
+  "workflow": ["opencode-build", "agy-code-review", "opencode-fix", "agy-approve", "next-task"],
+  "global_constraints": [
+    "Write a failing pytest before production code and record the red command/result.",
+    "Only edit paths owned by the current task plus its report.",
+    "Use NumPy/SciPy primitives for feature extraction; do not import librosa, opensmile, spacy, torch, transformers, or ASR libraries in src/speech_features.",
+    "Do not edit existing notebooks or use patient data/task lexicons.",
+    "Commit only after task tests pass; append exact verification commands/results to the task report."
+  ],
+  "tasks": [
+    {"id": 1, "slug": "contract", "owner": "opencode:build", "reviewer": "agy:code-reviewer", "files": ["pyproject.toml", "src/speech_features/__init__.py", "src/speech_features/schema.py", "tests/speech_features/test_schema.py"], "goal": "Create importable package, immutable extraction config/result types, JSON/manifest validation, normalisation, provenance hashes, and structured extraction errors."},
+    {"id": 2, "slug": "acoustic", "owner": "opencode:build", "reviewer": "agy:code-reviewer", "files": ["src/speech_features/acoustic.py", "tests/speech_features/test_acoustic.py"], "goal": "Implement WAV loading, resampling, participant intervals, frame equations, pitch, energy, HNR, spectrum, quality flags, and numerical synthetic tests."},
+    {"id": 3, "slug": "linguistic-tasks", "owner": "opencode:build", "reviewer": "agy:code-reviewer", "files": ["src/speech_features/linguistic.py", "src/speech_features/tasks.py", "tests/speech_features/test_linguistic.py", "tests/speech_features/test_tasks.py"], "goal": "Implement Vietnamese lexical/disfluency features and picture, recall, and fluency scorers from external task specs."},
+    {"id": 4, "slug": "pipeline", "owner": "opencode:build", "reviewer": "agy:code-reviewer", "files": ["src/speech_features/pipeline.py", "tests/speech_features/test_pipeline.py"], "goal": "Compose extraction, batch manifest handling, deterministic recording/participant/quality tables, hashes, and delayed-recall aggregation."},
+    {"id": 5, "slug": "evaluation", "owner": "opencode:build", "reviewer": "agy:code-reviewer", "files": ["src/speech_features/evaluation.py", "tests/speech_features/test_evaluation.py"], "goal": "Implement leakage-safe repeated nested AD baseline, panel reports, bootstraps, and cohort summaries."},
+    {"id": 6, "slug": "documentation", "owner": "opencode:build", "reviewer": "agy:code-reviewer", "files": ["README.md", "docs/feature-extraction.md", "tests/speech_features/"], "goal": "Document formulas/contracts/research limitation and run full verification without changing legacy notebooks."}
+  ]
+}
