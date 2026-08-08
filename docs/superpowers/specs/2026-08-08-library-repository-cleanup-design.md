@@ -23,6 +23,9 @@ the referenced `LICENSE` file is missing.
 - Make the source tree and built wheel tell the same story.
 - Leave a conventional package that can be published to PyPI later without adding a
   publishing workflow now.
+- Record the safe future boundary for automated transcription: machine output is a
+  draft that must be benchmarked against held-out human ground truth and reviewed by a
+  human before feature extraction.
 
 ## Non-goals
 
@@ -130,6 +133,9 @@ in this design are removed.
 ## Documentation changes
 
 - Update `README.md` only where repository setup or packaging metadata changes.
+- Add a short README roadmap note that future transcription automation stays outside
+  the core extractor, records annotation provenance, is evaluated against human ground
+  truth, and requires human review before SAY consumes the transcript.
 - Update `docs/migration-0.2.md` to state that the unshipped preprocessing workflow and
   its optional extra were removed from the library repository.
 - Preserve user-facing extraction, transcript, and feature-catalog documentation.
@@ -173,4 +179,7 @@ the contract changed intentionally. The final branch must pass:
 - The existing public API, CLI, 170-feature catalog, and extraction outputs remain
   behaviorally unchanged.
 - The repository contains a valid MIT license and consistent package metadata.
+- The README records the human-ground-truth and human-review requirements for any
+  future automated transcription workflow without claiming that SAY currently ships
+  ASR.
 - All required tests, lint checks, builds, installation smoke tests, and reviews pass.
