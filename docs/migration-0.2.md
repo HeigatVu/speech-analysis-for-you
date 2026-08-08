@@ -53,9 +53,9 @@ uv pip install -e ".[legacy-ad]"
 
 - Through all `0.2.x` releases the legacy imports keep working and emit
   `DeprecationWarning`; they are eligible for removal in `0.3.0`.
-- The legacy `legacy-preprocessing` extra (Hydra/pydub preprocessing) is
-  likewise retained only for compatibility and not part of the 0.2
-  workflow.
+- The unshipped `legacy-preprocessing` Hydra/pydub workflow and optional extra were
+  removed from the library repository. They remain recoverable from Git history but
+  are not supported by SAY 0.2.
 
 ## Notebook retirement
 

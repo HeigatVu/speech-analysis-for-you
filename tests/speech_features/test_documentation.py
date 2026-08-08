@@ -114,6 +114,17 @@ class TestResearchOnlyBoundary:
             subject="human-review workflow",
         )
 
+    def test_readme_documents_future_transcript_validation_boundary(self):
+        _require(
+            _doc("README"),
+            "future",
+            "automated transcription",
+            "ground truth",
+            "human review",
+            "annotation provenance",
+            subject="README future transcript validation",
+        )
+
 
 class TestQuickStartsNameRealContracts:
     def test_readme_python_quickstart_names_real_public_apis(self):
@@ -338,6 +349,15 @@ class TestMigrationGuide:
 
     def test_documents_notebook_retirement(self):
         _require(_doc("migration-0.2"), "notebook", subject="migration notebook retirement")
+
+    def test_documents_removed_preprocessing_workflow(self):
+        _require(
+            _doc("migration-0.2"),
+            "legacy-preprocessing",
+            "removed",
+            "Git history",
+            subject="migration removed preprocessing workflow",
+        )
 
 
 def _catalog_rows(text):

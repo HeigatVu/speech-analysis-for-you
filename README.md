@@ -109,6 +109,16 @@ JSON-serializable provenance:
   `speech_features.legacy.ad` with a `DeprecationWarning`; see
   [migration-0.2](docs/migration-0.2.md).
 
+## Future transcript automation
+
+SAY does not currently transcribe audio. A future companion may produce draft JSON v2
+or CHAT transcripts, but automated transcription remains outside the core feature
+extractor. It should be evaluated on held-out human ground truth transcripts using at
+least word and character error rates, plus speaker and timestamp accuracy when those
+annotations are produced. Report results across relevant Vietnamese populations and
+recording conditions, record annotation provenance, and require human review and
+correction before SAY consumes the transcript.
+
 ## Development
 
 ```bash
