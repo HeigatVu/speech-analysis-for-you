@@ -1,35 +1,28 @@
-# Python-generated files
+# Python
 __pycache__/
-*.py[oc]
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
 build/
 dist/
 wheels/
-*.egg-info
 
 # Virtual environments
-.venv
-
-# Data
-data/*
-
-# Virtual environment
 .venv/
 venv/
 
-# Outputs (can regenerate)
+# Local data and generated outputs
+data/*
 output/
-
-# Python cache
-__pycache__/
-*.pyc
-
-# IDE files
-.vscode/
-.idea/
-.DS_Store
-
-# log dir
 log/
 
-# Superpowers execution artifacts
+# Editors, operating systems, and local agents
+.DS_Store
+.vscode/
+.idea/
+.serena/
 .superpowers/

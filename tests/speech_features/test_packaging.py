@@ -8,6 +8,22 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 PYPROJECT = tomllib.loads((PROJECT_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
 PROJECT = PYPROJECT["project"]
 PLACEHOLDER_DESCRIPTION = "Add your description here"
+OBSOLETE_REPOSITORY_PATHS = (
+    ".DS_Store",
+    "src/.DS_Store",
+    "environment.yml",
+    "src/config/main.yaml",
+    "src/preprocessing/audio-preprocessing.py",
+    "src/preprocessing/clapperboard.py",
+    "src/utils/audio.py",
+    "src/utils/file_io.py",
+    "src/utils/visualization.py",
+)
+
+
+def test_obsolete_nonpackage_research_tools_are_absent():
+    remaining = [path for path in OBSOLETE_REPOSITORY_PATHS if (PROJECT_ROOT / path).exists()]
+    assert remaining == []
 
 
 def _names(deps):
