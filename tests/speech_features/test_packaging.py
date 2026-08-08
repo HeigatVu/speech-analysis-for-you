@@ -30,7 +30,15 @@ def test_version_and_python_floor():
 
 def test_setuptools_build_backend_and_exact_requirement():
     assert PYPROJECT["build-system"]["build-backend"] == "setuptools.build_meta"
-    assert PYPROJECT["build-system"]["requires"] == ["setuptools>=68"]
+    assert PYPROJECT["build-system"]["requires"] == ["setuptools>=77"]
+
+
+def test_mit_license_metadata_and_file():
+    assert PROJECT["license"] == "MIT"
+    assert PROJECT["license-files"] == ["LICENSE"]
+    license_text = (PROJECT_ROOT / "LICENSE").read_text(encoding="utf-8")
+    assert "MIT License" in license_text
+    assert "SAY contributors" in license_text
 
 
 def test_setuptools_discovery_is_restricted_to_speech_features():
@@ -73,21 +81,9 @@ def test_no_legacy_runtime_dependencies_in_core():
 
 def test_optional_extras():
     extras = PROJECT["optional-dependencies"]
+    assert set(extras) == {"legacy-ad", "dev"}
     assert _names(extras["legacy-ad"]) == ["scikit-learn"]
     assert "scikit-learn>=1.3" in extras["legacy-ad"]
-    assert _names(extras["legacy-preprocessing"]) == sorted(
-        ["hydra-core", "matplotlib", "omegaconf", "pydub", "tqdm"]
-    )
-    assert all(
-        pin in extras["legacy-preprocessing"]
-        for pin in (
-            "hydra-core>=1.3",
-            "omegaconf>=2.3",
-            "pydub>=0.25",
-            "matplotlib>=3.8",
-            "tqdm>=4.67",
-        )
-    )
     assert _names(extras["dev"]) == ["pytest", "ruff"]
 
 

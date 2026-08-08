@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -8,6 +8,8 @@ version = "0.2.0"
 description = "Research/descriptive Vietnamese speech feature library with a CLAN-compatible CHAT subset, label-free extraction, and an adult-neuro feature catalog."
 readme = "README.md"
 requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
 dependencies = [
     "numpy>=1.26",
     "pandas>=2.1",
@@ -20,13 +22,6 @@ say-features = "speech_features.cli:main"
 [project.optional-dependencies]
 legacy-ad = [
     "scikit-learn>=1.3",
-]
-legacy-preprocessing = [
-    "hydra-core>=1.3",
-    "omegaconf>=2.3",
-    "pydub>=0.25",
-    "matplotlib>=3.8",
-    "tqdm>=4.67",
 ]
 dev = [
     "pytest>=8.0.0",
