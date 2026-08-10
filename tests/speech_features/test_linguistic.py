@@ -30,6 +30,10 @@ from speech_features.features.linguistic import (
     extract_lexical_features,
     extract_morphosyntax_features,
 )
+from speech_features.features.linguistic.definitions import (
+    ADULT_NEURO_KEYS as REGISTERED_ADULT_NEURO_KEYS,
+    ADULT_NEURO_RECORDING_KEYS,
+)
 from speech_features.result import InvalidConfigError, TargetSpeakerRequiredError
 from speech_features.schema import Token, Transcript, Utterance, validate_transcript
 
@@ -842,9 +846,9 @@ class TestAdultNeuroMissingSamplesAndIssues:
 
 
 class TestAdultNeuroCatalog:
-    def test_exactly_97_adult_neuro_keys_with_locked_metadata(self):
+    def test_all_adult_neuro_keys_have_locked_metadata(self):
         definitions = list_features(pack="adult_neuro")
-        assert [d.key for d in definitions] == sorted(FULL_ADULT_NEURO_KEYS)
+        assert [d.key for d in definitions] == sorted(REGISTERED_ADULT_NEURO_KEYS)
         by_key = {d.key: d for d in definitions}
         for definition in definitions:
             assert definition.pack == "adult_neuro"
@@ -883,11 +887,11 @@ class TestAdultNeuroCatalog:
         assert by_key["lex_token_brunet_w"].unit == "index"
         assert by_key["lex_lemma_brunet_w"].unit == "index"
 
-    def test_fresh_import_registers_exactly_97_keys(self):
+    def test_fresh_import_registers_every_key_once(self):
         src = Path(__file__).resolve().parents[2] / "src"
         code = (
             "import speech_features as sf\n"
-            f"expected = {sorted(FULL_ADULT_NEURO_KEYS)!r}\n"
+            f"expected = {sorted(REGISTERED_ADULT_NEURO_KEYS)!r}\n"
             "keys = [f.key for f in sf.list_features(pack='adult_neuro')]\n"
             "assert len(keys) == len(set(keys)), 'duplicate aliases registered'\n"
             "assert keys == expected, (keys, expected)\n"
@@ -902,7 +906,7 @@ class TestAdultNeuroCatalog:
             cwd=src.parent,
         )
         assert completed.returncode == 0, completed.stderr
-        assert completed.stdout.strip() == "97"
+        assert completed.stdout.strip() == str(len(REGISTERED_ADULT_NEURO_KEYS))
 
 
 # ---------------------------------------------------------------------------
@@ -990,7 +994,6 @@ TASK9_RECORDING_KEYS = (
     + DISCOURSE_RECORDING_KEYS
 )
 TASK9_KEYS = TASK9_RECORDING_KEYS + DISCOURSE_UTTERANCE_KEYS
-FULL_ADULT_NEURO_KEYS = ADULT_NEURO_KEYS + TASK9_KEYS
 
 TASK9_UNITS = {key: "ratio" for key in TASK9_UPOS_KEYS + TASK9_DEP_KEYS}
 TASK9_UNITS.update(
@@ -2002,7 +2005,7 @@ class TestAdultNeuroConversationMissing:
 
 
 class TestAdultNeuroComposition:
-    def test_extract_adult_neuro_composes_exactly_97_keys(self):
+    def test_extract_adult_neuro_composes_all_registered_recording_keys(self):
         document = _morph_rich_document()
         lexical, lexical_issues = extract_lexical_features(
             document, target_speaker="p1", recording_id="r1"
@@ -2013,19 +2016,25 @@ class TestAdultNeuroComposition:
         features, got_rows, issues = extract_adult_neuro_features(
             document, target_speaker="p1", recording_id="r1"
         )
-        assert set(features) == set(ADULT_NEURO_KEYS + TASK9_RECORDING_KEYS)
+        assert set(features) == set(ADULT_NEURO_RECORDING_KEYS)
         assert set(got_rows[0]) - {"utterance_id", "start_s", "end_s"} == set(
             DISCOURSE_UTTERANCE_KEYS
         )
-        assert features == {**lexical, **morph}
+        for key, expected in {**lexical, **morph}.items():
+            if math.isnan(expected):
+                assert math.isnan(features[key])
+            else:
+                assert features[key] == expected
         assert got_rows == rows
-        assert list(issues) == list(lexical_issues) + list(morph_issues)
+        assert list(issues[: len(lexical_issues) + len(morph_issues)]) == list(
+            lexical_issues + morph_issues
+        )
 
     def test_composition_preserves_nan_issue_pairing(self):
         features, rows, issues = extract_adult_neuro_features(
             _no_target_conversation_document(), target_speaker="p1"
         )
-        assert set(features) == set(ADULT_NEURO_KEYS + TASK9_RECORDING_KEYS)
+        assert set(features) == set(ADULT_NEURO_RECORDING_KEYS)
         assert all(math.isnan(value) for value in features.values())
-        assert len(issues) == 93
+        assert len(issues) == len(ADULT_NEURO_RECORDING_KEYS)
         _assert_task9_nan_issue_pairing(features, rows, issues)

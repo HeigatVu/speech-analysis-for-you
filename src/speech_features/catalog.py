@@ -26,6 +26,7 @@ KEY_PREFIXES = frozenset(
         "voice_",
         "spectral_",
         "lex_",
+        "semantic_",
         "morph_",
         "disfluency_",
         "discourse_",

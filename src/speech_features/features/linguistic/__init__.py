@@ -417,12 +417,16 @@ from .morphosyntax import (  # noqa: E402  (re-export after helpers resolve)
     extract_adult_neuro_features,
     extract_morphosyntax_features,
 )
+from .clinical import extract_clinical_linguistic_features  # noqa: E402
+from .task_scores import extract_structured_task_features  # noqa: E402
 
 __all__ = [
     "ALL_KEYS",
     "LEMMA_DIVERSITY_KEYS",
     "SURFACE_DIVERSITY_KEYS",
     "extract_adult_neuro_features",
+    "extract_clinical_linguistic_features",
     "extract_lexical_features",
     "extract_morphosyntax_features",
+    "extract_structured_task_features",
 ]

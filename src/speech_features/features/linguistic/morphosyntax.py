@@ -766,10 +766,10 @@ def extract_adult_neuro_features(
     *,
     target_speaker=None,
     recording_id: str = "",
+    task_spec=None,
 ) -> tuple[dict[str, float], list[dict], tuple[FeatureIssue, ...]]:
-    """Compose the approved Task 8 lexical features with the Task 9
-    morphosyntax/conversation features into the complete 97-key adult-neuro
-    pack output, without building a
+    """Compose lexical, morphosyntax, clinical-linguistic, and task features
+    into the adult-neuro pack output, without building a
     :class:`~speech_features.result.FeatureBundle` (Task 10 owns that
     integration)."""
     from . import extract_lexical_features  # deferred: sibling entry point
@@ -780,8 +780,34 @@ def extract_adult_neuro_features(
     morphosyntax, rows, morphosyntax_issues = extract_morphosyntax_features(
         document, target_speaker=target_speaker, recording_id=recording_id
     )
-    features = {**lexical, **morphosyntax}
-    return features, rows, lexical_issues + morphosyntax_issues
+    from .clinical import extract_clinical_linguistic_features
+    from .task_scores import (
+        extract_structured_task_features,
+        unavailable_structured_task_features,
+    )
+
+    clinical, clinical_issues = extract_clinical_linguistic_features(
+        document,
+        target_speaker=target_speaker,
+        recording_id=recording_id,
+        task_spec=task_spec,
+    )
+    if task_spec is None:
+        speaker_id = _resolve_target_speaker(document, target_speaker)
+        task, task_issues = unavailable_structured_task_features(recording_id, speaker_id)
+    else:
+        task, task_issues = extract_structured_task_features(
+            document,
+            task_spec,
+            target_speaker=target_speaker,
+            recording_id=recording_id,
+        )
+    features = {**lexical, **morphosyntax, **clinical, **task}
+    return (
+        features,
+        rows,
+        lexical_issues + morphosyntax_issues + clinical_issues + task_issues,
+    )
 
 
 __all__ = [

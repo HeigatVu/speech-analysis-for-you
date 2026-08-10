@@ -1,5 +1,4 @@
-"""Stable feature definitions for the adult-neuro lexical/disfluency and
-morphosyntax/conversation packs (Tasks 8--9).
+"""Stable feature definitions for adult-neuro linguistic and task measures.
 
 Each definition carries the exact key, pack ``adult_neuro``, level
 ``recording`` or ``utterance``, unit, population applicability ``adult``,
@@ -146,7 +145,109 @@ MORPHOSYNTAX_KEYS = (
 )
 TASK9_RECORDING_KEYS = MORPHOSYNTAX_KEYS + DISCOURSE_RECORDING_KEYS
 TASK9_KEYS = TASK9_RECORDING_KEYS + DISCOURSE_UTTERANCE_KEYS
-ADULT_NEURO_KEYS = ALL_KEYS + TASK9_KEYS
+
+STRUCTURAL_PSYCHOLINGUISTIC_KEYS = (
+    "morph_sentence_count",
+    "morph_t_unit_count",
+    "morph_words_per_sentence",
+    "morph_words_per_t_unit",
+    "morph_words_per_clause",
+    "morph_clauses_per_sentence",
+    "morph_coordinate_phrase_count",
+    "morph_complex_nominal_count",
+    "morph_verb_phrase_count",
+    "morph_embedding_count",
+    "morph_dependent_clause_ratio",
+    "morph_well_formed_sentence_ratio",
+    "morph_incomplete_sentence_ratio",
+    "morph_reduced_sentence_ratio",
+    "morph_yngve_depth_mean",
+    "morph_yngve_depth_max",
+    "semantic_idea_density",
+    "semantic_proposition_density",
+    "lex_frequency_mean",
+    "lex_log_frequency_mean",
+    "lex_familiarity_mean",
+    "lex_age_of_acquisition_mean",
+    "lex_imageability_mean",
+    "lex_concreteness_mean",
+)
+
+ERROR_TYPES = (
+    "phonemic",
+    "phonetic",
+    "semantic",
+    "visual",
+    "morphological",
+    "inflectional",
+    "syntactic",
+    "closed_class",
+    "neologism",
+    "perseveration",
+    "circumlocution",
+    "indefinite_term",
+    "word_finding",
+)
+ERROR_KEYS = tuple(
+    key
+    for error_type in ERROR_TYPES
+    for key in (
+        f"disfluency_{error_type}_error_count",
+        f"disfluency_{error_type}_error_ratio",
+    )
+)
+
+DISCOURSE_CLINICAL_KEYS = (
+    "discourse_referential_cohesion_ratio",
+    "discourse_temporal_cohesion_ratio",
+    "discourse_causal_cohesion_ratio",
+    "discourse_correct_pronoun_ratio",
+    "discourse_local_lexical_coherence",
+    "discourse_global_coherence_ratio",
+    "discourse_topic_maintenance_ratio",
+    "discourse_marker_ratio",
+    "discourse_relevant_detail_ratio",
+    "discourse_irrelevant_detail_ratio",
+    "discourse_microproposition_count",
+    "discourse_macroproposition_count",
+    "discourse_information_unit_count",
+    "discourse_content_accuracy_ratio",
+    "discourse_information_efficiency_per_min",
+)
+
+CLINICAL_LINGUISTIC_KEYS = STRUCTURAL_PSYCHOLINGUISTIC_KEYS + ERROR_KEYS + DISCOURSE_CLINICAL_KEYS
+
+PICTURE_TASK_KEYS = (
+    "task_picture_concept_coverage",
+    "task_picture_concept_density",
+    "task_picture_repeat_ratio",
+    "task_picture_entity_coverage",
+    "task_picture_action_coverage",
+)
+RECALL_TASK_KEYS = (
+    "task_recall_idea_coverage",
+    "task_recall_idea_density",
+    "task_recall_repeat_ratio",
+    "task_recall_order_score",
+)
+FLUENCY_TASK_KEYS = (
+    "task_fluency_response_count",
+    "task_fluency_valid_count",
+    "task_fluency_valid_unique",
+    "task_fluency_repeats",
+    "task_fluency_intrusions",
+    "task_fluency_first_half_valid",
+    "task_fluency_second_half_valid",
+    "task_fluency_production_change",
+    "task_fluency_rate",
+    "task_fluency_clusters",
+    "task_fluency_cluster_size_mean",
+    "task_fluency_switches",
+)
+TASK_KEYS = PICTURE_TASK_KEYS + RECALL_TASK_KEYS + FLUENCY_TASK_KEYS
+
+ADULT_NEURO_RECORDING_KEYS = ALL_KEYS + TASK9_RECORDING_KEYS + CLINICAL_LINGUISTIC_KEYS + TASK_KEYS
+ADULT_NEURO_KEYS = ADULT_NEURO_RECORDING_KEYS + DISCOURSE_UTTERANCE_KEYS
 
 _COMMON = dict(
     pack="adult_neuro",
@@ -275,12 +376,57 @@ def _build_definition(spec):
 
 _DEFINITIONS = tuple(_build_definition(spec) for spec in _SPEC)
 
+
+def _new_definition(key):
+    if key.startswith("morph_"):
+        domain = "morphosyntactic"
+    elif key.startswith("semantic_"):
+        domain = "semantic"
+    elif key.startswith("lex_"):
+        domain = "psycholinguistic"
+    elif key.startswith("disfluency_"):
+        domain = "disfluency"
+    elif key.startswith("discourse_"):
+        domain = "discourse"
+    else:
+        domain = "task"
+    if key.endswith("_count") or key.endswith("_valid") or key.endswith("_unique"):
+        unit = "count"
+    elif key.endswith("_per_min") or key == "task_fluency_rate":
+        unit = "count/min"
+    elif key.endswith("_max") or key.endswith("_mean"):
+        unit = "index"
+    else:
+        unit = "ratio"
+    tasks = ()
+    if key.startswith("task_picture_"):
+        tasks = ("picture_description",)
+    elif key.startswith("task_recall_"):
+        tasks = ("story_recall",)
+    elif key.startswith("task_fluency_"):
+        tasks = ("phonemic_fluency", "semantic_fluency")
+    return FeatureDefinition(
+        key=key,
+        pack="adult_neuro",
+        level="recording",
+        unit=unit,
+        population="adult",
+        reference="SAY catalog v1",
+        formula_version=1,
+        domain=domain,
+        language_scope="language_sensitive",
+        tasks=tasks,
+    )
+
+
+_DEFINITIONS += tuple(_new_definition(key) for key in CLINICAL_LINGUISTIC_KEYS + TASK_KEYS)
+
 _registered = False
 
 
 def register_linguistic_features() -> None:
     """Register the adult-neuro lexical, morphosyntax, and conversation
-    definitions (idempotent; 97 keys)."""
+    definitions (idempotent)."""
     global _registered
     if _registered:
         return
