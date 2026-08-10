@@ -13,7 +13,7 @@ in :mod:`speech_features.features.acoustic.quality`,
 
 from __future__ import annotations
 
-from ...catalog import DISORDERS, FeatureDefinition, register_feature
+from ...catalog import FeatureDefinition, register_feature
 
 QUALITY_KEYS = (
     "audio_duration_s",
@@ -737,7 +737,45 @@ _DEFINITIONS = (
     ),
 )
 
-_NEURO_DISORDERS = tuple(sorted(DISORDERS))
+# Conservative domain unions from docs/research/neurodegenerative-speech-feature-sources.md:
+# timing sources 1--6 and 8; prosody sources 1--4 and 6--9; phonation sources
+# 1--3 and 5--9; spectral sources 2, 5, and 8. Standard MFCC/spectral
+# descriptors inherit only the source-supported spectral union.
+_TIMING_DISORDERS = (
+    "ad",
+    "als",
+    "ataxia",
+    "cbs",
+    "dlb",
+    "ftd",
+    "hd",
+    "mci",
+    "mnd",
+    "ms",
+    "msa",
+    "pd",
+    "pdd",
+    "ppa",
+    "psp",
+)
+_PROSODY_DISORDERS = (
+    "ad",
+    "als",
+    "cbs",
+    "dlb",
+    "ftd",
+    "hd",
+    "mci",
+    "mnd",
+    "ms",
+    "msa",
+    "pd",
+    "pdd",
+    "ppa",
+    "psp",
+)
+_PHONATION_DISORDERS = _TIMING_DISORDERS
+_SPECTRAL_DISORDERS = ("ad", "als", "ataxia", "hd", "mci", "ms", "msa", "pd", "psp")
 
 _TIMING_COMPANION_UNITS = {
     "time_pause_total_s": "s",
@@ -790,7 +828,7 @@ _DEFINITIONS += tuple(
         domain="timing",
         language_scope="language_independent",
         tasks=("connected_speech",),
-        disorders=_NEURO_DISORDERS,
+        disorders=_TIMING_DISORDERS,
         evidence_level="derived_companion",
     )
     for key, unit in _TIMING_COMPANION_UNITS.items()
@@ -807,7 +845,7 @@ _DEFINITIONS += tuple(
         domain=domain,
         language_scope=language_scope,
         tasks=("connected_speech", "sustained_vowel"),
-        disorders=_NEURO_DISORDERS,
+        disorders=_PROSODY_DISORDERS if domain == "prosody" else _PHONATION_DISORDERS,
         evidence_level="derived_companion",
     )
     for key, (unit, domain, language_scope) in _VOICE_COMPANION_METADATA.items()
@@ -824,7 +862,7 @@ _DEFINITIONS += tuple(
         domain="spectral",
         language_scope="language_sensitive",
         tasks=("connected_speech", "sustained_vowel"),
-        disorders=_NEURO_DISORDERS,
+        disorders=_SPECTRAL_DISORDERS,
         evidence_level="standard_feature_set",
     )
     for key, unit in (
