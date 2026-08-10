@@ -129,13 +129,15 @@ def _set_mean_sd(
     values[mean_key], values[sd_key] = finite_mean_sd(numbers)
 
 
-def _articulation_features(document, tokens, types, values, issues, recording_id, speaker_id):
+def _articulation_features(
+    document, tokens, types, type_status, values, issues, recording_id, speaker_id
+):
     if types is None:
         _flag(
             values,
             issues,
             ARTICULATION_KEYS,
-            "MISSING_ANNOTATION",
+            _annotation_code(type_status),
             "complete segment_type annotations are required",
             recording_id,
             speaker_id,
@@ -147,23 +149,38 @@ def _articulation_features(document, tokens, types, values, issues, recording_id
     label_status, labels = _labels(document, "segment_label", vowel_ids)
     f1_status, f1 = _numeric_layer(document, "f1_hz", vowel_ids)
     f2_status, f2 = _numeric_layer(document, "f2_hz", vowel_ids)
-    vowel_code = _annotation_code(label_status, f1_status, f2_status)
+    canonical_ids = (
+        tuple(token_id for token_id, label in zip(vowel_ids, labels) if label in {"i", "a", "u"})
+        if label_status == "ok"
+        else ()
+    )
+    canonical_labels = (
+        tuple(label for label in labels if label in {"i", "a", "u"}) if label_status == "ok" else ()
+    )
+    space_f1_status, space_f1 = _numeric_layer(document, "f1_hz", canonical_ids)
+    space_f2_status, space_f2 = _numeric_layer(document, "f2_hz", canonical_ids)
+    vowel_code = _annotation_code(label_status, space_f1_status, space_f2_status)
     vowel_message = "complete finite i/a/u formant annotations are required"
     space_keys = (
         "artic_vowel_space_area_hz2",
         "artic_vowel_articulation_index",
         "artic_formant_centralization_ratio",
     )
-    if label_status != "ok" or f1_status != "ok" or f2_status != "ok" or not vowel_ids:
+    if (
+        label_status != "ok"
+        or space_f1_status != "ok"
+        or space_f2_status != "ok"
+        or not canonical_ids
+    ):
         _flag(values, issues, space_keys, vowel_code, vowel_message, recording_id, speaker_id)
     else:
         medians = {}
         for vowel in ("i", "a", "u"):
-            indices = [index for index, label in enumerate(labels) if label == vowel]
+            indices = [index for index, label in enumerate(canonical_labels) if label == vowel]
             if indices:
                 medians[vowel] = (
-                    float(np.median([f1[index] for index in indices])),
-                    float(np.median([f2[index] for index in indices])),
+                    float(np.median([space_f1[index] for index in indices])),
+                    float(np.median([space_f2[index] for index in indices])),
                 )
         if set(medians) != {"i", "a", "u"}:
             _flag(
@@ -353,26 +370,38 @@ def _articulation_features(document, tokens, types, values, issues, recording_id
         )
 
 
-def _rhythm_features(tokens, types, values, issues, recording_id, speaker_id):
+def _rhythm_features(tokens, types, type_status, values, issues, recording_id, speaker_id):
     if types is None:
         _flag(
             values,
             issues,
             RHYTHM_KEYS,
-            "MISSING_ANNOTATION",
+            _annotation_code(type_status),
             "complete segment_type annotations are required",
             recording_id,
             speaker_id,
         )
         return
-    groups = {
-        "v": [token_duration(token) for token, kind in zip(tokens, types) if kind == "vowel"],
-        "c": [
-            token_duration(token)
-            for token, kind in zip(tokens, types)
-            if kind in {"consonant", "stop", "fricative"}
-        ],
-    }
+    groups = {"v": [], "c": []}
+    previous = None
+    for token, kind in zip(tokens, types):
+        suffix = (
+            "v" if kind == "vowel" else "c" if kind in {"consonant", "stop", "fricative"} else None
+        )
+        if suffix is None:
+            previous = None
+            continue
+        duration = token_duration(token)
+        if previous == suffix:
+            previous_duration = groups[suffix][-1]
+            groups[suffix][-1] = (
+                None
+                if previous_duration is None or duration is None
+                else previous_duration + duration
+            )
+        else:
+            groups[suffix].append(duration)
+        previous = suffix
     all_durations = groups["v"] + groups["c"]
     if not all_durations or any(duration is None for duration in all_durations):
         _flag(
@@ -518,11 +547,12 @@ def _ddk_features(document, tokens, task_spec, values, issues, recording_id, spe
 
 
 def _respiratory_features(
-    document, tokens, types, task_spec, values, issues, recording_id, speaker_id
+    document, tokens, types, type_status, task_spec, values, issues, recording_id, speaker_id
 ):
     token_ids = tuple(token.id for token in tokens)
     group_status, groups = _labels(document, "breath_group", token_ids)
-    breath_keys = RESPIRATORY_KEYS[:-1]
+    breath_keys = RESPIRATORY_KEYS[:4]
+    timed_groups = False
     if group_status != "ok" or not tokens:
         _flag(
             values,
@@ -544,34 +574,45 @@ def _respiratory_features(
             speaker_id,
         )
     else:
-        unique_groups = tuple(dict.fromkeys(groups))
-        group_durations = []
-        for group in unique_groups:
-            selected = [token for token, label in zip(tokens, groups) if label == group]
-            group_durations.append(
-                max(token.end_s for token in selected) - min(token.start_s for token in selected)
-            )
-        count = len(unique_groups)
+        runs = []
+        for token, group in zip(tokens, groups):
+            if runs and runs[-1][0] == group:
+                runs[-1][2] = token.end_s
+            else:
+                runs.append([group, token.start_s, token.end_s])
+        group_durations = [end - start for _, start, end in runs]
+        count = len(runs)
         span = max(token.end_s for token in tokens) - min(token.start_s for token in tokens)
         values["resp_breath_group_count"] = float(count)
         values["resp_breath_group_mean_s"], values["resp_breath_group_sd_s"] = finite_mean_sd(
             group_durations
         )
         values["resp_rate_per_min"] = 60.0 * count / span
-        if types is None:
-            _flag(
-                values,
-                issues,
-                ("resp_pauses_per_breath",),
-                "MISSING_ANNOTATION",
-                "complete segment_type annotations are required for pause counts",
-                recording_id,
-                speaker_id,
-            )
-        else:
-            values["resp_pauses_per_breath"] = (
-                sum(kind in {"pause", "silence"} for kind in types) / count
-            )
+        timed_groups = True
+
+    pause_key = "resp_pauses_per_breath"
+    if not timed_groups:
+        _flag(
+            values,
+            issues,
+            (pause_key,),
+            _annotation_code(group_status),
+            "complete timed breath groups are required for pause counts",
+            recording_id,
+            speaker_id,
+        )
+    elif types is None:
+        _flag(
+            values,
+            issues,
+            (pause_key,),
+            _annotation_code(type_status),
+            "complete segment_type annotations are required for pause counts",
+            recording_id,
+            speaker_id,
+        )
+    else:
+        values[pause_key] = sum(kind in {"pause", "silence"} for kind in types) / count
 
     loudness_key = "resp_relative_loudness_db"
     if not isinstance(task_spec, dict) or task_spec.get("calibrated_amplitude") is not True:
@@ -602,7 +643,7 @@ def _respiratory_features(
 
 
 def _sustained_features(
-    document, tokens, types, task_spec, values, issues, recording_id, speaker_id
+    document, tokens, types, type_status, task_spec, values, issues, recording_id, speaker_id
 ):
     if not isinstance(task_spec, dict) or task_spec.get("task") != "sustained_vowel":
         _flag(
@@ -639,8 +680,23 @@ def _sustained_features(
         "voice_gaping_interval_rate_per_min",
         "voice_subharmonic_interval_proportion",
     )
+    type_dependent_keys = interval_keys + (
+        "voice_sustained_f0_sd_semitones",
+        "voice_sustained_power_sd_db",
+    )
+    if types is None:
+        _flag(
+            values,
+            issues,
+            type_dependent_keys,
+            _annotation_code(type_status),
+            "complete segment_type annotations are required",
+            recording_id,
+            speaker_id,
+        )
+        return
     durations = [token_duration(token) for token in tokens]
-    if types is None or not durations or any(duration is None for duration in durations):
+    if not durations or any(duration is None for duration in durations):
         _flag(
             values,
             issues,
@@ -738,14 +794,32 @@ def extract_motor_features(
     if type_status != "ok":
         types = None
 
-    _articulation_features(document, tokens, types, values, issues, recording_id, speaker_id)
-    _rhythm_features(tokens, types, values, issues, recording_id, speaker_id)
+    _articulation_features(
+        document, tokens, types, type_status, values, issues, recording_id, speaker_id
+    )
+    _rhythm_features(tokens, types, type_status, values, issues, recording_id, speaker_id)
     _ddk_features(document, tokens, task_spec, values, issues, recording_id, speaker_id)
     _respiratory_features(
-        document, tokens, types, task_spec, values, issues, recording_id, speaker_id
+        document,
+        tokens,
+        types,
+        type_status,
+        task_spec,
+        values,
+        issues,
+        recording_id,
+        speaker_id,
     )
     _sustained_features(
-        document, tokens, types, task_spec, values, issues, recording_id, speaker_id
+        document,
+        tokens,
+        types,
+        type_status,
+        task_spec,
+        values,
+        issues,
+        recording_id,
+        speaker_id,
     )
 
     for key, value in values.items():
