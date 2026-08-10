@@ -294,7 +294,7 @@ artifacts, or unrelated cleanup are committed.
 - FTD cross-linguistic speech/language review: https://discovery.ucl.ac.uk/id/eprint/10201085/
 - Motor-neurodegenerative articulation review: https://pmc.ncbi.nlm.nih.gov/articles/PMC9950294/
 - MND digital speech review: https://doi.org/10.1038/s41746-023-00959-9
-- MS dysarthria review: https://doi.org/10.1016/j.msard.2018.08.015
+- MS dysarthria review: https://doi.org/10.1016/j.autrev.2018.06.010
 - PD/MSA/PSP acoustic indices: https://doi.org/10.1038/s41531-022-00389-6
 - PPA markers review: https://doi.org/10.1044/2020_AJSLP-20-00008
 - openSMILE standard sets: https://audeering.github.io/opensmile-python/

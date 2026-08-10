@@ -505,9 +505,11 @@ def test_new_error_classes_have_stable_codes(name, code):
 
 
 def test_existing_error_classes_reused():
-    assert result.InvalidDocumentError is speech_features.document.InvalidDocumentError
-    assert result.InvalidChatError is speech_features.formats.chat.InvalidChatError
-    assert result.InvalidAudioError is speech_features.pipeline.InvalidAudioError
+    from speech_features import audio, document, formats
+
+    assert result.InvalidDocumentError is document.InvalidDocumentError
+    assert result.InvalidChatError is formats.chat.InvalidChatError
+    assert result.InvalidAudioError is audio.InvalidAudioError
     assert result.MissingInputError is MissingInputError
     assert MissingInputError.code == "MISSING_INPUT"
 
