@@ -23,6 +23,9 @@ say-features = "speech_features.cli:main"
 legacy-ad = [
     "scikit-learn>=1.3",
 ]
+standardized-acoustic = [
+    "opensmile>=2.5,<3",
+]
 dev = [
     "pytest>=8.0.0",
     "ruff>=0.1.0",

@@ -34,6 +34,7 @@ KEY_PREFIXES = frozenset(
         "artic_",
         "rhythm_",
         "task_",
+        "egemaps_",
     }
 )
 

@@ -97,9 +97,10 @@ def test_no_legacy_runtime_dependencies_in_core():
 
 def test_optional_extras():
     extras = PROJECT["optional-dependencies"]
-    assert set(extras) == {"legacy-ad", "dev"}
+    assert set(extras) == {"legacy-ad", "standardized-acoustic", "dev"}
     assert _names(extras["legacy-ad"]) == ["scikit-learn"]
     assert "scikit-learn>=1.3" in extras["legacy-ad"]
+    assert extras["standardized-acoustic"] == ["opensmile>=2.5,<3"]
     assert _names(extras["dev"]) == ["pytest", "ruff"]
 
 

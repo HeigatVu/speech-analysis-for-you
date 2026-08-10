@@ -76,6 +76,7 @@ from .schema import (
 # catalog; plain `import speech_features` must expose the full catalog.
 from .features import acoustic as _acoustic_pack  # noqa: F401
 from .features import linguistic as _linguistic_pack  # noqa: F401
+from .features import standardized as _standardized_acoustic_pack  # noqa: F401
 
 _LEGACY_PIPELINE_NAMES = ("BatchFailure", "BatchResult", "extract_manifest", "extract_recording")
 
