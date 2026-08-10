@@ -375,6 +375,23 @@ def test_phrase_counts_use_contiguous_runs_within_each_target_utterance():
         assert _issues_for(issues, key) == []
 
 
+@pytest.mark.parametrize("placeholder", ("null", "na", "n/a"))
+def test_phrase_type_rejects_non_none_placeholders(placeholder):
+    document = _document(
+        _utterance("u1", "PAR", 0.0, 1.0, _token("t1", "a")),
+        annotations=(_layer("phrase_type", {"t1": placeholder}),),
+    )
+    values, issues = extract_clinical_linguistic_features(document, target_speaker="PAR")
+    for key in (
+        "morph_coordinate_phrase_count",
+        "morph_complex_nominal_count",
+        "morph_verb_phrase_count",
+    ):
+        assert math.isnan(values[key])
+        assert len(_issues_for(issues, key)) == 1
+        assert _issues_for(issues, key)[0].code == "MISSING_ANNOTATION"
+
+
 def test_structural_identifier_layers_reject_normalized_placeholders():
     document = _document(
         _utterance("u1", "PAR", 0.0, 1.0, _token("t1", "a")),

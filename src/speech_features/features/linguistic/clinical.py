@@ -260,7 +260,9 @@ def extract_clinical_linguistic_features(
         )
         values["morph_dependent_clause_ratio"] = dependent / len(grouped_clause_types)
 
-    phrase_types = _complete_strings(document, "phrase_type", word_tokens)
+    phrase_types = _complete_strings(
+        document, "phrase_type", word_tokens, rejected=_NONE_LABELS - {"none"}
+    )
     phrase_keys = (
         "morph_coordinate_phrase_count",
         "morph_complex_nominal_count",
