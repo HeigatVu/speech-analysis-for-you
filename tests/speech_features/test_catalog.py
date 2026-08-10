@@ -26,6 +26,7 @@ from speech_features import (
     FeaturePack,
     PACKS,
     STABLE_ERROR_CODES,
+    STABLE_ISSUE_CODES,
     UnknownPackError,
     list_features,
 )
@@ -59,6 +60,14 @@ STABLE_CODES = frozenset(
     }
 )
 
+STABLE_ISSUES = frozenset(
+    {
+        "INVALID_TASK_ANNOTATION",
+        "MISSING_OPTIONAL_DEPENDENCY",
+        "UNCALIBRATED_AUDIO",
+    }
+)
+
 ROOT_EXPORTS = (
     "CATALOG_VERSION",
     "ExtractionContext",
@@ -73,6 +82,7 @@ ROOT_EXPORTS = (
     "MissingInputError",
     "PACKS",
     "STABLE_ERROR_CODES",
+    "STABLE_ISSUE_CODES",
     "TargetSpeakerRequiredError",
     "UnknownPackError",
     "UnsupportedAudioError",
@@ -485,6 +495,10 @@ def test_every_pack_satisfies_protocol():
 # ---------------------------------------------------------------------------
 def test_stable_error_codes_complete():
     assert STABLE_ERROR_CODES == STABLE_CODES
+
+
+def test_stable_neuro_issue_codes_complete():
+    assert STABLE_ISSUE_CODES == STABLE_ISSUES
 
 
 @pytest.mark.parametrize(

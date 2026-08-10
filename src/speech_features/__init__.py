@@ -42,6 +42,7 @@ from .result import (
     InvalidConfigError,
     MissingAnnotationError,
     STABLE_ERROR_CODES,
+    STABLE_ISSUE_CODES,
     TargetSpeakerRequiredError,
     UnknownPackError,
     UnsupportedAudioError,
@@ -76,7 +77,14 @@ from .schema import (
 # catalog; plain `import speech_features` must expose the full catalog.
 from .features import acoustic as _acoustic_pack  # noqa: F401
 from .features import linguistic as _linguistic_pack  # noqa: F401
+from .features import motor as _motor_pack  # noqa: F401
 from .features import standardized as _standardized_acoustic_pack  # noqa: F401
+from .features.linguistic import (
+    extract_clinical_linguistic_features,
+    extract_structured_task_features,
+)
+from .features.motor import extract_motor_features
+from .features.standardized import extract_egemaps_features
 
 _LEGACY_PIPELINE_NAMES = ("BatchFailure", "BatchResult", "extract_manifest", "extract_recording")
 
@@ -125,6 +133,7 @@ __all__ = [
     "MissingInputError",
     "PACKS",
     "STABLE_ERROR_CODES",
+    "STABLE_ISSUE_CODES",
     "SpeechDocument",
     "TargetSpeakerRequiredError",
     "Token",
@@ -142,8 +151,12 @@ __all__ = [
     "validate_transcript",
     "extract",
     "extract_batch",
+    "extract_clinical_linguistic_features",
+    "extract_egemaps_features",
     "extract_manifest",
+    "extract_motor_features",
     "extract_recording",
+    "extract_structured_task_features",
     "list_features",
     "read_wav",
 ]

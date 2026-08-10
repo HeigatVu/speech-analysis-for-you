@@ -63,7 +63,7 @@ the exact JSON v2 shape and the CHAT subset, are in
 
 `extract(audio_path, document, *, target_speaker=None,
 packs=("acoustic", "adult_neuro"), levels=("recording", "utterance"),
-config=None)` returns a frozen `FeatureBundle`:
+config=None, task_spec=None)` returns a frozen `FeatureBundle`:
 
 - `recordings` — columns start with the identifier prefix
   `recording_id`, `speaker_id`, then one column per selected recording-level
@@ -79,25 +79,35 @@ config=None)` returns a frozen `FeatureBundle`:
   `canonical_document` otherwise), and annotation sources (layer, source,
   confidence).
 
+A non-null version-1 `task_spec` is validated once at the high-level boundary,
+passed only to `adult_neuro` and `motor_neuro`, and represented in provenance
+only by a SHA-256 of canonical sorted compact JSON. Diagnosis, labels, and
+demographics are never accepted or copied into the bundle.
+
 Missing values are `NaN` and each is paired with a structured `FeatureIssue`
 (naming the exact feature key) — never a fabricated zero.
 
 ## 4. Pack and level selection
 
-- `packs` selects built-in packs by name: `"acoustic"` (73 recording-level
-  keys) and/or `"adult_neuro"` (93 recording-level and 4 utterance-level
+- `packs` selects built-in packs by name: `"acoustic"` (167 recording keys),
+  `"adult_neuro"` (179 recording and 4 utterance keys), `"motor_neuro"`
+  (47 recording keys), and `"standardized_acoustic"` (88 eGeMAPS recording
   keys). The tuple must be non-empty and duplicate-free; an unknown pack
   raises `UNKNOWN_PACK`.
 - `levels` selects `"recording"` and/or `"utterance"` output tables.
-- Selections are canonicalized to static catalog order; when the
-  `adult_neuro` pack is selected without `acoustic`, no audio is decoded.
+- Selections are canonicalized to static catalog order. Audio is decoded once
+  when `acoustic` or `standardized_acoustic` is selected; annotation-only
+  adult/motor selection does not decode it.
+- `standardized_acoustic` lazily imports openSMILE. Install
+  `.[standardized-acoustic]`; otherwise all 88 columns remain present as
+  `NaN` with one `MISSING_OPTIONAL_DEPENDENCY` issue.
 - The full catalog is in [feature-catalog-v1.md](feature-catalog-v1.md);
   `list_features(pack=..., level=...)` queries it.
 
 ## 5. Manifest v2 and batch extraction
 
 `extract_batch(manifest_path, *, packs=("acoustic", "adult_neuro"),
-config=None)` runs manifest v2. The manifest is JSON with `version: 2` and a
+config=None, task_spec=None)` runs manifest v2. The manifest is JSON with `version: 2` and a
 non-empty `rows` list; every row has **exactly**:
 
 - `recording_id` — non-empty string, unique across rows;
@@ -107,6 +117,9 @@ non-empty `rows` list; every row has **exactly**:
 - `target_speakers` — optional non-empty list of unique non-empty speaker
   ids; when omitted, the single documented speaker is used and multiple
   speakers without a declared target fail the row.
+- `task_spec_path` — optional non-empty path, resolved relative to the
+  manifest, loaded and validated once for that row. A top-level `task_spec`
+  argument is the fallback for rows without a path; a row path takes precedence.
 
 Any extra row key, unknown version, duplicate `recording_id`, or malformed
 `target_speakers` raises `InvalidManifestError` before any extraction
@@ -130,9 +143,14 @@ declared targets.
 ```bash
 say-features validate INPUT                       # validate a document or manifest v2
 say-features convert INPUT OUTPUT [--force]       # convert between JSON v2 and CHAT
-say-features extract MANIFEST OUTPUT_DIR [--pack PACK ...] [--force]
-say-features list-features [--pack PACK] [--level LEVEL]
+say-features extract MANIFEST OUTPUT_DIR [--pack PACK ...] [--task-spec SPEC] [--force]
+say-features list-features [--pack PACK] [--level LEVEL] [--domain DOMAIN ...]
 ```
+
+The metadata filters `--domain`, `--language-scope`, `--task`, `--disorder`,
+and `--evidence-level` are repeatable. Repeated values use OR within one
+field and different fields combine with AND; the existing CSV columns do not
+change.
 
 - `extract` writes `recordings.csv`, `utterances.csv`, `issues.csv`, and
   `provenance.json`; pre-existing outputs are refused without `--force`.
@@ -163,6 +181,11 @@ Feature-specific warning codes (for example `UNSUPPORTED_CHAT_TIER`,
 `UNALIGNED_SPEAKER`, `NO_SPEECH`, `INSUFFICIENT_VOICED_FRAMES`,
 `INSUFFICIENT_TOKENS`) appear in the `issues` table and in the
 [feature catalog](feature-catalog-v1.md).
+
+The neuro packs additionally stabilize three result issue codes:
+`INVALID_TASK_ANNOTATION` for malformed reviewed task measurements,
+`UNCALIBRATED_AUDIO` when absolute/relative loudness needs calibration, and
+`MISSING_OPTIONAL_DEPENDENCY` when the selected eGeMAPS extra is absent.
 
 ## 8. Deprecated: legacy AD evaluation (0.1 compatibility)
 

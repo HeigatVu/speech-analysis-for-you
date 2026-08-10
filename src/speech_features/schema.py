@@ -27,6 +27,8 @@ KNOWN_TASKS = frozenset(
     }
 )
 
+TASK_SPEC_TASKS = KNOWN_TASKS | {"connected_speech", "ddk", "sustained_vowel"}
+
 TOKEN_KINDS = frozenset({"word", "filler", "fragment", "noise"})
 SPEAKERS = frozenset({"participant", "examiner"})
 DIAGNOSES = frozenset({"AD", "HC"})
@@ -466,7 +468,7 @@ def validate_task_spec(spec: dict) -> int:
     if version != 1:
         raise InvalidTaskSpecError(f"unsupported task-spec version: {version!r}")
     task = spec.get("task")
-    if task is not None and task not in KNOWN_TASKS:
+    if task is not None and task not in TASK_SPEC_TASKS:
         raise InvalidTaskSpecError(f"task spec declares unknown task: {task!r}")
     required = TASK_SPEC_FIELDS.get(task)
     if required is not None:

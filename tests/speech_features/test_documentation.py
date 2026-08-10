@@ -25,6 +25,7 @@ DOC_PATHS = {
     "feature-extraction": DOCS / "feature-extraction.md",
     "transcript-formats": DOCS / "transcript-formats.md",
     "feature-catalog-v1": DOCS / "feature-catalog-v1.md",
+    "neurodegenerative-feature-guide": DOCS / "neurodegenerative-feature-guide.md",
     "migration-0.2": DOCS / "migration-0.2.md",
     "review-summary": DOCS / "implementation" / "say-library" / "review-summary.md",
 }
@@ -64,6 +65,7 @@ class TestDocumentsExistAndCrossLink:
             "feature-extraction",
             "transcript-formats",
             "feature-catalog-v1",
+            "neurodegenerative-feature-guide",
             "migration-0.2",
         ):
             assert f"docs/{name}.md" in readme, f"README must link to docs/{name}.md"
@@ -242,6 +244,68 @@ class TestFeatureExtractionGuide:
             subject="feature-extraction legacy section",
         )
 
+    def test_documents_all_packs_task_specs_and_new_issue_codes(self):
+        _require(
+            _doc("feature-extraction"),
+            "motor_neuro",
+            "standardized_acoustic",
+            "task_spec",
+            "task_spec_path",
+            "INVALID_TASK_ANNOTATION",
+            "UNCALIBRATED_AUDIO",
+            "MISSING_OPTIONAL_DEPENDENCY",
+            subject="feature-extraction neuro packs",
+        )
+
+
+class TestNeurodegenerativeFeatureGuide:
+    def test_guide_documents_layers_tasks_limits_and_extension_boundary(self):
+        _require(
+            _doc("neurodegenerative-feature-guide"),
+            "research-only",
+            "not a diagnostic",
+            "Vietnamese",
+            "validation",
+            "annotation",
+            "task spec",
+            "motor_neuro",
+            "standardized_acoustic",
+            "child pack",
+            "human review",
+            subject="neurodegenerative feature guide",
+        )
+
+    def test_guide_names_reviewed_annotation_layers_and_optional_install(self):
+        _require(
+            _doc("neurodegenerative-feature-guide"),
+            "lemma",
+            "upos",
+            "f0_hz",
+            "segment_type",
+            "information_unit",
+            "standardized-acoustic",
+            "opensmile",
+            subject="neurodegenerative annotations and optional dependency",
+        )
+
+    def test_guide_uses_breath_group_layer_name(self):
+        text = _doc("neurodegenerative-feature-guide")
+        assert "breath_group" in text
+        assert "breath_group_id" not in text, "guide must name the layer breath_group"
+
+    def test_guide_documented_layers_match_extractor_contract(self):
+        text = _doc("neurodegenerative-feature-guide")
+        section = text.split("## Reviewed annotation layers", 1)[1]
+        documented = set(re.findall(r"`([a-z0-9_]+)`", section.split("##", 1)[0]))
+        assert "breath_group" in documented
+        source = ""
+        for path in sorted((REPO_ROOT / "src" / "speech_features" / "features").rglob("*.py")):
+            source += path.read_text(encoding="utf-8")
+        missing = [name for name in sorted(documented) if name not in source]
+        assert not missing, (
+            f"guide documents layer names absent from the extractor contract: {missing}"
+        )
+
 
 class TestTranscriptFormatsGuide:
     def test_documents_json_v2_shape_and_example(self):
@@ -387,7 +451,7 @@ class TestCatalogV1:
             f"catalog keys differ from live registry: "
             f"missing={sorted(live - set(rows))}, extra={sorted(set(rows) - live)}"
         )
-        assert len(rows) == 170
+        assert len(rows) == len(live)
         duplicates = {key: entries for key, entries in rows.items() if len(entries) != 1}
         assert not duplicates, f"catalog has duplicate rows: {sorted(duplicates)}"
 
@@ -402,6 +466,11 @@ class TestCatalogV1:
             "population",
             "formula_version",
             "reference",
+            "domain",
+            "language_scope",
+            "tasks",
+            "disorders",
+            "evidence_level",
             "formula",
             "missing_data",
         }
@@ -414,6 +483,11 @@ class TestCatalogV1:
             assert row["population"] == definition.population
             assert row["formula_version"] == str(definition.formula_version)
             assert row["reference"] == definition.reference
+            assert row["domain"] == definition.domain
+            assert row["language_scope"] == definition.language_scope
+            assert row["tasks"] == (", ".join(definition.tasks) or "—")
+            assert row["disorders"] == (", ".join(definition.disorders) or "—")
+            assert row["evidence_level"] == definition.evidence_level
             expected_prereqs = ", ".join(definition.prerequisites) or "—"
             assert row["prerequisites"] == expected_prereqs
 

@@ -9,7 +9,7 @@ import pandas as pd
 import pytest
 
 from speech_features import InvalidAudioError, list_features
-from speech_features.catalog import KEY_PREFIXES
+from speech_features.catalog import DISORDERS, KEY_PREFIXES
 from speech_features.features.standardized import extract_egemaps_features
 from speech_features.features.standardized.definitions import RAW_EGEMAPS_COLUMNS
 from speech_features.result import ExtractionError
@@ -172,7 +172,15 @@ def test_all_88_definitions_are_registered_with_conservative_metadata():
         definition.domain in {"articulation", "phonation", "prosody", "spectral", "timing"}
         for definition in definitions
     )
-    assert all(definition.unit and definition.disorders for definition in definitions)
+    assert all(definition.unit for definition in definitions)
+    assert {definition.disorders for definition in definitions} == {()}
+
+
+def test_disorder_filters_do_not_claim_standardized_acoustic_features():
+    standardized_keys = set(EXPECTED_KEYS)
+    for disorder in DISORDERS:
+        filtered_keys = {definition.key for definition in list_features(disorder=disorder)}
+        assert standardized_keys.isdisjoint(filtered_keys)
 
 
 def test_optional_dependency_absence_returns_one_pack_level_issue(monkeypatch):

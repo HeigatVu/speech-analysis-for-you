@@ -42,6 +42,14 @@ STABLE_ERROR_CODES = frozenset(
     }
 )
 
+STABLE_ISSUE_CODES = frozenset(
+    {
+        "INVALID_TASK_ANNOTATION",
+        "MISSING_OPTIONAL_DEPENDENCY",
+        "UNCALIBRATED_AUDIO",
+    }
+)
+
 ISSUE_SEVERITIES = frozenset({"warning", "error"})
 
 _RECORDING_IDS = ("recording_id", "speaker_id")
@@ -208,6 +216,7 @@ __all__ = [
     "MissingAnnotationError",
     "MissingInputError",
     "STABLE_ERROR_CODES",
+    "STABLE_ISSUE_CODES",
     "TargetSpeakerRequiredError",
     "UnknownPackError",
     "UnsupportedAudioError",

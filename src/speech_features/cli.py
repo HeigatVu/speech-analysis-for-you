@@ -29,12 +29,13 @@ from .catalog import list_features
 from .document import InvalidDocumentError, load_document, save_document
 from .extraction import (
     _canonical_packs,
+    _load_task_spec,
     _resolve_speaker,
     _validate_manifest_v2,
     extract_batch,
 )
 from .result import FeatureExtractionError
-from .schema import MissingInputError
+from .schema import MissingInputError, validate_task_spec
 
 _OUTPUT_FILES = ("recordings.csv", "utterances.csv", "issues.csv", "provenance.json")
 _DEFAULT_PACKS = ("acoustic", "adult_neuro")
@@ -67,6 +68,8 @@ def _validate_command(input_path: str) -> str:
         audio_path = Path(row["audio_path"])
         if not audio_path.is_file():
             raise MissingInputError(f"input file not found: {audio_path}")
+        if row["task_spec_path"] is not None:
+            validate_task_spec(_load_task_spec(row["task_spec_path"]))
         for target in row["target_speakers"] or []:
             _resolve_speaker(document, target)
     return f"OK {path} (manifest v2, {len(rows)} rows)"
@@ -78,7 +81,9 @@ def _convert_command(input_path: str, output_path: str, force: bool) -> None:
     save_document(document, output_path, force=force)
 
 
-def _extract_command(manifest: str, output_dir: str, packs, force: bool) -> int:
+def _extract_command(
+    manifest: str, output_dir: str, packs, force: bool, task_spec_path=None
+) -> int:
     """Run extract_batch and write the four deterministic output files.
 
     Pack selection and the manifest are validated before any directory is
@@ -94,7 +99,8 @@ def _extract_command(manifest: str, output_dir: str, packs, force: bool) -> int:
             + ", ".join(str(path) for path in existing)
             + " (pass --force)"
         )
-    bundle = extract_batch(manifest, packs=canonical_packs)
+    task_spec = _load_task_spec(task_spec_path) if task_spec_path is not None else None
+    bundle = extract_batch(manifest, packs=canonical_packs, task_spec=task_spec)
     out.mkdir(parents=True, exist_ok=True)
     bundle.recordings.to_csv(
         out / "recordings.csv", index=False, encoding="utf-8", lineterminator="\n"
@@ -109,7 +115,7 @@ def _extract_command(manifest: str, output_dir: str, packs, force: bool) -> int:
     return 1 if "error" in set(bundle.issues["severity"]) else 0
 
 
-def _list_features_command(pack, level) -> str:
+def _list_features_command(pack, level, **metadata_filters) -> str:
     """Render the catalog CSV: header and all definition metadata."""
     buffer = io.StringIO()
     writer = csv.writer(buffer, lineterminator="\n")
@@ -125,7 +131,21 @@ def _list_features_command(pack, level) -> str:
             "formula_version",
         ]
     )
-    for definition in list_features(pack=pack, level=level):
+    for name, values in metadata_filters.items():
+        for value in values:
+            list_features(**{name: value})
+    definitions = list_features(pack=pack, level=level)
+    for definition in definitions:
+        if any(
+            values
+            and (
+                getattr(definition, name) not in values
+                if name in {"domain", "language_scope", "evidence_level"}
+                else not set(getattr(definition, f"{name}s")) & set(values)
+            )
+            for name, values in metadata_filters.items()
+        ):
+            continue
         writer.writerow(
             [
                 definition.key,
@@ -157,11 +177,17 @@ def _build_parser() -> argparse.ArgumentParser:
     extract.add_argument("manifest")
     extract.add_argument("output_dir")
     extract.add_argument("--pack", action="append", dest="packs", default=[])
+    extract.add_argument("--task-spec", default=None)
     extract.add_argument("--force", action="store_true")
 
     listing = sub.add_parser("list-features", help="list catalog features as CSV")
     listing.add_argument("--pack", default=None)
     listing.add_argument("--level", default=None)
+    listing.add_argument("--domain", action="append", default=[])
+    listing.add_argument("--language-scope", action="append", default=[])
+    listing.add_argument("--task", action="append", default=[])
+    listing.add_argument("--disorder", action="append", default=[])
+    listing.add_argument("--evidence-level", action="append", default=[])
 
     return parser
 
@@ -178,9 +204,21 @@ def main(argv=None) -> int:
             return 0
         if args.command == "extract":
             packs = tuple(args.packs) if args.packs else _DEFAULT_PACKS
-            return _extract_command(args.manifest, args.output_dir, packs, args.force)
+            return _extract_command(
+                args.manifest, args.output_dir, packs, args.force, args.task_spec
+            )
         if args.command == "list-features":
-            sys.stdout.write(_list_features_command(args.pack, args.level))
+            sys.stdout.write(
+                _list_features_command(
+                    args.pack,
+                    args.level,
+                    domain=args.domain,
+                    language_scope=args.language_scope,
+                    task=args.task,
+                    disorder=args.disorder,
+                    evidence_level=args.evidence_level,
+                )
+            )
             return 0
         return 2
     except (FeatureExtractionError, OSError, ValueError) as exc:

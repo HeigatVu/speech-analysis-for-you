@@ -32,6 +32,87 @@ class EvidenceRecord:
     reason: str = ""
 
 
+DEFERRED_EVIDENCE = (
+    EvidenceRecord(
+        candidate="learned embeddings",
+        domain="spectral",
+        language_scope="language_sensitive",
+        tasks=("connected_speech",),
+        disorders=(),
+        source="docs/research/neurodegenerative-speech-feature-sources.md",
+        evidence_level="single_study",
+        status="deferred",
+        reason="requires a trained model and a separately versioned validation contract",
+    ),
+    EvidenceRecord(
+        candidate="ASR-derived confidence and perplexity",
+        domain="lexical",
+        language_scope="language_specific",
+        tasks=("connected_speech",),
+        disorders=(),
+        source="docs/research/neurodegenerative-speech-feature-sources.md",
+        evidence_level="single_study",
+        status="deferred",
+        reason="requires an ASR system and Vietnamese held-out transcription validation",
+    ),
+    EvidenceRecord(
+        candidate="semantic embedding coherence",
+        domain="semantic",
+        language_scope="language_specific",
+        tasks=("connected_speech",),
+        disorders=(),
+        source="docs/research/neurodegenerative-speech-feature-sources.md",
+        evidence_level="single_study",
+        status="deferred",
+        reason="requires a versioned semantic model and Vietnamese validation",
+    ),
+    EvidenceRecord(
+        candidate="proprietary measures",
+        domain="phonation",
+        language_scope="language_independent",
+        tasks=("connected_speech",),
+        disorders=(),
+        source="docs/research/neurodegenerative-speech-feature-sources.md",
+        evidence_level="single_study",
+        status="deferred",
+        reason="no open reproducible implementation is available",
+    ),
+    EvidenceRecord(
+        candidate="ComParE feature set",
+        domain="spectral",
+        language_scope="language_sensitive",
+        tasks=("connected_speech",),
+        disorders=(),
+        source="docs/research/neurodegenerative-speech-feature-sources.md",
+        evidence_level="standard_feature_set",
+        status="deferred",
+        reason="the large generic set is outside the reviewed minimal feature scope",
+    ),
+    EvidenceRecord(
+        candidate="calibrated absolute loudness without calibration",
+        domain="audio_quality",
+        language_scope="language_independent",
+        tasks=("connected_speech",),
+        disorders=(),
+        source="docs/research/neurodegenerative-speech-feature-sources.md",
+        evidence_level="derived_companion",
+        status="deferred",
+        reason="absolute loudness is not reproducible without recording-chain calibration",
+    ),
+    EvidenceRecord(
+        candidate="features lacking a reproducible source formula",
+        domain="audio_quality",
+        language_scope="language_independent",
+        tasks=(),
+        disorders=(),
+        source="docs/research/neurodegenerative-speech-feature-sources.md",
+        evidence_level="derived_companion",
+        status="deferred",
+        reason="a reviewed reproducible formula is required before implementation",
+    ),
+)
+
+
 def validate_evidence(records, catalog_keys) -> tuple[EvidenceRecord, ...]:
     """Check the evidence inventory contract and return it as a tuple.
 
@@ -54,4 +135,10 @@ def validate_evidence(records, catalog_keys) -> tuple[EvidenceRecord, ...]:
     return tuple(checked)
 
 
-__all__ = ["ALLOWED_STATUSES", "ACTIVE_STATUSES", "EvidenceRecord", "validate_evidence"]
+__all__ = [
+    "ALLOWED_STATUSES",
+    "ACTIVE_STATUSES",
+    "DEFERRED_EVIDENCE",
+    "EvidenceRecord",
+    "validate_evidence",
+]

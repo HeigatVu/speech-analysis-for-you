@@ -145,9 +145,10 @@ def extract_clinical_linguistic_features(
     target_speaker=None,
     recording_id: str = "",
     task_spec=None,
+    _validated_task_spec: bool = False,
 ) -> tuple[dict[str, float], tuple[FeatureIssue, ...]]:
     """Return all Task 5 structural, psycholinguistic, error, and discourse keys."""
-    if task_spec is not None:
+    if task_spec is not None and not _validated_task_spec:
         validate_task_spec(task_spec)
     values = {key: math.nan for key in CLINICAL_LINGUISTIC_KEYS}
     issues = []

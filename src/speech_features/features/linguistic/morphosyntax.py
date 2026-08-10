@@ -91,7 +91,7 @@ import math
 from collections import Counter
 
 from ...result import FeatureIssue
-from ...schema import nfc
+from ...schema import TASK_SPEC_FIELDS, nfc, validate_task_spec
 from . import _mean, _normalise, _population_sd, _resolve_target_speaker, _word_syllable_lengths
 from .definitions import (
     MORPH_COMPOSITION_KEYS,
@@ -767,11 +767,15 @@ def extract_adult_neuro_features(
     target_speaker=None,
     recording_id: str = "",
     task_spec=None,
+    _validated_task_spec: bool = False,
 ) -> tuple[dict[str, float], list[dict], tuple[FeatureIssue, ...]]:
     """Compose lexical, morphosyntax, clinical-linguistic, and task features
     into the adult-neuro pack output, without building a
     :class:`~speech_features.result.FeatureBundle` (Task 10 owns that
     integration)."""
+    if task_spec is not None and not _validated_task_spec:
+        validate_task_spec(task_spec)
+
     from . import extract_lexical_features  # deferred: sibling entry point
 
     lexical, lexical_issues = extract_lexical_features(
@@ -791,8 +795,9 @@ def extract_adult_neuro_features(
         target_speaker=target_speaker,
         recording_id=recording_id,
         task_spec=task_spec,
+        _validated_task_spec=True,
     )
-    if task_spec is None:
+    if task_spec is None or task_spec.get("task") not in TASK_SPEC_FIELDS:
         speaker_id = _resolve_target_speaker(document, target_speaker)
         task, task_issues = unavailable_structured_task_features(recording_id, speaker_id)
     else:
@@ -801,6 +806,7 @@ def extract_adult_neuro_features(
             task_spec,
             target_speaker=target_speaker,
             recording_id=recording_id,
+            _validated_task_spec=True,
         )
     features = {**lexical, **morphosyntax, **clinical, **task}
     return (

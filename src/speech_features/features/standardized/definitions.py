@@ -146,61 +146,6 @@ def _unit(raw: str) -> str:
     return "coefficient"
 
 
-_DISORDERS_BY_DOMAIN = {
-    "articulation": ("als", "mnd", "pd", "pdd", "hd", "ms", "ataxia", "psp", "msa", "cbs"),
-    "phonation": (
-        "ad",
-        "als",
-        "ataxia",
-        "cbs",
-        "dlb",
-        "ftd",
-        "hd",
-        "mci",
-        "mnd",
-        "ms",
-        "msa",
-        "pd",
-        "pdd",
-        "ppa",
-        "psp",
-    ),
-    "prosody": (
-        "ad",
-        "als",
-        "cbs",
-        "dlb",
-        "ftd",
-        "hd",
-        "mci",
-        "mnd",
-        "ms",
-        "msa",
-        "pd",
-        "pdd",
-        "ppa",
-        "psp",
-    ),
-    "spectral": ("ad", "als", "ataxia", "hd", "mci", "ms", "msa", "pd", "psp"),
-    "timing": (
-        "ad",
-        "als",
-        "ataxia",
-        "cbs",
-        "dlb",
-        "ftd",
-        "hd",
-        "mci",
-        "mnd",
-        "ms",
-        "msa",
-        "pd",
-        "pdd",
-        "ppa",
-        "psp",
-    ),
-}
-
 _DEFINITIONS = tuple(
     FeatureDefinition(
         key=key,
@@ -212,7 +157,7 @@ _DEFINITIONS = tuple(
         domain=_domain(raw),
         language_scope="language_sensitive",
         tasks=("connected_speech", "sustained_vowel"),
-        disorders=_DISORDERS_BY_DOMAIN[_domain(raw)],
+        disorders=(),
         evidence_level="standard_feature_set",
     )
     for raw, key in zip(RAW_EGEMAPS_COLUMNS, EGEMAPS_KEYS)

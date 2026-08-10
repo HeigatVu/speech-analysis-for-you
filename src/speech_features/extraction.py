@@ -26,6 +26,8 @@ from .catalog import CATALOG_VERSION, PACK_LEVELS, PACKS, list_features
 from .document import SpeechDocument, load_document
 from .features.acoustic import _extract as _extract_acoustic_pack
 from .features.linguistic import extract_adult_neuro_features
+from .features.motor import extract_motor_features
+from .features.standardized import extract_egemaps_features
 from .formats.json import encode_json
 from .result import (
     ExtractionError,
@@ -39,7 +41,10 @@ from .schema import (
     ExtractionConfig,
     FeatureExtractionError,
     InvalidManifestError,
+    InvalidTaskSpecError,
+    MissingInputError,
     sha256_file,
+    validate_task_spec,
 )
 
 _ISSUE_COLUMNS = (
@@ -53,7 +58,9 @@ _ISSUE_COLUMNS = (
 )
 _RECORDING_ID_COLUMNS = ("recording_id", "speaker_id")
 _UTTERANCE_ID_COLUMNS = ("recording_id", "speaker_id", "utterance_id", "start_s", "end_s")
-_MANIFEST_ROW_KEYS = frozenset({"recording_id", "audio_path", "transcript_path", "target_speakers"})
+_MANIFEST_ROW_KEYS = frozenset(
+    {"recording_id", "audio_path", "transcript_path", "target_speakers", "task_spec_path"}
+)
 
 
 def _sorted_issues(issues_df: pd.DataFrame) -> pd.DataFrame:
@@ -153,6 +160,13 @@ def _canonical_document_sha256(document: SpeechDocument) -> str:
     return hashlib.sha256(encode_json(document).encode("utf-8")).hexdigest()
 
 
+def _canonical_task_spec_sha256(task_spec: dict) -> str:
+    payload = json.dumps(
+        task_spec, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
 def _read_inputs(audio_path, document, packs, cfg):
     """Hash both inputs and load PCM audio once, only when acoustic is selected.
 
@@ -165,7 +179,7 @@ def _read_inputs(audio_path, document, packs, cfg):
     else:
         transcript_sha256, hash_kind = _canonical_document_sha256(document), "canonical_document"
     audio_sha256 = sha256_file(audio_path)
-    if "acoustic" in packs:
+    if {"acoustic", "standardized_acoustic"} & set(packs):
         audio, width = _read_wav_with_width(audio_path, sample_rate=cfg.sample_rate)
     else:
         audio, width = None, None
@@ -200,6 +214,8 @@ def _extract_bundle(
     audio_sha256: str,
     transcript_sha256: str,
     transcript_hash_kind: str,
+    task_spec,
+    task_spec_sha256: str | None,
 ) -> FeatureBundle:
     """Run every selected pack exactly once for one resolved target and build
     the deterministic bundle tables plus single-extraction provenance.
@@ -214,6 +230,7 @@ def _extract_bundle(
         recording_features: dict[str, float] = {}
         utterance_rows: list[dict] = []
         issues: list[FeatureIssue] = []
+        pack_provenance: dict[str, dict] = {}
         speaker_id = resolved
 
         if "acoustic" in packs:
@@ -233,11 +250,36 @@ def _extract_bundle(
 
         if "adult_neuro" in packs:
             features, rows, pack_issues = extract_adult_neuro_features(
-                document, target_speaker=pack_target, recording_id=recording_id
+                document,
+                target_speaker=pack_target,
+                recording_id=recording_id,
+                task_spec=task_spec,
+                _validated_task_spec=True,
             )
             recording_features.update(features)
             utterance_rows.extend(rows)
             issues.extend(pack_issues)
+
+        if "motor_neuro" in packs:
+            features, pack_issues = extract_motor_features(
+                document,
+                target_speaker=pack_target,
+                recording_id=recording_id,
+                task_spec=task_spec,
+            )
+            recording_features.update(features)
+            issues.extend(pack_issues)
+
+        if "standardized_acoustic" in packs:
+            features, pack_issues, adapter_provenance = extract_egemaps_features(
+                audio,
+                config.sample_rate,
+                recording_id=recording_id,
+                speaker_id=speaker_id,
+            )
+            recording_features.update(features)
+            issues.extend(pack_issues)
+            pack_provenance["standardized_acoustic"] = adapter_provenance
 
         recording_keys, utterance_keys = _catalog_columns(packs, levels)
 
@@ -316,6 +358,10 @@ def _extract_bundle(
                 )
             ],
         }
+        if task_spec_sha256 is not None:
+            provenance["task_spec_sha256"] = task_spec_sha256
+        if pack_provenance:
+            provenance["pack_provenance"] = pack_provenance
         return FeatureBundle(
             recordings=recordings, utterances=utterances, issues=issues_df, provenance=provenance
         )
@@ -333,6 +379,7 @@ def extract(
     packs=("acoustic", "adult_neuro"),
     levels=("recording", "utterance"),
     config=None,
+    task_spec=None,
 ) -> FeatureBundle:
     """Extract the selected packs for one target of an already loaded document.
 
@@ -348,6 +395,10 @@ def extract(
     cfg = _config(config)
     canonical_packs = _canonical_packs(packs)
     canonical_levels = _canonical_levels(levels)
+    task_spec_sha256 = None
+    if task_spec is not None:
+        validate_task_spec(task_spec)
+        task_spec_sha256 = _canonical_task_spec_sha256(task_spec)
     audio, width, audio_sha256, transcript_sha256, hash_kind = _read_inputs(
         audio_path, document, canonical_packs, cfg
     )
@@ -363,6 +414,8 @@ def extract(
         audio_sha256=audio_sha256,
         transcript_sha256=transcript_sha256,
         transcript_hash_kind=hash_kind,
+        task_spec=task_spec,
+        task_spec_sha256=task_spec_sha256,
     )
 
 
@@ -377,12 +430,23 @@ def _load_manifest(path) -> dict:
         raise InvalidManifestError(f"cannot read manifest {path}: {exc}") from exc
 
 
+def _load_task_spec(path) -> dict:
+    task_spec_path = Path(path)
+    if not task_spec_path.is_file():
+        raise MissingInputError(f"input file not found: {task_spec_path}")
+    try:
+        with task_spec_path.open("r", encoding="utf-8") as stream:
+            return json.load(stream)
+    except (OSError, ValueError) as exc:
+        raise InvalidTaskSpecError(f"cannot read task spec {task_spec_path}: {exc}") from exc
+
+
 def _validate_manifest_v2(manifest: dict, base_dir) -> list[dict]:
     """Validate manifest v2 and return rows with manifest-relative paths resolved.
 
-    The row schema is exactly ``recording_id, audio_path, transcript_path,
-    target_speakers``; every extra key is rejected. Relative asset paths are
-    resolved against ``base_dir`` (the manifest file's parent).
+    The row schema is ``recording_id, audio_path, transcript_path``, optional
+    ``target_speakers``, and optional ``task_spec_path``. Relative asset paths
+    are resolved against ``base_dir`` (the manifest file's parent).
     """
     if not isinstance(manifest, dict):
         raise InvalidManifestError(f"manifest must be a JSON object, got {type(manifest).__name__}")
@@ -419,12 +483,20 @@ def _validate_manifest_v2(manifest: dict, base_dir) -> list[dict]:
                     )
             if len(targets) != len(set(targets)):
                 raise InvalidManifestError(f"row {i} target_speakers must be unique")
+        task_spec_path = row.get("task_spec_path")
+        if task_spec_path is not None and (
+            not isinstance(task_spec_path, str) or not task_spec_path
+        ):
+            raise InvalidManifestError(f"row {i} task_spec_path must be a non-empty string")
         parsed.append(
             {
                 "recording_id": recording_id,
                 "audio_path": str(Path(base_dir, row["audio_path"])),
                 "transcript_path": str(Path(base_dir, row["transcript_path"])),
                 "target_speakers": list(targets) if targets is not None else None,
+                "task_spec_path": (
+                    str(Path(base_dir, task_spec_path)) if task_spec_path is not None else None
+                ),
             }
         )
     return parsed
@@ -440,7 +512,15 @@ def _annotation_sources(document):
     )
 
 
-def _row_provenance_entry(target_speakers, transcript_sha256, audio_sha256, sources, error=None):
+def _row_provenance_entry(
+    target_speakers,
+    transcript_sha256,
+    audio_sha256,
+    sources,
+    *,
+    task_spec_sha256=None,
+    error=None,
+):
     """One deterministic per-recording provenance entry; every available input
     hash and annotation source is retained, and an error is recorded without
     inventing hashes for unavailable inputs."""
@@ -451,6 +531,8 @@ def _row_provenance_entry(target_speakers, transcript_sha256, audio_sha256, sour
         entry["audio_sha256"] = audio_sha256
     if sources is not None:
         entry["annotation_sources"] = sources
+    if task_spec_sha256 is not None:
+        entry["task_spec_sha256"] = task_spec_sha256
     if error is not None:
         entry["error_code"] = getattr(error, "code", "EXTRACTION_ERROR")
         entry["error_message"] = str(error)
@@ -462,6 +544,7 @@ def extract_batch(
     *,
     packs=("acoustic", "adult_neuro"),
     config=None,
+    task_spec=None,
 ) -> FeatureBundle:
     """Run manifest v2 through per-target extraction with row/target isolation.
 
@@ -477,6 +560,10 @@ def extract_batch(
     """
     cfg = _config(config)
     canonical_packs = _canonical_packs(packs)
+    default_task_spec_sha256 = None
+    if task_spec is not None:
+        validate_task_spec(task_spec)
+        default_task_spec_sha256 = _canonical_task_spec_sha256(task_spec)
     levels = ("recording", "utterance")
     manifest_file = Path(manifest_path)
     rows = _validate_manifest_v2(_load_manifest(manifest_file), manifest_file.parent)
@@ -504,6 +591,8 @@ def extract_batch(
         document = None
         sources = None
         row_error = None
+        row_task_spec = task_spec
+        task_spec_sha256 = default_task_spec_sha256
 
         try:
             transcript_sha256 = sha256_file(row["transcript_path"])
@@ -518,8 +607,17 @@ def extract_batch(
             audio_sha256 = sha256_file(row["audio_path"])
         except Exception as exc:  # noqa: BLE001 - isolated per-input hashing
             row_error = row_error or exc
+        if row["task_spec_path"] is not None:
+            try:
+                row_task_spec = _load_task_spec(row["task_spec_path"])
+                task_spec_sha256 = _canonical_task_spec_sha256(row_task_spec)
+                validate_task_spec(row_task_spec)
+            except Exception as exc:  # noqa: BLE001 - isolate task-spec failures
+                row_error = row_error or exc
         try:
-            if "acoustic" in canonical_packs and audio_sha256 is not None:
+            if {"acoustic", "standardized_acoustic"} & set(
+                canonical_packs
+            ) and audio_sha256 is not None:
                 audio, width = _read_wav_with_width(row["audio_path"], sample_rate=cfg.sample_rate)
             else:
                 audio, width = None, None
@@ -535,6 +633,7 @@ def extract_batch(
                 transcript_sha256,
                 audio_sha256,
                 sources,
+                task_spec_sha256=task_spec_sha256,
                 error=row_error,
             )
             total += 1
@@ -571,6 +670,8 @@ def extract_batch(
                     audio_sha256=audio_sha256,
                     transcript_sha256=transcript_sha256,
                     transcript_hash_kind="file",
+                    task_spec=row_task_spec,
+                    task_spec_sha256=task_spec_sha256,
                 )
                 bundles.append(bundle)
                 success += 1
@@ -579,7 +680,11 @@ def extract_batch(
                 failure += 1
 
         per_recording[recording_id] = _row_provenance_entry(
-            targets, transcript_sha256, audio_sha256, sources
+            targets,
+            transcript_sha256,
+            audio_sha256,
+            sources,
+            task_spec_sha256=task_spec_sha256,
         )
 
     recordings = (

@@ -634,6 +634,89 @@ class TestLabelFreeExtraction:
         assert callable(speech_features.extract)
         assert callable(speech_features.extract_batch)
 
+    def test_package_root_exports_all_neuro_pack_extractors(self):
+        for name in (
+            "extract_motor_features",
+            "extract_clinical_linguistic_features",
+            "extract_structured_task_features",
+            "extract_egemaps_features",
+        ):
+            assert callable(getattr(speech_features, name))
+            assert name in speech_features.__all__
+
+    def test_extract_composes_all_capability_packs(self, tmp_path):
+        spec = {
+            "version": 1,
+            "task": "picture_desc_1",
+            "concept_aliases": {"cat": ["mèo"]},
+            "entity_groups": {"animal": ["mèo"]},
+            "action_groups": {"motion": ["chạy"]},
+        }
+        bundle = speech_features.extract(
+            _write_wav(tmp_path / "a.wav", _tone(145, 1.0)),
+            _document(tmp_path),
+            packs=("acoustic", "adult_neuro", "motor_neuro"),
+            task_spec=spec,
+        )
+        assert "spectral_mfcc_1_mean" in bundle.recordings
+        assert "artic_vowel_space_area_hz2" in bundle.recordings
+        assert "task_picture_concept_coverage" in bundle.recordings
+        assert "diagnosis" not in bundle.provenance
+
+    def test_standardized_acoustic_uses_audio_and_records_adapter_provenance(self, tmp_path):
+        bundle = speech_features.extract(
+            _write_wav(tmp_path / "a.wav", _tone(145, 1.0)),
+            _document(tmp_path),
+            packs=("standardized_acoustic",),
+        )
+        assert len(bundle.recordings.columns) == 2 + 88
+        assert "egemaps_f0semitonefrom27_5hz_sma3nz_amean" in bundle.recordings
+        assert bundle.provenance["pack_provenance"]["standardized_acoustic"]["available"] is False
+        assert "MISSING_OPTIONAL_DEPENDENCY" in set(bundle.issues["code"])
+
+    def test_task_spec_is_canonically_hashed_without_clinical_fields(self, tmp_path):
+        import hashlib
+
+        spec = {
+            "task": "picture_desc_1",
+            "action_groups": {},
+            "version": 1,
+            "entity_groups": {},
+            "concept_aliases": {"cat": ["mèo"]},
+        }
+        canonical = json.dumps(
+            spec, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+        bundle = speech_features.extract(
+            _write_wav(tmp_path / "a.wav", _tone(145, 1.0)),
+            _document(tmp_path),
+            packs=("adult_neuro",),
+            task_spec=spec,
+        )
+        assert bundle.provenance["task_spec_sha256"] == hashlib.sha256(canonical).hexdigest()
+        assert not {"diagnosis", "label", "age", "sex"} & set(bundle.provenance)
+
+    def test_non_null_task_spec_is_validated_for_motor_only_extraction(self, tmp_path):
+        from speech_features.schema import InvalidTaskSpecError
+
+        with pytest.raises(InvalidTaskSpecError):
+            speech_features.extract(
+                _write_wav(tmp_path / "a.wav", _tone(145, 1.0)),
+                _document(tmp_path),
+                packs=("motor_neuro",),
+                task_spec={"version": 2, "task": "ddk"},
+            )
+
+    def test_motor_task_spec_coexists_with_adult_pack(self, tmp_path):
+        bundle = speech_features.extract(
+            _write_wav(tmp_path / "a.wav", _tone(145, 1.0)),
+            _document(tmp_path),
+            packs=("adult_neuro", "motor_neuro"),
+            task_spec={"version": 1, "task": "ddk"},
+        )
+        assert "task_ddk_rate_syllables_s" in bundle.recordings
+        assert "task_picture_concept_coverage" in bundle.recordings
+
     def test_extract_default_schema_has_exact_columns(self, tmp_path):
         audio = _write_wav(tmp_path / "a.wav", _tone(145, 1.0))
         doc = _document(tmp_path)
@@ -656,7 +739,11 @@ class TestLabelFreeExtraction:
             "severity",
             "message",
         ]
-        assert len(bundle.recordings.columns) == 2 + 166
+        expected_recording = sum(
+            definition.level == "recording" and definition.pack in {"acoustic", "adult_neuro"}
+            for definition in speech_features.list_features()
+        )
+        assert len(bundle.recordings.columns) == 2 + expected_recording
         assert len(bundle.utterances.columns) == 5 + 4
         assert bundle.recordings.iloc[0]["recording_id"] == "doc-1"
         assert bundle.recordings.iloc[0]["speaker_id"] == "PAR"
@@ -666,34 +753,36 @@ class TestLabelFreeExtraction:
     def test_extract_default_columns_match_registered_catalog(self, tmp_path):
         from speech_features.features.acoustic.definitions import ALL_KEYS as acoustic_keys
         from speech_features.features.linguistic.definitions import (
-            ALL_KEYS as lexical_keys,
+            ADULT_NEURO_RECORDING_KEYS as adult_neuro_keys,
             DISCOURSE_UTTERANCE_KEYS,
-            TASK9_RECORDING_KEYS,
         )
 
         bundle = speech_features.extract(
             _write_wav(tmp_path / "a.wav", _tone(145, 1.0)), _document(tmp_path)
         )
-        assert len(acoustic_keys) == 73
-        assert len(lexical_keys) + len(TASK9_RECORDING_KEYS) == 93
+        assert set(acoustic_keys) == {
+            definition.key
+            for definition in speech_features.list_features(pack="acoustic", level="recording")
+        }
+        assert set(adult_neuro_keys) == {
+            definition.key
+            for definition in speech_features.list_features(pack="adult_neuro", level="recording")
+        }
         assert len(DISCOURSE_UTTERANCE_KEYS) == 4
-        assert list(bundle.recordings.columns[2:]) == sorted(
-            acoustic_keys + lexical_keys + TASK9_RECORDING_KEYS
-        )
+        assert list(bundle.recordings.columns[2:]) == sorted(acoustic_keys + adult_neuro_keys)
         assert list(bundle.utterances.columns[5:]) == sorted(DISCOURSE_UTTERANCE_KEYS)
 
     def test_pack_filtering_selects_catalog_columns(self, tmp_path):
         from speech_features.features.acoustic.definitions import ALL_KEYS as acoustic_keys
         from speech_features.features.linguistic.definitions import (
-            ALL_KEYS as lexical_keys,
+            ADULT_NEURO_RECORDING_KEYS as adult_neuro_keys,
             DISCOURSE_UTTERANCE_KEYS,
-            TASK9_RECORDING_KEYS,
         )
 
         audio = _write_wav(tmp_path / "a.wav", _tone(145, 1.0))
         doc = _document(tmp_path)
         neuro = speech_features.extract(audio, doc, packs=("adult_neuro",))
-        assert list(neuro.recordings.columns[2:]) == sorted(lexical_keys + TASK9_RECORDING_KEYS)
+        assert list(neuro.recordings.columns[2:]) == sorted(adult_neuro_keys)
         assert list(neuro.utterances.columns[5:]) == sorted(DISCOURSE_UTTERANCE_KEYS)
         acoustic = speech_features.extract(audio, doc, packs=("acoustic",))
         assert list(acoustic.recordings.columns[2:]) == sorted(acoustic_keys)
@@ -1024,7 +1113,11 @@ class TestLabelFreeBatch:
         manifest = _write_manifest(tmp_path, rows)
         bundle = speech_features.extract_batch(manifest)
         assert list(bundle.recordings["recording_id"]) == ["r1", "r2"]
-        assert len(bundle.recordings.columns) == 2 + 166
+        expected_recording = sum(
+            definition.level == "recording" and definition.pack in {"acoustic", "adult_neuro"}
+            for definition in speech_features.list_features()
+        )
+        assert len(bundle.recordings.columns) == 2 + expected_recording
         assert len(bundle.utterances.columns) == 5 + 4
         prov = dict(bundle.provenance)
         assert prov["manifest_sha256"] == sha256_file(manifest)
@@ -1059,6 +1152,70 @@ class TestLabelFreeBatch:
         assert len(bundle.recordings) == 1
         assert bundle.recordings.iloc[0]["recording_id"] == "r1"
 
+    def test_batch_loads_relative_task_spec_and_records_canonical_hash(self, tmp_path):
+        import hashlib
+
+        spec = {
+            "version": 1,
+            "task": "picture_desc_1",
+            "concept_aliases": {"cat": ["mèo"]},
+            "entity_groups": {},
+            "action_groups": {},
+        }
+        _write_json(tmp_path / "task.json", spec)
+        row = _manifest_row(tmp_path, "r1")
+        row["task_spec_path"] = "task.json"
+        bundle = speech_features.extract_batch(
+            _write_manifest(tmp_path, [row]), packs=("adult_neuro",)
+        )
+        canonical = json.dumps(
+            spec, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+        assert "task_picture_concept_coverage" in bundle.recordings
+        assert (
+            bundle.provenance["recordings"]["r1"]["task_spec_sha256"]
+            == hashlib.sha256(canonical).hexdigest()
+        )
+
+    def test_batch_invalid_task_spec_isolated_per_row(self, tmp_path):
+        good = _manifest_row(tmp_path, "r1", audio="a1.wav", transcript="t1.json")
+        bad = _manifest_row(tmp_path, "r2", audio="a2.wav", transcript="t2.json")
+        _write_json(
+            tmp_path / "good-task.json",
+            {
+                "version": 1,
+                "task": "picture_desc_1",
+                "concept_aliases": {},
+                "entity_groups": {},
+                "action_groups": {},
+            },
+        )
+        _write_json(tmp_path / "bad-task.json", {"version": 2, "task": "ddk"})
+        good["task_spec_path"] = "good-task.json"
+        bad["task_spec_path"] = "bad-task.json"
+        bundle = speech_features.extract_batch(
+            _write_manifest(tmp_path, [good, bad]), packs=("adult_neuro", "motor_neuro")
+        )
+        assert list(bundle.recordings["recording_id"]) == ["r1"]
+        assert ("r2", "", "INVALID_TASK_SPEC") in {
+            (row.recording_id, row.speaker_id, row.code)
+            for row in bundle.issues[bundle.issues["severity"] == "error"].itertuples(index=False)
+        }
+        assert bundle.provenance["counts"] == {"total": 2, "success": 1, "failure": 1}
+
+    def test_batch_malformed_task_spec_uses_task_spec_error_code(self, tmp_path):
+        row = _manifest_row(tmp_path, "r1")
+        (tmp_path / "bad-task.json").write_text("{", encoding="utf-8")
+        row["task_spec_path"] = "bad-task.json"
+        bundle = speech_features.extract_batch(
+            _write_manifest(tmp_path, [row]), packs=("motor_neuro",)
+        )
+        assert bundle.recordings.empty
+        assert ("r1", "", "INVALID_TASK_SPEC") in {
+            (issue.recording_id, issue.speaker_id, issue.code)
+            for issue in bundle.issues.itertuples(index=False)
+        }
+
     def test_batch_rejects_invalid_manifests(self, tmp_path):
         good = _manifest_row(tmp_path, "r1")
         manifest = _write_manifest(tmp_path, [good], version=1)
@@ -1076,6 +1233,8 @@ class TestLabelFreeBatch:
             [{**good, "target_speakers": ["PAR", "PAR"]}],
             [{**good, "target_speakers": [""]}],
             [{**good, "target_speakers": [["PAR"]]}],
+            [{**good, "task_spec_path": ""}],
+            [{**good, "task_spec_path": ["task.json"]}],
         ]
         for rows in bad_rows:
             with pytest.raises(InvalidManifestError):
@@ -1242,7 +1401,11 @@ class TestLabelFreeBatch:
         bundle = speech_features.extract_batch(_write_manifest(tmp_path, [row]))
         assert len(bundle.recordings) == 0
         assert len(bundle.utterances) == 0
-        assert len(bundle.recordings.columns) == 2 + 166
+        expected_recording = sum(
+            definition.level == "recording" and definition.pack in {"acoustic", "adult_neuro"}
+            for definition in speech_features.list_features()
+        )
+        assert len(bundle.recordings.columns) == 2 + expected_recording
         assert len(bundle.utterances.columns) == 5 + 4
         assert "error" in set(bundle.issues["severity"])
         assert list(bundle.recordings.columns[:2]) == ["recording_id", "speaker_id"]
@@ -1259,7 +1422,9 @@ class TestLabelFreeBatch:
             "start_s",
             "end_s",
         ]
-        assert len(bundle.recordings.columns) == 2 + 73
+        assert len(bundle.recordings.columns) == 2 + len(
+            speech_features.list_features(pack="acoustic", level="recording")
+        )
 
     def test_batch_issues_sorted_deterministically(self, tmp_path):
         good1 = _manifest_row(tmp_path, "r1", audio="a1.wav", transcript="t1.json")

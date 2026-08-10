@@ -1,6 +1,8 @@
 """Behavioral tests for the label-free CLI (Task 10)."""
 
 import json
+import csv
+import io
 import subprocess
 import sys
 import wave
@@ -8,6 +10,7 @@ import wave
 import numpy as np
 import pytest
 
+import speech_features
 from speech_features.cli import main
 
 
@@ -266,6 +269,36 @@ class TestExtract:
         assert recordings.startswith("recording_id,speaker_id,discourse_")
         assert "audio_" not in recordings
 
+    def test_extract_accepts_one_task_spec_for_manifest_rows_without_one(self, tmp_path):
+        manifest = tmp_path / "manifest.json"
+        _write_json(manifest, _manifest([_row(tmp_path, "r1")]))
+        task_spec = tmp_path / "task.json"
+        _write_json(
+            task_spec,
+            {
+                "version": 1,
+                "task": "picture_desc_1",
+                "concept_aliases": {"cat": ["mèo"]},
+                "entity_groups": {},
+                "action_groups": {},
+            },
+        )
+        out = tmp_path / "out"
+        assert (
+            self._extract(
+                tmp_path,
+                manifest,
+                out,
+                "--pack",
+                "adult_neuro",
+                "--task-spec",
+                str(task_spec),
+            )
+            == 0
+        )
+        provenance = json.loads((out / "provenance.json").read_text(encoding="utf-8"))
+        assert len(provenance["recordings"]["r1"]["task_spec_sha256"]) == 64
+
 
 class TestListFeatures:
     def test_list_features_header_and_all_metadata(self, capsys):
@@ -274,15 +307,17 @@ class TestListFeatures:
         assert lines[0] == (
             "key,pack,level,unit,population,reference,prerequisites,formula_version"
         )
-        assert len(lines) == 1 + 170
-        assert lines[1].startswith("audio_clipping_ratio,acoustic,recording,")
-        assert lines[-1].startswith("voice_voiced_ratio,")
-        assert len(set(lines[1:])) == 170
+        assert len(lines) == 1 + len(speech_features.list_features())
+        rows = list(csv.DictReader(io.StringIO("\n".join(lines) + "\n")))
+        assert [row["key"] for row in rows] == [
+            definition.key for definition in speech_features.list_features()
+        ]
+        assert len(set(lines[1:])) == len(speech_features.list_features())
 
     def test_list_features_pack_filter(self, capsys):
         assert main(["list-features", "--pack", "acoustic"]) == 0
         lines = capsys.readouterr().out.splitlines()
-        assert len(lines) == 1 + 73
+        assert len(lines) == 1 + len(speech_features.list_features(pack="acoustic"))
         assert all(",acoustic," in line for line in lines[1:])
 
     def test_list_features_level_filter(self, capsys):
@@ -298,6 +333,68 @@ class TestListFeatures:
     def test_list_features_unknown_level_exits_two(self, capsys):
         assert main(["list-features", "--level", "bogus"]) == 2
         assert "say-features: error:" in capsys.readouterr().err
+
+    def test_list_features_repeatable_metadata_filters_use_or_within_one_field(self, capsys):
+        assert (
+            main(
+                [
+                    "list-features",
+                    "--domain",
+                    "timing",
+                    "--domain",
+                    "respiration",
+                    "--language-scope",
+                    "language_independent",
+                ]
+            )
+            == 0
+        )
+        rows = list(csv.DictReader(io.StringIO(capsys.readouterr().out)))
+        assert rows
+        assert {row["key"] for row in rows} == {
+            definition.key
+            for definition in speech_features.list_features()
+            if definition.domain in {"timing", "respiration"}
+            and definition.language_scope == "language_independent"
+        }
+
+    @pytest.mark.parametrize(
+        ("flag", "value", "attribute"),
+        [
+            ("--task", "ddk", "tasks"),
+            ("--disorder", "als", "disorders"),
+            ("--evidence-level", "standard_feature_set", "evidence_level"),
+        ],
+    )
+    def test_list_features_metadata_filters(self, flag, value, attribute, capsys):
+        assert main(["list-features", flag, value]) == 0
+        rows = list(csv.DictReader(io.StringIO(capsys.readouterr().out)))
+        assert rows
+        definitions = {definition.key: definition for definition in speech_features.list_features()}
+        for row in rows:
+            metadata = getattr(definitions[row["key"]], attribute)
+            assert value in metadata if isinstance(metadata, tuple) else metadata == value
+
+    def test_list_features_unknown_metadata_filter_exits_two(self, capsys):
+        assert main(["list-features", "--domain", "unknown"]) == 2
+        assert "say-features: error:" in capsys.readouterr().err
+
+    def test_list_features_timing_domain_includes_legacy_timing_keys(self, capsys):
+        assert main(["list-features", "--domain", "timing"]) == 0
+        rows = list(csv.DictReader(io.StringIO(capsys.readouterr().out)))
+        keys = {row["key"] for row in rows}
+        assert {"time_pause_count", "time_speech_s", "time_words_per_min"} <= keys
+        assert "time_timing_event_rate_per_min" in keys
+
+    def test_list_features_audio_quality_domain_excludes_lexical_and_discourse(self, capsys):
+        assert main(["list-features", "--domain", "audio_quality"]) == 0
+        rows = list(csv.DictReader(io.StringIO(capsys.readouterr().out)))
+        keys = {row["key"] for row in rows}
+        assert keys
+        assert not any(
+            key.startswith(("lex_", "discourse_", "morph_", "disfluency_")) for key in keys
+        )
+        assert "audio_duration_s" in keys
 
 
 class TestModuleExecution:

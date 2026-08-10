@@ -247,9 +247,11 @@ def extract_structured_task_features(
     *,
     target_speaker=None,
     recording_id: str = "",
+    _validated_task_spec: bool = False,
 ) -> tuple[dict[str, float], tuple[FeatureIssue, ...]]:
     """Return every registered task key using one validated version-1 task spec."""
-    validate_task_spec(task_spec)
+    if not _validated_task_spec:
+        validate_task_spec(task_spec)
     task = task_spec.get("task")
     scorers = {
         "picture_desc_1": "picture",

@@ -788,6 +788,67 @@ _PROSODY_DISORDERS = (
 _PHONATION_DISORDERS = _TIMING_DISORDERS
 _SPECTRAL_DISORDERS = ("ad", "als", "ataxia", "hd", "mci", "ms", "msa", "pd", "psp")
 
+# Backfilled metadata for the pre-expansion "SAY catalog v1" keys (Tasks 1-5).
+# Domains follow the conservative source-supported unions; spectral keys keep
+# the standard_feature_set evidence level of the spectral family, and voice
+# keys split into prosody (f0/intensity) and phonation (jitter/shimmer/hnr/cpp).
+_LEGACY_QUALITY_DISORDERS = ("ad", "mci")
+
+
+def _backfill_legacy_metadata(definition):
+    key = definition.key
+    if key in QUALITY_KEYS:
+        domain, scope, tasks, disorders, evidence = (
+            "audio_quality",
+            "language_independent",
+            ("connected_speech",),
+            _LEGACY_QUALITY_DISORDERS,
+            "derived_companion",
+        )
+    elif key in TIMING_KEYS or key in RHYTHM_KEYS:
+        domain, scope, tasks, disorders, evidence = (
+            "timing",
+            "language_independent",
+            ("connected_speech",),
+            _TIMING_DISORDERS,
+            "derived_companion",
+        )
+    elif key in PHONATION_KEYS:
+        if key.startswith(("voice_f0_", "voice_intensity_")):
+            domain, scope, disorders = "prosody", "language_sensitive", _PROSODY_DISORDERS
+        else:
+            domain, scope, disorders = "phonation", "language_independent", _PHONATION_DISORDERS
+        tasks = ("connected_speech", "sustained_vowel")
+        evidence = "derived_companion"
+    elif key in RESONANCE_KEYS or key in SPECTRUM_KEYS:
+        domain, scope, tasks, disorders, evidence = (
+            "spectral",
+            "language_sensitive",
+            ("connected_speech", "sustained_vowel"),
+            _SPECTRAL_DISORDERS,
+            "standard_feature_set",
+        )
+    else:
+        raise ValueError(f"legacy acoustic key {key!r} has no backfilled metadata")
+    return FeatureDefinition(
+        key=key,
+        pack=definition.pack,
+        level=definition.level,
+        unit=definition.unit,
+        population=definition.population,
+        reference=definition.reference,
+        prerequisites=definition.prerequisites,
+        formula_version=definition.formula_version,
+        domain=domain,
+        language_scope=scope,
+        tasks=tasks,
+        disorders=disorders,
+        evidence_level=evidence,
+    )
+
+
+_DEFINITIONS = tuple(_backfill_legacy_metadata(d) for d in _DEFINITIONS)
+
 _TIMING_COMPANION_UNITS = {
     "time_pause_total_s": "s",
     "time_pause_median_s": "s",

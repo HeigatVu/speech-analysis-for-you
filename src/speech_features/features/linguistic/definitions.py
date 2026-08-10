@@ -331,6 +331,65 @@ _COMMON = dict(
     reference="SAY catalog v1",
 )
 
+# Conservative source-supported metadata for the pre-expansion "SAY catalog
+# v1" keys: lexical/morphosyntactic features are language_dependent, and
+# disfluency/discourse features are language_sensitive. Disorder unions come
+# from docs/research/neurodegenerative-speech-feature-sources.md: lexical and
+# morphosyntactic from sources 2--4 and 9; disfluency from source 3; discourse
+# from sources 2--3.
+_LEXICAL_DISORDERS = (
+    "ad",
+    "als",
+    "cbs",
+    "dlb",
+    "ftd",
+    "hd",
+    "mci",
+    "pd",
+    "pdd",
+    "ppa",
+    "psp",
+)
+_DISFLUENCY_DISORDERS = ("ad", "als", "cbs", "dlb", "ftd", "hd", "mci", "pd", "pdd", "ppa")
+_DISCOURSE_DISORDERS = _DISFLUENCY_DISORDERS
+
+
+def _legacy_metadata(key: str) -> dict:
+    if key.startswith("lex_"):
+        return dict(
+            domain="lexical",
+            language_scope="language_dependent",
+            tasks=("connected_speech",),
+            disorders=_LEXICAL_DISORDERS,
+            evidence_level="derived_companion",
+        )
+    if key.startswith("morph_"):
+        return dict(
+            domain="morphosyntactic",
+            language_scope="language_dependent",
+            tasks=("connected_speech",),
+            disorders=_LEXICAL_DISORDERS,
+            evidence_level="derived_companion",
+        )
+    if key.startswith("disfluency_"):
+        return dict(
+            domain="disfluency",
+            language_scope="language_sensitive",
+            tasks=("connected_speech",),
+            disorders=_DISFLUENCY_DISORDERS,
+            evidence_level="derived_companion",
+        )
+    if key.startswith("discourse_"):
+        return dict(
+            domain="discourse",
+            language_scope="language_sensitive",
+            tasks=("connected_speech",),
+            disorders=_DISCOURSE_DISORDERS,
+            evidence_level="derived_companion",
+        )
+    raise ValueError(f"legacy adult-neuro key {key!r} has no backfilled metadata")
+
+
 # (key, unit, prerequisites)
 _SPEC = (
     ("lex_utterance_count", "count", ()),
@@ -444,9 +503,85 @@ _SPEC = (
 def _build_definition(spec):
     key, unit, prerequisites = spec[:3]
     level = spec[3] if len(spec) > 3 else "recording"
+    metadata = _LEGACY_LINGUISTIC_METADATA(key)
     return FeatureDefinition(
-        key=key, unit=unit, prerequisites=prerequisites, level=level, **_COMMON
+        key=key,
+        unit=unit,
+        prerequisites=prerequisites,
+        level=level,
+        **_COMMON,
+        **metadata,
     )
+
+
+# Backfilled metadata for the pre-expansion "SAY catalog v1" keys (Tasks 1-5).
+# Domains use the reviewed lexical/morphosyntactic/disfluency/discourse set;
+# scopes are language-dependent for lexical and morphosyntactic measures and
+# language-sensitive for disfluency and discourse. Disorders come from the
+# conservative source-supported unions of the sources document.
+_LEXICAL_DISORDERS = (
+    "ad",
+    "als",
+    "cbs",
+    "dlb",
+    "ftd",
+    "hd",
+    "mci",
+    "pd",
+    "pdd",
+    "ppa",
+    "psp",
+)
+_MORPHOSYNTACTIC_DISORDERS = _LEXICAL_DISORDERS
+_DISFLUENCY_DISORDERS = (
+    "ad",
+    "als",
+    "cbs",
+    "dlb",
+    "ftd",
+    "hd",
+    "mci",
+    "pd",
+    "pdd",
+    "ppa",
+)
+_DISCOURSE_DISORDERS = _DISFLUENCY_DISORDERS
+
+
+def _LEGACY_LINGUISTIC_METADATA(key: str) -> dict:
+    if key.startswith("lex_"):
+        return dict(
+            domain="lexical",
+            language_scope="language_dependent",
+            tasks=("connected_speech",),
+            disorders=_LEXICAL_DISORDERS,
+            evidence_level="derived_companion",
+        )
+    if key.startswith("morph_"):
+        return dict(
+            domain="morphosyntactic",
+            language_scope="language_dependent",
+            tasks=("connected_speech",),
+            disorders=_MORPHOSYNTACTIC_DISORDERS,
+            evidence_level="derived_companion",
+        )
+    if key.startswith("disfluency_"):
+        return dict(
+            domain="disfluency",
+            language_scope="language_sensitive",
+            tasks=("connected_speech",),
+            disorders=_DISFLUENCY_DISORDERS,
+            evidence_level="derived_companion",
+        )
+    if key.startswith("discourse_"):
+        return dict(
+            domain="discourse",
+            language_scope="language_sensitive",
+            tasks=("connected_speech",),
+            disorders=_DISCOURSE_DISORDERS,
+            evidence_level="derived_companion",
+        )
+    raise ValueError(f"legacy linguistic key {key!r} has no backfilled metadata")
 
 
 _DEFINITIONS = tuple(_build_definition(spec) for spec in _SPEC)

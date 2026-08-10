@@ -4,8 +4,9 @@ SAY is a **research/descriptive, Python-first library** for speech and sound
 analysis of **reviewed Vietnamese speech data**. Version 0.2.0 ships a
 versioned speech document model (JSON v2), a CLAN-compatible CHAT subset
 (it is **not** a CLAN clone and does not claim full CHAT compatibility), a
-label-free extraction pipeline, two built-in feature packs (`acoustic`,
-`adult_neuro`) with a machine-checked 170-feature catalog, and the
+label-free extraction pipeline, four built-in feature packs (`acoustic`,
+`adult_neuro`, `motor_neuro`, `standardized_acoustic`) with a generated
+485-feature catalog, and the
 `say-features` command-line interface.
 
 > **Research-only.** SAY is for cohort characterisation and hypothesis
@@ -29,6 +30,9 @@ label-free extraction pipeline, two built-in feature packs (`acoustic`,
   provenance, and the manual/automated transcription workflows.
 - [Feature catalog v1](docs/feature-catalog-v1.md) — every registered feature
   key with unit, level, prerequisites, formula, and missing-data behavior.
+- [Neurodegenerative feature guide](docs/neurodegenerative-feature-guide.md) —
+  pack/task selection, reviewed annotation layers, evidence scope, and
+  Vietnamese validation limits.
 - [Migrating to 0.2](docs/migration-0.2.md) — 0.1-to-0.2 API changes, legacy
   AD imports, the deprecation window, and notebook retirement.
 
@@ -50,13 +54,34 @@ uv build --wheel
 uv pip install dist/speech_analysis_for_you-0.2.0-py3-none-any.whl
 ```
 
+The `standardized_acoustic` pack is optional and keeps openSMILE lazy:
+
+```bash
+uv pip install "speech-analysis-for-you[standardized-acoustic]"
+```
+
+Without that extra, core imports and extraction still work; selecting the
+pack returns `NaN` eGeMAPS columns plus one `MISSING_OPTIONAL_DEPENDENCY`
+issue.
+
 ## Python quick start
 
 ```python
 import speech_features as sf
 
 document = sf.load_document("recording.json")          # JSON v2 (or CHAT)
-features = sf.extract("recording.wav", document)       # both packs, both levels
+features = sf.extract(                                 # choose any built-in packs
+    "recording.wav",
+    document,
+    packs=("acoustic", "adult_neuro", "motor_neuro"),
+    task_spec={
+        "version": 1,
+        "task": "picture_desc_1",
+        "concept_aliases": {"cat": ["mèo"]},
+        "entity_groups": {},
+        "action_groups": {},
+    },
+)
 print(features.recordings)                             # recording_id, speaker_id, feature columns
 print(features.utterances)                             # + utterance_id, start_s, end_s
 print(features.issues)                                 # structured warnings/issues
@@ -64,6 +89,9 @@ print(features.provenance)                             # hashes, config, version
 
 for definition in sf.list_features(pack="acoustic"):
     print(definition.key, definition.unit, definition.level)
+
+for definition in sf.list_features(disorder="als", task="ddk"):
+    print(definition.key, definition.evidence_level)
 ```
 
 ## CLI quick start
@@ -71,8 +99,8 @@ for definition in sf.list_features(pack="acoustic"):
 ```bash
 say-features validate transcript.cha                 # validate a document or manifest v2
 say-features convert transcript.cha transcript.json # convert between JSON v2 and CHAT (--force to overwrite)
-say-features extract manifest.json output/           # batch extraction -> CSV + provenance JSON
-say-features list-features --pack acoustic          # catalog rows as CSV
+say-features extract manifest.json output/ --task-spec task.json
+say-features list-features --domain timing --disorder als
 ```
 
 The `extract` command writes `recordings.csv`, `utterances.csv`,
@@ -102,7 +130,7 @@ JSON-serializable provenance:
   row/target isolation and provenance.
 - `list_features` — catalog queries over static built-in pack registration.
 - `PACKS` is a **static** built-in mapping in 0.2; a future built-in pack
-  (e.g. pediatric) requires an intentional source change and validation —
+  (for example a child pack) requires an intentional source change and validation —
   no dynamic registry or entry-point discovery (see the
   [catalog](docs/feature-catalog-v1.md) for the minimal example).
 - Legacy AD evaluation and task scorers remain available through
