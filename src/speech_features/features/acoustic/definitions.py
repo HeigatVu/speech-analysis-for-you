@@ -89,6 +89,17 @@ PHONATION_KEYS = (
     "voice_intensity_range_db",
     "voice_intensity_cv",
     "voice_nhr_mean_db",
+    "voice_jitter_rap",
+    "voice_jitter_ppq5",
+    "voice_jitter_ddp",
+    "voice_shimmer_apq3",
+    "voice_shimmer_apq5",
+    "voice_shimmer_apq11",
+    "voice_shimmer_dda",
+    "voice_pitch_period_entropy",
+    "voice_rpde",
+    "voice_dfa",
+    "voice_correlation_dimension",
 )
 
 RESONANCE_KEYS = (
@@ -805,6 +816,17 @@ _VOICE_COMPANION_METADATA = {
     "voice_intensity_range_db": ("dB", "prosody", "language_sensitive"),
     "voice_intensity_cv": ("ratio", "prosody", "language_sensitive"),
     "voice_nhr_mean_db": ("dB", "phonation", "language_independent"),
+    "voice_jitter_rap": ("ratio", "phonation", "language_independent"),
+    "voice_jitter_ppq5": ("ratio", "phonation", "language_independent"),
+    "voice_jitter_ddp": ("ratio", "phonation", "language_independent"),
+    "voice_shimmer_apq3": ("ratio", "phonation", "language_independent"),
+    "voice_shimmer_apq5": ("ratio", "phonation", "language_independent"),
+    "voice_shimmer_apq11": ("ratio", "phonation", "language_independent"),
+    "voice_shimmer_dda": ("ratio", "phonation", "language_independent"),
+    "voice_pitch_period_entropy": ("ratio", "phonation", "language_independent"),
+    "voice_rpde": ("ratio", "phonation", "language_independent"),
+    "voice_dfa": ("exponent", "phonation", "language_independent"),
+    "voice_correlation_dimension": ("dimension", "phonation", "language_independent"),
 }
 
 _ADVANCED_SPECTRAL_UNITS = {

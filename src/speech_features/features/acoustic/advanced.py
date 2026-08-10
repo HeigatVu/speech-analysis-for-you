@@ -7,6 +7,7 @@ import warnings
 
 import numpy as np
 from scipy.fft import dct
+from scipy.spatial.distance import pdist
 from scipy.stats import kurtosis, skew
 
 from ...result import FeatureIssue
@@ -29,6 +30,137 @@ ADVANCED_KEYS = tuple(
         "spectral_low_high_energy_ratio_db",
     }
 )
+
+_NONLINEAR_MIN_PERIODS = 64
+
+
+def _perturbation_quotient(values: np.ndarray, window: int) -> float:
+    values = np.asarray(values, dtype=float)
+    if values.size < window or not np.all(np.isfinite(values)):
+        return math.nan
+    denominator = float(np.mean(values))
+    if denominator <= 0.0:
+        return math.nan
+    local_means = np.convolve(values, np.ones(window) / window, mode="valid")
+    half = window // 2
+    centers = values[half : values.size - half]
+    return float(np.mean(np.abs(centers - local_means)) / denominator)
+
+
+def jitter_rap(periods: np.ndarray) -> float:
+    """Relative average perturbation over three pitch periods."""
+    return _perturbation_quotient(periods, 3)
+
+
+def jitter_ppq5(periods: np.ndarray) -> float:
+    """Five-period pitch perturbation quotient."""
+    return _perturbation_quotient(periods, 5)
+
+
+def shimmer_apq(amplitudes: np.ndarray, window: int) -> float:
+    """Amplitude perturbation quotient for a 3, 5, or 11-frame window."""
+    if window not in {3, 5, 11}:
+        raise ValueError("shimmer APQ window must be 3, 5, or 11")
+    return _perturbation_quotient(amplitudes, window)
+
+
+def _period_series(periods: np.ndarray, minimum: int) -> np.ndarray | None:
+    values = np.asarray(periods, dtype=float)
+    if values.size < minimum or not np.all(np.isfinite(values)) or np.any(values <= 0.0):
+        return None
+    return values
+
+
+def pitch_period_entropy(
+    periods: np.ndarray,
+    bins: int = 32,
+    minimum: int = _NONLINEAR_MIN_PERIODS,
+) -> float:
+    """Normalized Shannon entropy of detrended log periods over fixed bins."""
+    values = _period_series(periods, minimum)
+    if values is None or bins <= 1:
+        return math.nan
+    logged = np.log(values)
+    x = np.arange(logged.size, dtype=float)
+    detrended = logged - np.polyval(np.polyfit(x, logged, 1), x)
+    if np.ptp(detrended) <= np.finfo(float).eps:
+        return 0.0
+    counts = np.histogram(detrended, bins=bins, range=(detrended.min(), detrended.max()))[0]
+    probabilities = counts[counts > 0] / counts.sum()
+    return float(-np.sum(probabilities * np.log(probabilities)) / math.log(bins))
+
+
+def recurrence_period_density_entropy(
+    periods: np.ndarray,
+    radius_sd: float = 0.1,
+    minimum: int = _NONLINEAR_MIN_PERIODS,
+) -> float:
+    """Normalized entropy of recurrence counts at lags 1 through min(100, n/2)."""
+    values = _period_series(periods, minimum)
+    if values is None or radius_sd <= 0.0:
+        return math.nan
+    max_lag = min(100, values.size // 2)
+    radius = radius_sd * float(np.std(values))
+    counts = np.asarray(
+        [
+            np.count_nonzero(np.abs(values[lag:] - values[:-lag]) <= radius)
+            for lag in range(1, max_lag + 1)
+        ],
+        dtype=float,
+    )
+    counts = counts[counts > 0.0]
+    if counts.size == 0:
+        return math.nan
+    probabilities = counts / counts.sum()
+    return float(-np.sum(probabilities * np.log(probabilities)) / math.log(max_lag))
+
+
+def detrended_fluctuation_analysis(
+    periods: np.ndarray,
+    minimum: int = _NONLINEAR_MIN_PERIODS,
+) -> float:
+    """DFA log-log slope over non-overlapping windows of 4 through 64 periods."""
+    values = _period_series(periods, minimum)
+    if values is None:
+        return math.nan
+    profile = np.cumsum(values - np.mean(values))
+    scales: list[float] = []
+    fluctuations: list[float] = []
+    for size in (4, 8, 16, 32, 64):
+        segment_count = profile.size // size
+        if segment_count == 0:
+            continue
+        segments = profile[: segment_count * size].reshape(segment_count, size)
+        x = np.arange(size, dtype=float)
+        centered = x - x.mean()
+        slopes = (segments - segments.mean(axis=1, keepdims=True)) @ centered / np.sum(centered**2)
+        trends = segments.mean(axis=1, keepdims=True) + slopes[:, None] * centered
+        fluctuation = float(np.sqrt(np.mean((segments - trends) ** 2)))
+        if fluctuation > 0.0:
+            scales.append(float(size))
+            fluctuations.append(fluctuation)
+    if len(scales) < 2:
+        return math.nan
+    return float(np.polyfit(np.log(scales), np.log(fluctuations), 1)[0])
+
+
+def correlation_dimension(
+    periods: np.ndarray,
+    minimum: int = _NONLINEAR_MIN_PERIODS,
+) -> float:
+    """Two-dimensional delay-one correlation-sum slope over eight radii."""
+    values = _period_series(periods, minimum)
+    if values is None:
+        return math.nan
+    distances = pdist(np.column_stack((values[:-1], values[1:])))
+    low, high = np.percentile(distances, (10, 60))
+    if low <= 0.0 or high <= low:
+        return math.nan
+    radii = np.geomspace(low, high, 8)
+    sums = np.asarray([np.mean(distances <= radius) for radius in radii])
+    if np.any(sums <= 0.0):
+        return math.nan
+    return float(np.polyfit(np.log(radii), np.log(sums), 1)[0])
 
 
 def mfcc_frames(frames: np.ndarray, sample_rate: int, n_mfcc: int = 13) -> np.ndarray:
@@ -143,4 +275,15 @@ def advanced_features(
     return features
 
 
-__all__ = ["advanced_features", "distribution_stats", "mfcc_frames"]
+__all__ = [
+    "advanced_features",
+    "correlation_dimension",
+    "detrended_fluctuation_analysis",
+    "distribution_stats",
+    "jitter_ppq5",
+    "jitter_rap",
+    "mfcc_frames",
+    "pitch_period_entropy",
+    "recurrence_period_density_entropy",
+    "shimmer_apq",
+]

@@ -120,6 +120,23 @@ class ExtractionConfig:
     pause_threshold_s: float = 0.20
     long_pause_threshold_s: float = 2.0
     lpc_order: int = 12
+    nonlinear_min_periods: int = 64
+    recurrence_radius_sd: float = 0.1
+    entropy_bins: int = 32
+
+    def __post_init__(self) -> None:
+        for name in ("nonlinear_min_periods", "entropy_bins"):
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+                raise ValueError(f"{name} must be a positive integer")
+        radius = self.recurrence_radius_sd
+        if (
+            isinstance(radius, bool)
+            or not isinstance(radius, (int, float))
+            or not math.isfinite(radius)
+            or radius <= 0
+        ):
+            raise ValueError("recurrence_radius_sd must be a positive finite number")
 
 
 @dataclass(frozen=True)

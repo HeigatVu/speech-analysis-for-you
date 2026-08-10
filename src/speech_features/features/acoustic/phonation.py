@@ -1,4 +1,4 @@
-"""Phonation and prosody measures over the target speaker's clips (Task 6).
+"""Phonation, prosody, and nonlinear voice measures over target-speaker clips.
 
 All measures reuse the Task 5 shared analysis path: the same 25 ms/10 ms
 Hamming-windowed frames (:func:`speech_features.acoustic._frames`), the same
@@ -85,6 +85,15 @@ import numpy as np
 from ...acoustic import _energy_vad, _f0_per_frame, _frames, _hnr_db
 from ...result import FeatureIssue
 from ...schema import ExtractionConfig
+from .advanced import (
+    correlation_dimension,
+    detrended_fluctuation_analysis,
+    jitter_ppq5,
+    jitter_rap,
+    pitch_period_entropy,
+    recurrence_period_density_entropy,
+    shimmer_apq,
+)
 from .definitions import PHONATION_KEYS
 
 VOICE_F0_KEYS = (
@@ -127,6 +136,19 @@ VOICE_COMPANION_KEYS = (
     "voice_intensity_range_db",
     "voice_intensity_cv",
     "voice_nhr_mean_db",
+)
+VOICE_NONLINEAR_KEYS = (
+    "voice_jitter_rap",
+    "voice_jitter_ppq5",
+    "voice_jitter_ddp",
+    "voice_shimmer_apq3",
+    "voice_shimmer_apq5",
+    "voice_shimmer_apq11",
+    "voice_shimmer_dda",
+    "voice_pitch_period_entropy",
+    "voice_rpde",
+    "voice_dfa",
+    "voice_correlation_dimension",
 )
 
 _VOICED_FRAME_KEYS = (
@@ -242,7 +264,7 @@ def phonation_features(
     speaker_id: str,
     issues: list[FeatureIssue],
 ) -> dict[str, float]:
-    """Compute the 24 ``voice_*`` keys over the target speaker's clips.
+    """Compute every ``voice_*`` key over the target speaker's clips.
 
     ``intervals`` is the merged target-speaker interval list from
     :func:`speech_features.features.acoustic.timing.timing_features`; ``None``
@@ -317,6 +339,15 @@ def phonation_features(
             speaker_id,
             issues,
         )
+        _flag(
+            features,
+            VOICE_NONLINEAR_KEYS,
+            "INSUFFICIENT_VOICING",
+            "insufficient voiced periods; nonlinear voice feature unavailable",
+            recording_id,
+            speaker_id,
+            issues,
+        )
         return features
 
     features["voice_voiced_ratio"] = float(n_voiced / analyzed)
@@ -343,11 +374,54 @@ def phonation_features(
             speaker_id,
             issues,
         )
+        _flag(
+            features,
+            VOICE_NONLINEAR_KEYS,
+            "INSUFFICIENT_VOICING",
+            "insufficient voiced periods; nonlinear voice feature unavailable",
+            recording_id,
+            speaker_id,
+            issues,
+        )
         return features
 
     f0 = np.concatenate(f0s)
     times = np.concatenate(times_at_f0)
     voiced_rms = np.concatenate(rms_at_f0)
+    periods = 1.0 / f0
+
+    features["voice_jitter_rap"] = jitter_rap(periods)
+    features["voice_jitter_ppq5"] = jitter_ppq5(periods)
+    features["voice_jitter_ddp"] = 3.0 * features["voice_jitter_rap"]
+    features["voice_shimmer_apq3"] = shimmer_apq(voiced_rms, 3)
+    features["voice_shimmer_apq5"] = shimmer_apq(voiced_rms, 5)
+    features["voice_shimmer_apq11"] = shimmer_apq(voiced_rms, 11)
+    features["voice_shimmer_dda"] = 3.0 * features["voice_shimmer_apq3"]
+    features["voice_pitch_period_entropy"] = pitch_period_entropy(
+        periods, bins=config.entropy_bins, minimum=config.nonlinear_min_periods
+    )
+    features["voice_rpde"] = recurrence_period_density_entropy(
+        periods,
+        radius_sd=config.recurrence_radius_sd,
+        minimum=config.nonlinear_min_periods,
+    )
+    features["voice_dfa"] = detrended_fluctuation_analysis(
+        periods, minimum=config.nonlinear_min_periods
+    )
+    features["voice_correlation_dimension"] = correlation_dimension(
+        periods, minimum=config.nonlinear_min_periods
+    )
+    for key in VOICE_NONLINEAR_KEYS:
+        if math.isnan(features[key]):
+            issues.append(
+                _issue(
+                    recording_id,
+                    speaker_id,
+                    "INSUFFICIENT_VOICING",
+                    "insufficient voiced periods; nonlinear voice feature unavailable",
+                    feature=key,
+                )
+            )
 
     # Successive differences are computed inside each target interval and then
     # aggregated: the last frame of one interval and the first frame of the

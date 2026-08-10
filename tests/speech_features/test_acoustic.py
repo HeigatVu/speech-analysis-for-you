@@ -339,11 +339,22 @@ EXPECTED_NEURO_ACOUSTIC_KEYS = (
     "voice_break_count",
     "voice_break_proportion",
     "voice_break_rate_per_min",
+    "voice_correlation_dimension",
+    "voice_dfa",
     "voice_f0_mad_semitones",
     "voice_f0_range_semitones",
     "voice_intensity_cv",
     "voice_intensity_range_db",
+    "voice_jitter_ddp",
+    "voice_jitter_ppq5",
+    "voice_jitter_rap",
     "voice_nhr_mean_db",
+    "voice_pitch_period_entropy",
+    "voice_rpde",
+    "voice_shimmer_apq11",
+    "voice_shimmer_apq3",
+    "voice_shimmer_apq5",
+    "voice_shimmer_dda",
     *(
         f"spectral_mfcc_{coefficient}_{stat}"
         for coefficient in range(1, 14)
@@ -883,6 +894,7 @@ class TestBundleContract:
             "MISSING_ANNOTATION",
             "INSUFFICIENT_VOICED_FRAMES",
             "INSUFFICIENT_CYCLES",
+            "INSUFFICIENT_VOICING",
             "INSUFFICIENT_SPEECH_FRAMES",
             "INSUFFICIENT_FORMANTS",
         }

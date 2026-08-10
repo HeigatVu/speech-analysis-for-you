@@ -15,6 +15,7 @@ from speech_features.document import (
 )
 from speech_features.features import acoustic as acoustic_pack
 from speech_features.features.acoustic import timing as acoustic_timing
+from speech_features.schema import ExtractionConfig
 
 
 TIMING_KEYS = {
@@ -64,7 +65,21 @@ SPECTRAL_KEYS = {
     *MFCC_KEYS,
 }
 
-NEW_KEYS = TIMING_KEYS | VOICE_KEYS | SPECTRAL_KEYS
+NONLINEAR_KEYS = {
+    "voice_jitter_rap",
+    "voice_jitter_ppq5",
+    "voice_jitter_ddp",
+    "voice_shimmer_apq3",
+    "voice_shimmer_apq5",
+    "voice_shimmer_apq11",
+    "voice_shimmer_dda",
+    "voice_pitch_period_entropy",
+    "voice_rpde",
+    "voice_dfa",
+    "voice_correlation_dimension",
+}
+
+NEW_KEYS = TIMING_KEYS | VOICE_KEYS | SPECTRAL_KEYS | NONLINEAR_KEYS
 
 TIMING_DISORDERS = {
     "ad",
@@ -308,6 +323,84 @@ def test_mfcc_matches_independent_impulse_reference():
         ]
     )
     assert advanced.mfcc_frames(frame, 16000)[0] == pytest.approx(expected, abs=1e-10)
+
+
+def test_period_perturbation_formulas_match_hand_calculation():
+    advanced = importlib.import_module("speech_features.features.acoustic.advanced")
+    periods = np.array([0.0100, 0.0101, 0.0099, 0.0102, 0.0098])
+    rap_residuals = [abs(periods[i] - periods[i - 1 : i + 2].mean()) for i in range(1, 4)]
+    ppq5_residual = abs(periods[2] - periods.mean())
+    assert advanced.jitter_rap(periods) == pytest.approx(np.mean(rap_residuals) / periods.mean())
+    assert advanced.jitter_ppq5(periods) == pytest.approx(ppq5_residual / periods.mean())
+
+
+def test_amplitude_perturbation_formulas_match_hand_calculation():
+    advanced = importlib.import_module("speech_features.features.acoustic.advanced")
+    amplitudes = np.array([1.00, 1.02, 0.99, 1.03, 0.98, 1.04, 0.97, 1.05, 0.96, 1.06, 0.95])
+    for window in (3, 5, 11):
+        half = window // 2
+        residuals = [
+            abs(amplitudes[i] - amplitudes[i - half : i + half + 1].mean())
+            for i in range(half, amplitudes.size - half)
+        ]
+        assert advanced.shimmer_apq(amplitudes, window) == pytest.approx(
+            np.mean(residuals) / amplitudes.mean()
+        )
+
+
+def test_constant_period_signal_has_zero_pitch_period_entropy():
+    advanced = importlib.import_module("speech_features.features.acoustic.advanced")
+    assert advanced.pitch_period_entropy(np.ones(100)) == pytest.approx(0.0)
+
+
+def test_rpde_matches_hand_calculated_recurrence_lag_entropy():
+    advanced = importlib.import_module("speech_features.features.acoustic.advanced")
+    periods = np.tile([1.0, 2.0], 32)
+    recurrence_counts = np.arange(62, 31, -2, dtype=float)
+    probabilities = recurrence_counts / recurrence_counts.sum()
+    expected = -np.sum(probabilities * np.log(probabilities)) / np.log(32.0)
+    assert advanced.recurrence_period_density_entropy(periods) == pytest.approx(expected)
+
+
+def test_nonlinear_helpers_enforce_minimum_and_are_finite_at_boundary():
+    advanced = importlib.import_module("speech_features.features.acoustic.advanced")
+    too_short = 0.01 + np.arange(63) * 1e-7
+    assert math.isnan(advanced.pitch_period_entropy(too_short))
+    assert math.isnan(advanced.recurrence_period_density_entropy(too_short))
+    assert math.isnan(advanced.detrended_fluctuation_analysis(too_short))
+    assert math.isnan(advanced.correlation_dimension(too_short))
+
+    periods = 0.01 + np.random.default_rng(4).normal(0.0, 1e-4, 64)
+    for value in (
+        advanced.pitch_period_entropy(periods),
+        advanced.recurrence_period_density_entropy(periods),
+        advanced.detrended_fluctuation_analysis(periods),
+        advanced.correlation_dimension(periods),
+    ):
+        assert math.isfinite(value)
+
+
+def test_nonlinear_calibration_defaults_and_rejects_non_positive_values():
+    config = ExtractionConfig()
+    assert config.nonlinear_min_periods == 64
+    assert config.recurrence_radius_sd == pytest.approx(0.1)
+    assert config.entropy_bins == 32
+    for field in ("nonlinear_min_periods", "recurrence_radius_sd", "entropy_bins"):
+        for value in (0, -1):
+            with pytest.raises(ValueError, match=field):
+                ExtractionConfig(**{field: value})
+
+
+def test_nonlinear_keys_have_one_stable_issue_when_voicing_is_insufficient():
+    values, issues = acoustic_pack.extract_acoustic_features(
+        np.zeros(16000), 16000, allow_unaligned=True
+    )
+    assert NONLINEAR_KEYS <= values.keys()
+    for key in NONLINEAR_KEYS:
+        assert math.isnan(values[key])
+        matching = [issue for issue in issues if issue.feature == key]
+        assert len(matching) == 1, key
+        assert matching[0].code == "INSUFFICIENT_VOICING"
 
 
 @pytest.mark.parametrize(
