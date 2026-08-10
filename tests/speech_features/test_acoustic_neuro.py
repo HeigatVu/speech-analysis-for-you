@@ -154,17 +154,62 @@ def test_speech_segment_summaries_are_hand_calculated(aligned_document):
 def test_timing_event_summaries_coalesce_touching_boundary_spans():
     spans = [
         ("voiced", 0.0, 0.4),
-        ("pause", 0.4, 0.6),
-        ("pause", 0.6, 0.8),
-        ("voiced", 0.8, 1.2),
-        ("unvoiced", 1.2, 2.0),
+        ("unvoiced", 0.4, 0.6),
+        ("unvoiced", 0.6, 0.8),
+        ("voiced", 0.8, 1.8),
+        ("unvoiced", 1.8, 2.0),
     ]
-    rate, entropy, acceleration = acoustic_timing._event_summaries(spans, duration_s=2.0)
+    rate, entropy, acceleration = acoustic_timing._event_summaries(
+        spans, duration_s=2.0, pause_threshold_s=0.25
+    )
     assert rate == pytest.approx(120.0)
     assert entropy == pytest.approx(
         -(0.5 * math.log(0.5) + 2 * 0.25 * math.log(0.25)) / math.log(3.0)
     )
     assert acceleration == pytest.approx(-3600.0)
+
+
+def test_timing_events_classify_touching_unvoiced_fragments_by_merged_duration():
+    spans = [
+        ("voiced", 0.0, 0.1),
+        ("unvoiced", 0.1, 0.25),
+        ("unvoiced", 0.25, 0.4),
+        ("voiced", 0.4, 0.7),
+        ("unvoiced", 0.7, 0.8),
+        ("voiced", 0.8, 1.0),
+    ]
+    rate, entropy, acceleration = acoustic_timing._event_summaries(
+        spans, duration_s=1.0, pause_threshold_s=0.25
+    )
+    assert rate == pytest.approx(300.0)
+    assert entropy == pytest.approx(
+        -(0.6 * math.log(0.6) + 2 * 0.2 * math.log(0.2)) / math.log(3.0)
+    )
+    assert acceleration == pytest.approx(-7200.0)
+
+
+def test_timing_events_merge_unvoiced_interval_tail_with_touching_gap():
+    interval_tail = acoustic_timing._timing_events(
+        np.array([True, False]),
+        hop_s=0.1,
+        start_s=0.0,
+        end_s=0.2,
+    )
+    spans = [
+        *interval_tail,
+        ("unvoiced", 0.2, 0.4),
+        ("voiced", 0.4, 0.7),
+        ("unvoiced", 0.7, 0.8),
+        ("voiced", 0.8, 1.0),
+    ]
+    rate, entropy, acceleration = acoustic_timing._event_summaries(
+        spans, duration_s=1.0, pause_threshold_s=0.25
+    )
+    assert rate == pytest.approx(300.0)
+    assert entropy == pytest.approx(
+        -(0.6 * math.log(0.6) + 2 * 0.2 * math.log(0.2)) / math.log(3.0)
+    )
+    assert acceleration == pytest.approx(-7200.0)
 
 
 def test_mfcc_statistics_have_fixed_52_key_schema_and_evidence_metadata():

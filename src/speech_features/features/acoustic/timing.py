@@ -202,22 +202,16 @@ def _run_durations(mask: np.ndarray, hop_s: float) -> list[float]:
 def _timing_events(
     mask: np.ndarray,
     hop_s: float,
-    pause_threshold_s: float,
     start_s: float,
     end_s: float,
 ):
-    """Return ``(class, start_s, end_s)`` spans for one target interval."""
+    """Return raw ``(state, start_s, end_s)`` spans for one target interval."""
     events: list[tuple[str, float, float]] = []
     run_start = 0
     for index in range(1, mask.size + 1):
         if index < mask.size and mask[index] == mask[run_start]:
             continue
-        if mask[run_start]:
-            event_class = "voiced"
-        elif (index - run_start) * hop_s >= pause_threshold_s:
-            event_class = "pause"
-        else:
-            event_class = "unvoiced"
+        event_class = "voiced" if mask[run_start] else "unvoiced"
         event_end = end_s if index == mask.size else start_s + index * hop_s
         events.append((event_class, start_s + run_start * hop_s, event_end))
         run_start = index
@@ -242,9 +236,23 @@ def _coalesce_timing_events(events):
     return merged
 
 
-def _event_summaries(events, duration_s: float) -> tuple[float, float, float]:
+def _event_summaries(
+    events, duration_s: float, pause_threshold_s: float
+) -> tuple[float, float, float]:
     """Rate, normalized class entropy, and half-recording acceleration."""
-    events = _coalesce_timing_events(events)
+    raw_events = _coalesce_timing_events(events)
+    events = [
+        (
+            "voiced"
+            if event_class == "voiced"
+            else "pause"
+            if end - start >= pause_threshold_s
+            else "unvoiced",
+            start,
+            end,
+        )
+        for event_class, start, end in raw_events
+    ]
     event_count = len(events)
     rate = float(event_count / (duration_s / 60.0))
     counts = np.asarray(
@@ -294,7 +302,7 @@ def _vad_features(
         any_voiced = any_voiced or bool(np.any(voiced))
         voiced_runs.extend(_run_durations(voiced, hop_s))
         pauses.extend(_pauses(voiced, hop_s, config.pause_threshold_s))
-        timing_events.extend(_timing_events(voiced, hop_s, config.pause_threshold_s, start, end))
+        timing_events.extend(_timing_events(voiced, hop_s, start, end))
 
     between_pauses: list[float] = []
     if intervals:
@@ -302,8 +310,7 @@ def _vad_features(
             gap = next_start - previous_end
             if gap >= config.pause_threshold_s:
                 between_pauses.append(gap)
-                timing_events.append(("pause", previous_end, next_start))
-            elif gap > 0.0:
+            if gap > 0.0:
                 timing_events.append(("unvoiced", previous_end, next_start))
     pauses.extend(between_pauses)
 
@@ -364,7 +371,9 @@ def _vad_features(
         np.count_nonzero(pause_array >= config.long_pause_threshold_s)
     )
 
-    event_rate, event_entropy, acceleration = _event_summaries(timing_events, duration_s)
+    event_rate, event_entropy, acceleration = _event_summaries(
+        timing_events, duration_s, config.pause_threshold_s
+    )
     features["time_timing_event_rate_per_min"] = event_rate
     features["time_timing_event_entropy"] = event_entropy
     features["time_timing_acceleration_per_min2"] = acceleration
