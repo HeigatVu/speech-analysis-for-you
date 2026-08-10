@@ -55,7 +55,8 @@ additive:
   preserving key ordering, errors for unknown pack/level filters, and the
   existing return type.
 - Stable prefixes are extended only where existing prefixes would be
-  misleading: `resp_`, `artic_`, `rhythm_`, `semantic_`, and `task_`.
+  misleading: `resp_`, `artic_`, `rhythm_`, `semantic_`, `task_`, and
+  `egemaps_`.
 - `acoustic` remains the shared population-neutral signal pack.
 - `adult_neuro` remains the reviewed adult cognitive-linguistic pack.
 - `motor_neuro` contains task- or annotation-dependent motor-speech features.
