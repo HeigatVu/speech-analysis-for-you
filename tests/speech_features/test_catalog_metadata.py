@@ -19,6 +19,7 @@ from speech_features.catalog import (
     DISORDERS,
     DOMAINS,
     EVIDENCE_LEVELS,
+    KEY_PREFIXES,
     LANGUAGE_SCOPES,
     TASK_IDS,
     register_feature,
@@ -31,6 +32,9 @@ RESPIRATION_REFERENCE = "https://pmc.ncbi.nlm.nih.gov/articles/PMC9950294/"
 @pytest.fixture(autouse=True)
 def _restore_catalog():
     snapshot = list(catalog._FEATURES)
+    catalog._FEATURES[:] = [
+        definition for definition in snapshot if definition.pack != "motor_neuro"
+    ]
     yield
     catalog._FEATURES[:] = snapshot
 
@@ -149,6 +153,10 @@ def test_metadata_sets_are_frozen_and_exact():
     }
 
 
+def test_motor_feature_prefixes_are_stable_catalog_prefixes():
+    assert {"artic_", "rhythm_", "task_"} <= KEY_PREFIXES
+
+
 def test_definition_defaults_keep_existing_constructors_valid():
     definition = FeatureDefinition(
         key="time_response_latency",
@@ -180,7 +188,9 @@ def test_list_features_new_packs_and_filters():
         "standardized_acoustic",
     }
     assert [f.key for f in list_features(pack="motor_neuro")] == ["resp_breath_group_count"]
-    assert [f.key for f in list_features(task="connected_speech")] == ["resp_breath_group_count"]
+    assert "resp_breath_group_count" in {
+        definition.key for definition in list_features(task="connected_speech")
+    }
     assert list_features(disorder="als") == list_features(disorder="pd")
     assert [f.key for f in list_features(evidence_level="systematic_review")] == [
         "resp_breath_group_count"

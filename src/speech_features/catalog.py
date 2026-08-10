@@ -30,6 +30,9 @@ KEY_PREFIXES = frozenset(
         "disfluency_",
         "discourse_",
         "resp_",
+        "artic_",
+        "rhythm_",
+        "task_",
     }
 )
 
