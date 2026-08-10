@@ -4,7 +4,7 @@ import math
 
 import pytest
 
-from speech_features.catalog import FeatureDefinition
+from speech_features.catalog import FeatureDefinition, list_features
 from speech_features.document import (
     AnnotationLayer,
     DocumentSpeaker,
@@ -173,6 +173,83 @@ def test_catalog_accepts_the_registered_semantic_prefix():
     assert definition.key == "semantic_test_density"
 
 
+def test_every_task_5_key_has_an_explicit_clinical_unit():
+    count_keys = {
+        "morph_sentence_count",
+        "morph_t_unit_count",
+        "morph_coordinate_phrase_count",
+        "morph_complex_nominal_count",
+        "morph_verb_phrase_count",
+        "morph_embedding_count",
+        "discourse_microproposition_count",
+        "discourse_macroproposition_count",
+        "discourse_information_unit_count",
+        "task_fluency_response_count",
+        "task_fluency_valid_count",
+        "task_fluency_valid_unique",
+        "task_fluency_repeats",
+        "task_fluency_intrusions",
+        "task_fluency_first_half_valid",
+        "task_fluency_second_half_valid",
+        "task_fluency_production_change",
+        "task_fluency_clusters",
+        "task_fluency_cluster_size_mean",
+        "task_fluency_switches",
+    } | {f"disfluency_{error_type}_error_count" for error_type in ERROR_TYPES}
+    ratio_keys = {
+        "morph_dependent_clause_ratio",
+        "morph_well_formed_sentence_ratio",
+        "morph_incomplete_sentence_ratio",
+        "morph_reduced_sentence_ratio",
+        "semantic_idea_density",
+        "semantic_proposition_density",
+        "discourse_referential_cohesion_ratio",
+        "discourse_temporal_cohesion_ratio",
+        "discourse_causal_cohesion_ratio",
+        "discourse_correct_pronoun_ratio",
+        "discourse_local_lexical_coherence",
+        "discourse_global_coherence_ratio",
+        "discourse_topic_maintenance_ratio",
+        "discourse_marker_ratio",
+        "discourse_relevant_detail_ratio",
+        "discourse_irrelevant_detail_ratio",
+        "discourse_content_accuracy_ratio",
+        "task_picture_concept_coverage",
+        "task_picture_concept_density",
+        "task_picture_repeat_ratio",
+        "task_picture_entity_coverage",
+        "task_picture_action_coverage",
+        "task_recall_idea_coverage",
+        "task_recall_idea_density",
+        "task_recall_repeat_ratio",
+    } | {f"disfluency_{error_type}_error_ratio" for error_type in ERROR_TYPES}
+    expected = {key: "count" for key in count_keys}
+    expected.update({key: "ratio" for key in ratio_keys})
+    expected.update(
+        {
+            "morph_words_per_sentence": "words",
+            "morph_words_per_t_unit": "words",
+            "morph_words_per_clause": "words",
+            "morph_clauses_per_sentence": "clauses/sentence",
+            "morph_yngve_depth_mean": "index",
+            "morph_yngve_depth_max": "index",
+            "lex_frequency_mean": "score",
+            "lex_log_frequency_mean": "score",
+            "lex_familiarity_mean": "score",
+            "lex_age_of_acquisition_mean": "score",
+            "lex_imageability_mean": "score",
+            "lex_concreteness_mean": "score",
+            "discourse_information_efficiency_per_min": "count/min",
+            "task_recall_order_score": "score",
+            "task_fluency_rate": "count/min",
+        }
+    )
+    task_5_keys = set(CLINICAL_LINGUISTIC_KEYS + TASK_KEYS)
+    assert set(expected) == task_5_keys
+    registered = {definition.key: definition for definition in list_features(pack="adult_neuro")}
+    assert {key: registered[key].unit for key in task_5_keys} == expected
+
+
 def test_structural_and_psycholinguistic_formulas_use_target_words_only():
     values, issues = extract_clinical_linguistic_features(
         _annotated_document(), target_speaker="PAR"
@@ -204,6 +281,161 @@ def test_structural_and_psycholinguistic_formulas_use_target_words_only():
     for key, expected_value in expected.items():
         assert values[key] == pytest.approx(expected_value), key
         assert _issues_for(issues, key) == []
+
+
+def test_clause_ids_are_scoped_by_sentence_for_all_clause_formulas():
+    document = _document(
+        _utterance("u1", "PAR", 0.0, 1.0, _token("t1", "a"), _token("t2", "b")),
+        _utterance("u2", "PAR", 1.0, 2.0, _token("t3", "c"), _token("t4", "d")),
+        annotations=(
+            _layer("sentence_id", {"t1": "s1", "t2": "s1", "t3": "s2", "t4": "s2"}),
+            _layer("clause_id", {"t1": "c1", "t2": "c2", "t3": "c1", "t4": "c2"}),
+            _layer(
+                "clause_type",
+                {"t1": "main", "t2": "dependent", "t3": "embedded", "t4": "main"},
+            ),
+        ),
+    )
+    values, issues = extract_clinical_linguistic_features(document, target_speaker="PAR")
+    assert values["morph_words_per_clause"] == pytest.approx(1.0)
+    assert values["morph_clauses_per_sentence"] == pytest.approx(2.0)
+    assert values["morph_dependent_clause_ratio"] == pytest.approx(0.5)
+    assert values["morph_embedding_count"] == pytest.approx(1.0)
+    for key in (
+        "morph_words_per_clause",
+        "morph_clauses_per_sentence",
+        "morph_dependent_clause_ratio",
+        "morph_embedding_count",
+    ):
+        assert _issues_for(issues, key) == []
+
+
+def test_inconsistent_type_only_invalidates_dependent_clause_features():
+    document = _document(
+        _utterance("u1", "PAR", 0.0, 1.0, _token("t1", "a"), _token("t2", "b")),
+        annotations=(
+            _layer("sentence_id", {"t1": "s1", "t2": "s1"}),
+            _layer("clause_id", {"t1": "c1", "t2": "c1"}),
+            _layer("clause_type", {"t1": "main", "t2": "dependent"}),
+        ),
+    )
+    values, issues = extract_clinical_linguistic_features(document, target_speaker="PAR")
+    assert values["morph_words_per_clause"] == pytest.approx(2.0)
+    assert values["morph_clauses_per_sentence"] == pytest.approx(1.0)
+    for key in ("morph_dependent_clause_ratio", "morph_embedding_count"):
+        assert math.isnan(values[key])
+        assert len(_issues_for(issues, key)) == 1
+        assert _issues_for(issues, key)[0].code == "MISSING_ANNOTATION"
+
+
+def test_phrase_counts_use_contiguous_runs_within_each_target_utterance():
+    document = _document(
+        _utterance(
+            "u1",
+            "PAR",
+            0.0,
+            1.0,
+            *(_token(f"t{i}", str(i)) for i in range(1, 7)),
+        ),
+        _utterance(
+            "u2",
+            "PAR",
+            1.0,
+            2.0,
+            _token("t7", "7"),
+            _token("t8", "8"),
+            _token("t9", "9"),
+        ),
+        annotations=(
+            _layer(
+                "phrase_type",
+                {
+                    "t1": "coordinate",
+                    "t2": "coordinate",
+                    "t3": "none",
+                    "t4": "verb_phrase",
+                    "t5": "verb_phrase",
+                    "t6": "coordinate",
+                    "t7": "coordinate",
+                    "t8": "complex_nominal",
+                    "t9": "complex_nominal",
+                },
+            ),
+        ),
+    )
+    values, issues = extract_clinical_linguistic_features(document, target_speaker="PAR")
+    assert values["morph_coordinate_phrase_count"] == pytest.approx(3.0)
+    assert values["morph_complex_nominal_count"] == pytest.approx(1.0)
+    assert values["morph_verb_phrase_count"] == pytest.approx(1.0)
+    for key in (
+        "morph_coordinate_phrase_count",
+        "morph_complex_nominal_count",
+        "morph_verb_phrase_count",
+    ):
+        assert _issues_for(issues, key) == []
+
+
+def test_structural_identifier_layers_reject_normalized_placeholders():
+    document = _document(
+        _utterance("u1", "PAR", 0.0, 1.0, _token("t1", "a")),
+        annotations=(
+            _layer("sentence_id", {"t1": "NONE"}),
+            _layer("t_unit_id", {"t1": "null"}),
+            _layer("clause_id", {"t1": "N/A"}),
+            _layer("clause_type", {"t1": "main"}),
+            _layer("sentence_status", {"t1": "well_formed"}),
+        ),
+    )
+    values, issues = extract_clinical_linguistic_features(document, target_speaker="PAR")
+    for key in (
+        "morph_sentence_count",
+        "morph_t_unit_count",
+        "morph_words_per_clause",
+        "morph_clauses_per_sentence",
+        "morph_dependent_clause_ratio",
+        "morph_embedding_count",
+    ):
+        assert math.isnan(values[key])
+        assert len(_issues_for(issues, key)) == 1
+        assert _issues_for(issues, key)[0].code == "MISSING_ANNOTATION"
+
+
+def test_unknown_clause_type_only_invalidates_dependent_clause_features():
+    document = _document(
+        _utterance("u1", "PAR", 0.0, 1.0, _token("t1", "a")),
+        annotations=(
+            _layer("sentence_id", {"t1": "s1"}),
+            _layer("clause_id", {"t1": "c1"}),
+            _layer("clause_type", {"t1": "mystery"}),
+        ),
+    )
+    values, issues = extract_clinical_linguistic_features(document, target_speaker="PAR")
+    assert values["morph_words_per_clause"] == pytest.approx(1.0)
+    assert values["morph_clauses_per_sentence"] == pytest.approx(1.0)
+    for key in ("morph_dependent_clause_ratio", "morph_embedding_count"):
+        assert math.isnan(values[key])
+        assert len(_issues_for(issues, key)) == 1
+        assert _issues_for(issues, key)[0].code == "MISSING_ANNOTATION"
+
+
+def test_unknown_sentence_status_only_invalidates_status_ratios():
+    document = _document(
+        _utterance("u1", "PAR", 0.0, 1.0, _token("t1", "a")),
+        annotations=(
+            _layer("sentence_id", {"t1": "s1"}),
+            _layer("sentence_status", {"t1": "mystery"}),
+        ),
+    )
+    values, issues = extract_clinical_linguistic_features(document, target_speaker="PAR")
+    assert values["morph_sentence_count"] == pytest.approx(1.0)
+    for key in (
+        "morph_well_formed_sentence_ratio",
+        "morph_incomplete_sentence_ratio",
+        "morph_reduced_sentence_ratio",
+    ):
+        assert math.isnan(values[key])
+        assert len(_issues_for(issues, key)) == 1
+        assert _issues_for(issues, key)[0].code == "MISSING_ANNOTATION"
 
 
 def test_psycholinguistic_layer_requires_complete_target_word_coverage():
@@ -407,6 +639,24 @@ def test_structured_task_extractor_preserves_version_1_spec_validation():
             _annotated_document(),
             {"version": 1, "task": "picture_desc_1", "concept_aliases": {}},
             target_speaker="PAR",
+        )
+
+
+def test_clinical_extractor_validates_task_spec_without_information_layer():
+    document = _document(
+        _utterance("u1", "PAR", 0.0, 1.0, _token("t1", "mèo")),
+    )
+    with pytest.raises(InvalidTaskSpecError):
+        extract_clinical_linguistic_features(
+            document,
+            target_speaker="PAR",
+            task_spec={
+                "version": 2,
+                "task": "picture_desc_1",
+                "concept_aliases": {},
+                "entity_groups": {},
+                "action_groups": {},
+            },
         )
 
 

@@ -246,6 +246,81 @@ FLUENCY_TASK_KEYS = (
 )
 TASK_KEYS = PICTURE_TASK_KEYS + RECALL_TASK_KEYS + FLUENCY_TASK_KEYS
 
+_TASK5_COUNT_KEYS = (
+    "morph_sentence_count",
+    "morph_t_unit_count",
+    "morph_coordinate_phrase_count",
+    "morph_complex_nominal_count",
+    "morph_verb_phrase_count",
+    "morph_embedding_count",
+    "discourse_microproposition_count",
+    "discourse_macroproposition_count",
+    "discourse_information_unit_count",
+    "task_fluency_response_count",
+    "task_fluency_valid_count",
+    "task_fluency_valid_unique",
+    "task_fluency_repeats",
+    "task_fluency_intrusions",
+    "task_fluency_first_half_valid",
+    "task_fluency_second_half_valid",
+    "task_fluency_production_change",
+    "task_fluency_clusters",
+    "task_fluency_cluster_size_mean",
+    "task_fluency_switches",
+) + tuple(f"disfluency_{error_type}_error_count" for error_type in ERROR_TYPES)
+
+_TASK5_RATIO_KEYS = (
+    "morph_dependent_clause_ratio",
+    "morph_well_formed_sentence_ratio",
+    "morph_incomplete_sentence_ratio",
+    "morph_reduced_sentence_ratio",
+    "semantic_idea_density",
+    "semantic_proposition_density",
+    "discourse_referential_cohesion_ratio",
+    "discourse_temporal_cohesion_ratio",
+    "discourse_causal_cohesion_ratio",
+    "discourse_correct_pronoun_ratio",
+    "discourse_local_lexical_coherence",
+    "discourse_global_coherence_ratio",
+    "discourse_topic_maintenance_ratio",
+    "discourse_marker_ratio",
+    "discourse_relevant_detail_ratio",
+    "discourse_irrelevant_detail_ratio",
+    "discourse_content_accuracy_ratio",
+    "task_picture_concept_coverage",
+    "task_picture_concept_density",
+    "task_picture_repeat_ratio",
+    "task_picture_entity_coverage",
+    "task_picture_action_coverage",
+    "task_recall_idea_coverage",
+    "task_recall_idea_density",
+    "task_recall_repeat_ratio",
+) + tuple(f"disfluency_{error_type}_error_ratio" for error_type in ERROR_TYPES)
+
+TASK5_UNITS = {key: "count" for key in _TASK5_COUNT_KEYS}
+TASK5_UNITS.update({key: "ratio" for key in _TASK5_RATIO_KEYS})
+TASK5_UNITS.update(
+    {
+        "morph_words_per_sentence": "words",
+        "morph_words_per_t_unit": "words",
+        "morph_words_per_clause": "words",
+        "morph_clauses_per_sentence": "clauses/sentence",
+        "morph_yngve_depth_mean": "index",
+        "morph_yngve_depth_max": "index",
+        "lex_frequency_mean": "score",
+        "lex_log_frequency_mean": "score",
+        "lex_familiarity_mean": "score",
+        "lex_age_of_acquisition_mean": "score",
+        "lex_imageability_mean": "score",
+        "lex_concreteness_mean": "score",
+        "discourse_information_efficiency_per_min": "count/min",
+        "task_recall_order_score": "score",
+        "task_fluency_rate": "count/min",
+    }
+)
+if set(TASK5_UNITS) != set(CLINICAL_LINGUISTIC_KEYS + TASK_KEYS):
+    raise RuntimeError("Task 5 units must cover every Task 5 key exactly")
+
 ADULT_NEURO_RECORDING_KEYS = ALL_KEYS + TASK9_RECORDING_KEYS + CLINICAL_LINGUISTIC_KEYS + TASK_KEYS
 ADULT_NEURO_KEYS = ADULT_NEURO_RECORDING_KEYS + DISCOURSE_UTTERANCE_KEYS
 
@@ -390,14 +465,6 @@ def _new_definition(key):
         domain = "discourse"
     else:
         domain = "task"
-    if key.endswith("_count") or key.endswith("_valid") or key.endswith("_unique"):
-        unit = "count"
-    elif key.endswith("_per_min") or key == "task_fluency_rate":
-        unit = "count/min"
-    elif key.endswith("_max") or key.endswith("_mean"):
-        unit = "index"
-    else:
-        unit = "ratio"
     tasks = ()
     if key.startswith("task_picture_"):
         tasks = ("picture_description",)
@@ -409,7 +476,7 @@ def _new_definition(key):
         key=key,
         pack="adult_neuro",
         level="recording",
-        unit=unit,
+        unit=TASK5_UNITS[key],
         population="adult",
         reference="SAY catalog v1",
         formula_version=1,

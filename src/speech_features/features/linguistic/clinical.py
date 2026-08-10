@@ -14,6 +14,10 @@ from .definitions import (
 )
 
 _DEPENDENT_CLAUSE_TYPES = frozenset({"dependent", "embedded", "subordinate"})
+_CLAUSE_TYPES = frozenset(
+    {"main", "independent", "coordinate", "dependent", "embedded", "subordinate"}
+)
+_SENTENCE_STATUSES = frozenset({"well_formed", "incomplete", "reduced"})
 _NONE_LABELS = frozenset({"", "none", "null", "na", "n/a"})
 _PSYCHOLINGUISTIC_LAYERS = {
     "lex_frequency_mean": "frequency",
@@ -49,7 +53,7 @@ def _layer(document, name):
     return next((layer for layer in document.annotations if layer.layer == name), None)
 
 
-def _complete_strings(document, layer_name, word_tokens):
+def _complete_strings(document, layer_name, word_tokens, *, allowed=None, rejected=()):
     layer = _layer(document, layer_name)
     if layer is None:
         return None
@@ -58,7 +62,10 @@ def _complete_strings(document, layer_name, word_tokens):
         value = layer.values.get(token.id)
         if not isinstance(value, str) or not value:
             return None
-        values.append(_normalise(value))
+        value = _normalise(value)
+        if value in rejected or (allowed is not None and value not in allowed):
+            return None
+        values.append(value)
     return values
 
 
@@ -119,7 +126,6 @@ def _group_labels(group_ids, labels):
 def _task_reference_keys(task_spec):
     if task_spec is None:
         return None
-    validate_task_spec(task_spec)
     task = task_spec.get("task")
     field = {
         "picture_desc_1": "concept_aliases",
@@ -141,6 +147,8 @@ def extract_clinical_linguistic_features(
     task_spec=None,
 ) -> tuple[dict[str, float], tuple[FeatureIssue, ...]]:
     """Return all Task 5 structural, psycholinguistic, error, and discourse keys."""
+    if task_spec is not None:
+        validate_task_spec(task_spec)
     values = {key: math.nan for key in CLINICAL_LINGUISTIC_KEYS}
     issues = []
     speaker_id = _resolve_target_speaker(document, target_speaker)
@@ -166,7 +174,7 @@ def extract_clinical_linguistic_features(
 
     word_count = float(len(word_tokens))
 
-    sentence_ids = _complete_strings(document, "sentence_id", word_tokens)
+    sentence_ids = _complete_strings(document, "sentence_id", word_tokens, rejected=_NONE_LABELS)
     sentence_keys = (
         "morph_sentence_count",
         "morph_words_per_sentence",
@@ -191,7 +199,7 @@ def extract_clinical_linguistic_features(
         values["morph_sentence_count"] = float(sentence_count)
         values["morph_words_per_sentence"] = word_count / sentence_count
 
-    t_unit_ids = _complete_strings(document, "t_unit_id", word_tokens)
+    t_unit_ids = _complete_strings(document, "t_unit_id", word_tokens, rejected=_NONE_LABELS)
     if t_unit_ids is None:
         _unavailable(
             values,
@@ -207,8 +215,13 @@ def extract_clinical_linguistic_features(
         values["morph_t_unit_count"] = float(count)
         values["morph_words_per_t_unit"] = word_count / count
 
-    clause_ids = _complete_strings(document, "clause_id", word_tokens)
-    clause_count = len(set(clause_ids)) if clause_ids is not None else None
+    clause_ids = _complete_strings(document, "clause_id", word_tokens, rejected=_NONE_LABELS)
+    qualified_clause_ids = (
+        list(zip(sentence_ids, clause_ids))
+        if sentence_ids is not None and clause_ids is not None
+        else None
+    )
+    clause_count = len(set(qualified_clause_ids)) if qualified_clause_ids is not None else None
     if clause_count is None:
         _unavailable(
             values,
@@ -224,10 +237,10 @@ def extract_clinical_linguistic_features(
         if sentence_count is not None:
             values["morph_clauses_per_sentence"] = clause_count / sentence_count
 
-    clause_types = _complete_strings(document, "clause_type", word_tokens)
+    clause_types = _complete_strings(document, "clause_type", word_tokens, allowed=_CLAUSE_TYPES)
     grouped_clause_types = (
-        _group_labels(clause_ids, clause_types)
-        if clause_ids is not None and clause_types is not None
+        _group_labels(qualified_clause_ids, clause_types)
+        if qualified_clause_ids is not None and clause_types is not None
         else None
     )
     if grouped_clause_types is None:
@@ -264,12 +277,26 @@ def extract_clinical_linguistic_features(
             speaker_id,
         )
     else:
-        counts = Counter(phrase_types)
+        phrase_by_id = {
+            token.id: phrase_type for token, phrase_type in zip(word_tokens, phrase_types)
+        }
+        counts = Counter()
+        for utterance in utterances:
+            previous = None
+            for token in utterance.tokens:
+                if token.kind != "word":
+                    continue
+                phrase_type = phrase_by_id[token.id]
+                if phrase_type != "none" and phrase_type != previous:
+                    counts[phrase_type] += 1
+                previous = phrase_type
         values[phrase_keys[0]] = float(counts["coordinate"])
         values[phrase_keys[1]] = float(counts["complex_nominal"])
         values[phrase_keys[2]] = float(counts["verb_phrase"])
 
-    statuses = _complete_strings(document, "sentence_status", word_tokens)
+    statuses = _complete_strings(
+        document, "sentence_status", word_tokens, allowed=_SENTENCE_STATUSES
+    )
     grouped_statuses = (
         _group_labels(sentence_ids, statuses)
         if sentence_ids is not None and statuses is not None
