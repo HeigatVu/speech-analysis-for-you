@@ -470,7 +470,7 @@ def test_context_is_neutral_and_frozen():
 # ---------------------------------------------------------------------------
 def test_pack_registry_is_static_and_immutable():
     assert isinstance(PACKS, MappingProxyType)
-    assert set(PACKS) == {"acoustic", "adult_neuro"}
+    assert set(PACKS) == {"acoustic", "adult_neuro", "motor_neuro", "standardized_acoustic"}
 
 
 def test_every_pack_satisfies_protocol():
