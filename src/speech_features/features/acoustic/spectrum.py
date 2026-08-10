@@ -51,6 +51,20 @@ from ...schema import ExtractionConfig
 from .definitions import SPECTRUM_KEYS
 
 _LOG_FLOOR = 1e-12
+_EXPANDED_KEYS = {
+    "spectral_energy_mean_db",
+    "spectral_energy_sd_db",
+    "spectral_skewness_mean",
+    "spectral_skewness_sd",
+    "spectral_kurtosis_mean",
+    "spectral_kurtosis_sd",
+    "spectral_low_high_energy_ratio_db",
+}
+BASIC_SPECTRUM_KEYS = tuple(
+    key
+    for key in SPECTRUM_KEYS
+    if key not in _EXPANDED_KEYS and not key.startswith("spectral_mfcc_")
+)
 
 
 def _issue(
@@ -80,6 +94,22 @@ def _flag(
         issues.append(_issue(recording_id, speaker_id, code, message, feature=key))
 
 
+def _speech_frame_regions(audio, sample_rate: int, intervals, config: ExtractionConfig):
+    """VAD-voiced frame arrays, kept separate at target-interval boundaries."""
+    duration_s = float(audio.size) / sample_rate
+    regions = intervals if intervals else [(0.0, duration_s)]
+    selected: list[np.ndarray] = []
+    for start, end in regions:
+        clip = audio[int(round(start * sample_rate)) : int(round(end * sample_rate))]
+        if clip.size == 0:
+            continue
+        frames = _frames(clip, config.frame_size, config.hop_size)
+        voiced = _energy_vad((frames**2).sum(axis=1))
+        if np.any(voiced):
+            selected.append(frames[voiced])
+    return selected
+
+
 def _spectrum_features(audio, sample_rate: int, intervals, config: ExtractionConfig):
     """Per-frame spectral measures and intra-interval flux over target frames.
 
@@ -87,8 +117,6 @@ def _spectrum_features(audio, sample_rate: int, intervals, config: ExtractionCon
     arrays (centroid, spread, slope, rolloff, flatness, entropy) and
     ``fluxes`` is the list of intra-interval flux arrays.
     """
-    duration_s = float(audio.size) / sample_rate
-    regions = intervals if intervals else [(0.0, duration_s)]
     freqs = np.fft.rfftfreq(config.frame_size, d=1.0 / sample_rate)
     n_bins = freqs.size
     centroid_all: list[np.ndarray] = []
@@ -99,16 +127,7 @@ def _spectrum_features(audio, sample_rate: int, intervals, config: ExtractionCon
     entropy_all: list[np.ndarray] = []
     fluxes: list[np.ndarray] = []
 
-    for start, end in regions:
-        clip = audio[int(round(start * sample_rate)) : int(round(end * sample_rate))]
-        if clip.size == 0:
-            continue
-        win = _frames(clip, config.frame_size, config.hop_size)
-        energy = (win**2).sum(axis=1)
-        voiced = _energy_vad(energy)
-        if not np.any(voiced):
-            continue
-        sub = win[voiced]
+    for sub in _speech_frame_regions(audio, sample_rate, intervals, config):
         power = np.abs(np.fft.rfft(sub, axis=1)) ** 2
         total = np.maximum(power.sum(axis=1), 1e-12)
         centroid = (power * freqs[None, :]).sum(axis=1) / total
@@ -163,7 +182,7 @@ def spectrum_features(
     means the whole-recording fallback. Every key is present; unavailable
     values are ``NaN`` and paired with a per-key issue.
     """
-    features = {key: math.nan for key in SPECTRUM_KEYS}
+    features = {key: math.nan for key in BASIC_SPECTRUM_KEYS}
     values, fluxes = _spectrum_features(audio, sample_rate, intervals, config)
     counts = {name: sum(arr.size for arr in arrays) for name, arrays in values.items()}
     n_frames = counts["centroid"]
@@ -171,7 +190,7 @@ def spectrum_features(
     if n_frames < 2:
         _flag(
             features,
-            SPECTRUM_KEYS,
+            BASIC_SPECTRUM_KEYS,
             "INSUFFICIENT_SPEECH_FRAMES",
             "fewer than two voiced frames in target audio; spectral feature unavailable",
             recording_id,

@@ -13,7 +13,7 @@ in :mod:`speech_features.features.acoustic.quality`,
 
 from __future__ import annotations
 
-from ...catalog import FeatureDefinition, register_feature
+from ...catalog import DISORDERS, FeatureDefinition, register_feature
 
 QUALITY_KEYS = (
     "audio_duration_s",
@@ -38,6 +38,22 @@ TIMING_KEYS = (
     "time_words_per_min",
     "time_syllables_per_min",
     "time_articulation_rate_syllables_per_s",
+    "time_pause_total_s",
+    "time_pause_median_s",
+    "time_pause_iqr_s",
+    "time_pause_cv",
+    "time_pause_proportion",
+    "time_speech_segment_count",
+    "time_speech_segment_rate_per_min",
+    "time_speech_segment_median_s",
+    "time_speech_segment_iqr_s",
+    "time_speech_segment_cv",
+    "time_speech_segment_max_s",
+    "time_between_utterance_pause_proportion",
+    "time_max_local_speech_rate_wpm",
+    "time_timing_event_rate_per_min",
+    "time_timing_event_entropy",
+    "time_timing_acceleration_per_min2",
 )
 
 PHONATION_KEYS = (
@@ -65,6 +81,14 @@ PHONATION_KEYS = (
     "voice_cpp_median_db",
     "voice_cpp_sd_db",
     "voice_cpp_iqr_db",
+    "voice_break_count",
+    "voice_break_rate_per_min",
+    "voice_break_proportion",
+    "voice_f0_range_semitones",
+    "voice_f0_mad_semitones",
+    "voice_intensity_range_db",
+    "voice_intensity_cv",
+    "voice_nhr_mean_db",
 )
 
 RESONANCE_KEYS = (
@@ -97,6 +121,18 @@ SPECTRUM_KEYS = (
     "spectral_flatness_sd",
     "spectral_entropy_mean",
     "spectral_entropy_sd",
+    "spectral_energy_mean_db",
+    "spectral_energy_sd_db",
+    "spectral_skewness_mean",
+    "spectral_skewness_sd",
+    "spectral_kurtosis_mean",
+    "spectral_kurtosis_sd",
+    "spectral_low_high_energy_ratio_db",
+    *(
+        f"spectral_mfcc_{coefficient}_{stat}"
+        for coefficient in range(1, 14)
+        for stat in ("mean", "sd", "skewness", "kurtosis")
+    ),
 )
 
 RHYTHM_KEYS = (
@@ -699,6 +735,102 @@ _DEFINITIONS = (
         population="adult",
         reference="SAY catalog v1",
     ),
+)
+
+_NEURO_DISORDERS = tuple(sorted(DISORDERS))
+
+_TIMING_COMPANION_UNITS = {
+    "time_pause_total_s": "s",
+    "time_pause_median_s": "s",
+    "time_pause_iqr_s": "s",
+    "time_pause_cv": "ratio",
+    "time_pause_proportion": "ratio",
+    "time_speech_segment_count": "count",
+    "time_speech_segment_rate_per_min": "count/min",
+    "time_speech_segment_median_s": "s",
+    "time_speech_segment_iqr_s": "s",
+    "time_speech_segment_cv": "ratio",
+    "time_speech_segment_max_s": "s",
+    "time_between_utterance_pause_proportion": "ratio",
+    "time_max_local_speech_rate_wpm": "words/min",
+    "time_timing_event_rate_per_min": "events/min",
+    "time_timing_event_entropy": "ratio",
+    "time_timing_acceleration_per_min2": "events/min2",
+}
+
+_VOICE_COMPANION_METADATA = {
+    "voice_break_count": ("count", "phonation", "language_independent"),
+    "voice_break_rate_per_min": ("count/min", "phonation", "language_independent"),
+    "voice_break_proportion": ("ratio", "phonation", "language_independent"),
+    "voice_f0_range_semitones": ("semitones", "prosody", "language_sensitive"),
+    "voice_f0_mad_semitones": ("semitones", "prosody", "language_sensitive"),
+    "voice_intensity_range_db": ("dB", "prosody", "language_sensitive"),
+    "voice_intensity_cv": ("ratio", "prosody", "language_sensitive"),
+    "voice_nhr_mean_db": ("dB", "phonation", "language_independent"),
+}
+
+_ADVANCED_SPECTRAL_UNITS = {
+    "spectral_energy_mean_db": "dB",
+    "spectral_energy_sd_db": "dB",
+    "spectral_skewness_mean": "ratio",
+    "spectral_skewness_sd": "ratio",
+    "spectral_kurtosis_mean": "ratio",
+    "spectral_kurtosis_sd": "ratio",
+    "spectral_low_high_energy_ratio_db": "dB",
+}
+
+_DEFINITIONS += tuple(
+    FeatureDefinition(
+        key=key,
+        pack="acoustic",
+        level="recording",
+        unit=unit,
+        population="adult",
+        reference="Neurodegenerative speech feature expansion v1",
+        domain="timing",
+        language_scope="language_independent",
+        tasks=("connected_speech",),
+        disorders=_NEURO_DISORDERS,
+        evidence_level="derived_companion",
+    )
+    for key, unit in _TIMING_COMPANION_UNITS.items()
+)
+
+_DEFINITIONS += tuple(
+    FeatureDefinition(
+        key=key,
+        pack="acoustic",
+        level="recording",
+        unit=unit,
+        population="adult",
+        reference="Neurodegenerative speech feature expansion v1",
+        domain=domain,
+        language_scope=language_scope,
+        tasks=("connected_speech", "sustained_vowel"),
+        disorders=_NEURO_DISORDERS,
+        evidence_level="derived_companion",
+    )
+    for key, (unit, domain, language_scope) in _VOICE_COMPANION_METADATA.items()
+)
+
+_DEFINITIONS += tuple(
+    FeatureDefinition(
+        key=key,
+        pack="acoustic",
+        level="recording",
+        unit=unit,
+        population="adult",
+        reference="Neurodegenerative speech feature expansion v1",
+        domain="spectral",
+        language_scope="language_sensitive",
+        tasks=("connected_speech", "sustained_vowel"),
+        disorders=_NEURO_DISORDERS,
+        evidence_level="standard_feature_set",
+    )
+    for key, unit in (
+        *_ADVANCED_SPECTRAL_UNITS.items(),
+        *((key, "coefficient") for key in SPECTRUM_KEYS if key.startswith("spectral_mfcc_")),
+    )
 )
 
 _registered = False

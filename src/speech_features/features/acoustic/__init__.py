@@ -24,6 +24,7 @@ from ...catalog import CATALOG_VERSION
 from ...audio import _read_wav_with_width
 from ...result import FeatureBundle, FeatureIssue, InvalidAudioError
 from ...schema import ExtractionConfig
+from .advanced import advanced_features
 from .definitions import ALL_KEYS, register_acoustic_features
 from .phonation import phonation_features
 from .quality import quality_features
@@ -102,6 +103,17 @@ def _extract(
             recording_id=recording_id,
             speaker_id=speaker_id,
             issues=issues,
+        )
+    )
+    features.update(
+        advanced_features(
+            audio,
+            sample_rate,
+            intervals,
+            config,
+            recording_id,
+            speaker_id,
+            issues,
         )
     )
     features.update(

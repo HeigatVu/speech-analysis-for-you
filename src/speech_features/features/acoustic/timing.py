@@ -68,6 +68,15 @@ VAD_KEYS = (
     "time_pause_sd_s",
     "time_pause_max_s",
     "time_long_pause_count",
+    "time_pause_total_s",
+    "time_pause_median_s",
+    "time_pause_iqr_s",
+    "time_pause_cv",
+    "time_pause_proportion",
+    "time_between_utterance_pause_proportion",
+    "time_timing_event_rate_per_min",
+    "time_timing_event_entropy",
+    "time_timing_acceleration_per_min2",
 )
 
 TRANSCRIPT_KEYS = (
@@ -78,6 +87,13 @@ TRANSCRIPT_KEYS = (
     "time_words_per_min",
     "time_syllables_per_min",
     "time_articulation_rate_syllables_per_s",
+    "time_speech_segment_count",
+    "time_speech_segment_rate_per_min",
+    "time_speech_segment_median_s",
+    "time_speech_segment_iqr_s",
+    "time_speech_segment_cv",
+    "time_speech_segment_max_s",
+    "time_max_local_speech_rate_wpm",
 )
 
 
@@ -183,6 +199,24 @@ def _run_durations(mask: np.ndarray, hop_s: float) -> list[float]:
     return runs
 
 
+def _timing_events(mask: np.ndarray, hop_s: float, pause_threshold_s: float, start_s: float):
+    """Return ``(class, start_s)`` for maximal voiced/unvoiced/pause runs."""
+    events: list[tuple[str, float]] = []
+    run_start = 0
+    for index in range(1, mask.size + 1):
+        if index < mask.size and mask[index] == mask[run_start]:
+            continue
+        if mask[run_start]:
+            event_class = "voiced"
+        elif (index - run_start) * hop_s >= pause_threshold_s:
+            event_class = "pause"
+        else:
+            event_class = "unvoiced"
+        events.append((event_class, start_s + run_start * hop_s))
+        run_start = index
+    return events
+
+
 def _vad_features(
     audio,
     sample_rate: int,
@@ -200,6 +234,7 @@ def _vad_features(
     regions = intervals if intervals else [(0.0, duration_s)]
     voiced_runs: list[float] = []
     pauses: list[float] = []
+    timing_events: list[tuple[str, float]] = []
     any_voiced = False
     for start, end in regions:
         clip = audio[int(round(start * sample_rate)) : int(round(end * sample_rate))]
@@ -211,6 +246,18 @@ def _vad_features(
         any_voiced = any_voiced or bool(np.any(voiced))
         voiced_runs.extend(_run_durations(voiced, hop_s))
         pauses.extend(_pauses(voiced, hop_s, config.pause_threshold_s))
+        timing_events.extend(_timing_events(voiced, hop_s, config.pause_threshold_s, start))
+
+    between_pauses: list[float] = []
+    if intervals:
+        for (_, previous_end), (next_start, _) in zip(intervals, intervals[1:]):
+            gap = next_start - previous_end
+            if gap >= config.pause_threshold_s:
+                between_pauses.append(gap)
+                timing_events.append(("pause", previous_end))
+            elif gap > 0.0:
+                timing_events.append(("unvoiced", previous_end))
+    pauses.extend(between_pauses)
 
     if not any_voiced:
         for key in VAD_KEYS:
@@ -234,8 +281,61 @@ def _vad_features(
         features["time_pause_mean_s"] = float(np.mean(pause_array))
         features["time_pause_sd_s"] = float(np.std(pause_array))
         features["time_pause_max_s"] = float(np.max(pause_array))
+        features["time_pause_total_s"] = float(np.sum(pause_array))
+        features["time_pause_median_s"] = float(np.median(pause_array))
+        features["time_pause_iqr_s"] = float(
+            np.percentile(pause_array, 75) - np.percentile(pause_array, 25)
+        )
+        features["time_pause_cv"] = float(np.std(pause_array) / np.mean(pause_array))
+        features["time_pause_proportion"] = float(np.sum(pause_array) / duration_s)
+        features["time_between_utterance_pause_proportion"] = float(
+            sum(between_pauses) / np.sum(pause_array)
+        )
+    else:
+        features["time_pause_total_s"] = 0.0
+        features["time_pause_proportion"] = 0.0
+        for key in (
+            "time_pause_mean_s",
+            "time_pause_sd_s",
+            "time_pause_max_s",
+            "time_pause_median_s",
+            "time_pause_iqr_s",
+            "time_pause_cv",
+            "time_between_utterance_pause_proportion",
+        ):
+            issues.append(
+                _issue(
+                    recording_id,
+                    speaker_id,
+                    "INSUFFICIENT_SPEECH_FRAMES",
+                    "no pause meets the configured threshold; feature unavailable",
+                    feature=key,
+                )
+            )
     features["time_long_pause_count"] = float(
         np.count_nonzero(pause_array >= config.long_pause_threshold_s)
+    )
+
+    event_count = len(timing_events)
+    features["time_timing_event_rate_per_min"] = float(event_count / (duration_s / 60.0))
+    counts = np.asarray(
+        [
+            sum(event_class == name for event_class, _ in timing_events)
+            for name in ("voiced", "unvoiced", "pause")
+        ],
+        dtype=float,
+    )
+    probabilities = counts[counts > 0.0] / event_count
+    features["time_timing_event_entropy"] = float(
+        -np.sum(probabilities * np.log(probabilities)) / math.log(3.0)
+    )
+    midpoint = duration_s / 2.0
+    first_count = sum(event_time < midpoint for _, event_time in timing_events)
+    second_count = event_count - first_count
+    first_rate = first_count / (midpoint / 60.0)
+    second_rate = second_count / ((duration_s - midpoint) / 60.0)
+    features["time_timing_acceleration_per_min2"] = float(
+        (second_rate - first_rate) / (duration_s / 60.0)
     )
     return features
 
@@ -283,6 +383,40 @@ def _transcript_features(
     features["time_speech_ratio"] = float(speech_s / duration_s)
 
     utterances = [u for u in document.utterances if u.speaker_id == speaker_id]
+    utterances.sort(key=lambda utterance: (utterance.start_s, utterance.end_s, utterance.id))
+    segment_durations = np.asarray([end - start for start, end in intervals], dtype=float)
+    segment_mean = float(np.mean(segment_durations))
+    features["time_speech_segment_count"] = float(segment_durations.size)
+    features["time_speech_segment_rate_per_min"] = float(
+        segment_durations.size / (duration_s / 60.0)
+    )
+    features["time_speech_segment_median_s"] = float(np.median(segment_durations))
+    features["time_speech_segment_iqr_s"] = float(
+        np.percentile(segment_durations, 75) - np.percentile(segment_durations, 25)
+    )
+    features["time_speech_segment_cv"] = float(np.std(segment_durations) / segment_mean)
+    features["time_speech_segment_max_s"] = float(np.max(segment_durations))
+
+    local_rates = []
+    for index in range(len(utterances) - 2):
+        window = utterances[index : index + 3]
+        counted_window = _count_words_and_syllables(window)
+        speech_duration = sum(utterance.end_s - utterance.start_s for utterance in window)
+        if counted_window is not None and speech_duration > 0.0:
+            local_rates.append(counted_window[0] / (speech_duration / 60.0))
+    if local_rates:
+        features["time_max_local_speech_rate_wpm"] = float(max(local_rates))
+    else:
+        issues.append(
+            _issue(
+                recording_id,
+                speaker_id,
+                "MISSING_ANNOTATION",
+                "fewer than three aligned utterances with word tokens; feature unavailable",
+                feature="time_max_local_speech_rate_wpm",
+            )
+        )
+
     counted = _count_words_and_syllables(utterances)
     if counted is None:
         for key in (

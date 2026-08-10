@@ -120,7 +120,18 @@ VOICE_CPP_KEYS = (
     "voice_cpp_iqr_db",
 )
 
-_VOICED_FRAME_KEYS = VOICE_F0_KEYS + VOICE_HNR_KEYS + VOICE_CPP_KEYS + VOICE_INTENSITY_KEYS
+VOICE_BREAK_KEYS = ("voice_break_count", "voice_break_rate_per_min", "voice_break_proportion")
+VOICE_COMPANION_KEYS = (
+    "voice_f0_range_semitones",
+    "voice_f0_mad_semitones",
+    "voice_intensity_range_db",
+    "voice_intensity_cv",
+    "voice_nhr_mean_db",
+)
+
+_VOICED_FRAME_KEYS = (
+    VOICE_F0_KEYS + VOICE_HNR_KEYS + VOICE_CPP_KEYS + VOICE_INTENSITY_KEYS + VOICE_COMPANION_KEYS
+)
 _JITTER_KEYS = ("voice_jitter_local", "voice_shimmer_local")
 
 _CEPSTRUM_FLOOR = 1e-12
@@ -203,6 +214,24 @@ def _summarize(values: np.ndarray, keys: tuple[str, ...]) -> dict[str, float]:
     }
 
 
+def _bounded_unvoiced_runs(mask: np.ndarray, hop_s: float, threshold_s: float) -> list[float]:
+    """Durations of long false runs with a voiced frame on both sides."""
+    runs: list[float] = []
+    start = 0
+    while start < mask.size:
+        if mask[start]:
+            start += 1
+            continue
+        end = start + 1
+        while end < mask.size and not mask[end]:
+            end += 1
+        duration = (end - start) * hop_s
+        if start > 0 and end < mask.size and duration >= threshold_s:
+            runs.append(duration)
+        start = end
+    return runs
+
+
 def phonation_features(
     audio,
     sample_rate: int,
@@ -232,6 +261,7 @@ def phonation_features(
     voiced_frames: list[np.ndarray] = []
     speech_rms: list[np.ndarray] = []
     speech_times: list[np.ndarray] = []
+    break_durations: list[float] = []
     analyzed = 0
 
     for start, end in regions:
@@ -245,6 +275,7 @@ def phonation_features(
         rms = np.sqrt(energy / config.frame_size)
         f0, nccf = _f0_per_frame(win, config.frame_size, sample_rate, config)
         pitchable = voiced & np.isfinite(f0)
+        break_durations.extend(_bounded_unvoiced_runs(pitchable, hop_s, config.pause_threshold_s))
         analyzed += win.shape[0]
         if not np.any(pitchable):
             continue
@@ -277,9 +308,21 @@ def phonation_features(
             speaker_id,
             issues,
         )
+        _flag(
+            features,
+            VOICE_BREAK_KEYS,
+            "INSUFFICIENT_VOICED_FRAMES",
+            "no voiced frames in target audio; voice-break feature unavailable",
+            recording_id,
+            speaker_id,
+            issues,
+        )
         return features
 
     features["voice_voiced_ratio"] = float(n_voiced / analyzed)
+    features["voice_break_count"] = float(len(break_durations))
+    features["voice_break_rate_per_min"] = float(len(break_durations) / (duration_s / 60.0))
+    features["voice_break_proportion"] = float(sum(break_durations) / (analyzed * hop_s))
 
     if n_voiced < 2:
         _flag(
@@ -323,6 +366,9 @@ def phonation_features(
     features["voice_f0_iqr_hz"] = _quantile(f0, 75) - _quantile(f0, 25)
     features["voice_f0_range_5_95_hz"] = _quantile(f0, 95) - _quantile(f0, 5)
     features["voice_f0_slope_hz_per_s"] = _ols_slope(times, f0)
+    semitones = 12.0 * np.log2(f0 / np.median(f0))
+    features["voice_f0_range_semitones"] = float(np.max(semitones) - np.min(semitones))
+    features["voice_f0_mad_semitones"] = float(np.median(np.abs(semitones - np.median(semitones))))
 
     if f0_changes.size == 0:
         # Two or more voiced frames exist, but no interval holds two of them:
@@ -345,6 +391,7 @@ def phonation_features(
 
     hnr = _hnr_db(np.concatenate(nccfs))
     features.update(_summarize(hnr, VOICE_HNR_KEYS))
+    features["voice_nhr_mean_db"] = float(-np.mean(hnr))
 
     cpp = _cpp_per_frame(np.concatenate(voiced_frames), sample_rate, config)
     features.update(_summarize(cpp, VOICE_CPP_KEYS))
@@ -361,5 +408,7 @@ def phonation_features(
     features["voice_intensity_sd_db"] = float(np.std(intensity))
     features["voice_intensity_iqr_db"] = _quantile(intensity, 75) - _quantile(intensity, 25)
     features["voice_intensity_slope_db_per_s"] = _ols_slope(speech_times_all, intensity)
+    features["voice_intensity_range_db"] = float(np.max(intensity) - np.min(intensity))
+    features["voice_intensity_cv"] = float(np.std(speech_rms_all) / np.mean(speech_rms_all))
 
     return features

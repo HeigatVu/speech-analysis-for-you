@@ -312,6 +312,46 @@ EXPECTED_ACOUSTIC_KEYS = (
     "voice_voiced_ratio",
 )
 
+EXPECTED_NEURO_ACOUSTIC_KEYS = (
+    "spectral_energy_mean_db",
+    "spectral_energy_sd_db",
+    "spectral_kurtosis_mean",
+    "spectral_kurtosis_sd",
+    "spectral_low_high_energy_ratio_db",
+    "spectral_skewness_mean",
+    "spectral_skewness_sd",
+    "time_between_utterance_pause_proportion",
+    "time_max_local_speech_rate_wpm",
+    "time_pause_cv",
+    "time_pause_iqr_s",
+    "time_pause_median_s",
+    "time_pause_proportion",
+    "time_pause_total_s",
+    "time_speech_segment_count",
+    "time_speech_segment_cv",
+    "time_speech_segment_iqr_s",
+    "time_speech_segment_max_s",
+    "time_speech_segment_median_s",
+    "time_speech_segment_rate_per_min",
+    "time_timing_acceleration_per_min2",
+    "time_timing_event_entropy",
+    "time_timing_event_rate_per_min",
+    "voice_break_count",
+    "voice_break_proportion",
+    "voice_break_rate_per_min",
+    "voice_f0_mad_semitones",
+    "voice_f0_range_semitones",
+    "voice_intensity_cv",
+    "voice_intensity_range_db",
+    "voice_nhr_mean_db",
+    *(
+        f"spectral_mfcc_{coefficient}_{stat}"
+        for coefficient in range(1, 14)
+        for stat in ("mean", "sd", "skewness", "kurtosis")
+    ),
+)
+EXPECTED_ACOUSTIC_KEYS = tuple(sorted((*EXPECTED_ACOUSTIC_KEYS, *EXPECTED_NEURO_ACOUSTIC_KEYS)))
+
 # The 30 Task 7 keys in their formula groups (sorted order is the catalog's).
 RESONANCE_KEYS = (
     "spectral_f1_mean_hz",
@@ -475,13 +515,13 @@ def _tok(tid, text, kind="word", word_id=None):
 
 
 class TestAcousticPackCatalog:
-    def test_exact_seventy_three_keys_registered(self):
+    def test_exact_acoustic_keys_registered(self):
         features = list_features(pack="acoustic")
         assert [f.key for f in features] == list(EXPECTED_ACOUSTIC_KEYS)
         assert EXPECTED_ACOUSTIC_KEYS == tuple(sorted(EXPECTED_ACOUSTIC_KEYS))
-        assert sorted(VOICE_KEYS) == list(EXPECTED_ACOUSTIC_KEYS[-24:])
-        assert sorted((*RESONANCE_KEYS, *SPECTRUM_KEYS)) == list(EXPECTED_ACOUSTIC_KEYS[4:30])
-        assert sorted(RHYTHM_KEYS) == list(EXPECTED_ACOUSTIC_KEYS[41:45])
+        assert set(VOICE_KEYS) <= set(EXPECTED_ACOUSTIC_KEYS)
+        assert set((*RESONANCE_KEYS, *SPECTRUM_KEYS)) <= set(EXPECTED_ACOUSTIC_KEYS)
+        assert set(RHYTHM_KEYS) <= set(EXPECTED_ACOUSTIC_KEYS)
 
     def test_definitions_carry_full_metadata(self):
         for definition in list_features(pack="acoustic"):
@@ -871,7 +911,7 @@ class TestCatalogRegistrationIsolation:
             cwd=src.parent,
         )
         assert completed.returncode == 0, completed.stderr
-        assert completed.stdout.strip() == "73"
+        assert completed.stdout.strip() == str(len(EXPECTED_ACOUSTIC_KEYS))
 
 
 class TestClippingWidthBoundaries:
