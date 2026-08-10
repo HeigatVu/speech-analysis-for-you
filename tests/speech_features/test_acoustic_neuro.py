@@ -348,6 +348,49 @@ def test_amplitude_perturbation_formulas_match_hand_calculation():
         )
 
 
+def test_perturbation_windows_do_not_cross_disjoint_regions(monkeypatch):
+    phonation = importlib.import_module("speech_features.features.acoustic.phonation")
+    sample_rate = 16000
+    region_samples = 2640  # exactly 15 frames at the default frame/hop sizes
+    gap_samples = 1600
+    audio = np.concatenate(
+        (
+            np.full(region_samples, 0.2),
+            np.zeros(gap_samples),
+            np.full(region_samples, 0.8),
+        )
+    )
+    intervals = [
+        (0.0, region_samples / sample_rate),
+        ((region_samples + gap_samples) / sample_rate, audio.size / sample_rate),
+    ]
+
+    def fixed_region_pitch(frames, *_args):
+        frequency = 100.0 if np.mean(np.abs(frames)) < 0.25 else 200.0
+        return np.full(frames.shape[0], frequency), np.full(frames.shape[0], 0.8)
+
+    monkeypatch.setattr(phonation, "_f0_per_frame", fixed_region_pitch)
+    values = phonation.phonation_features(
+        audio,
+        sample_rate,
+        intervals=intervals,
+        config=ExtractionConfig(),
+        recording_id="r",
+        speaker_id="PAR",
+        issues=[],
+    )
+    for key in (
+        "voice_jitter_rap",
+        "voice_jitter_ppq5",
+        "voice_jitter_ddp",
+        "voice_shimmer_apq3",
+        "voice_shimmer_apq5",
+        "voice_shimmer_apq11",
+        "voice_shimmer_dda",
+    ):
+        assert values[key] == pytest.approx(0.0, abs=1e-15), key
+
+
 def test_constant_period_signal_has_zero_pitch_period_entropy():
     advanced = importlib.import_module("speech_features.features.acoustic.advanced")
     assert advanced.pitch_period_entropy(np.ones(100)) == pytest.approx(0.0)
@@ -378,6 +421,45 @@ def test_nonlinear_helpers_enforce_minimum_and_are_finite_at_boundary():
         advanced.correlation_dimension(periods),
     ):
         assert math.isfinite(value)
+
+
+def test_nonlinear_minimum_one_with_two_periods_is_unavailable_not_exception(monkeypatch):
+    advanced = importlib.import_module("speech_features.features.acoustic.advanced")
+    phonation = importlib.import_module("speech_features.features.acoustic.phonation")
+    periods = np.array([0.01, 0.011])
+    assert math.isnan(advanced.correlation_dimension(periods, minimum=1))
+
+    def two_periods(frames, *_args):
+        assert frames.shape[0] == 2
+        return 1.0 / periods, np.full(2, 0.8)
+
+    monkeypatch.setattr(phonation, "_f0_per_frame", two_periods)
+    issues = []
+    with np.errstate(all="raise"):
+        values = phonation.phonation_features(
+            np.full(560, 0.5),
+            16000,
+            intervals=None,
+            config=ExtractionConfig(nonlinear_min_periods=1),
+            recording_id="r",
+            speaker_id="PAR",
+            issues=issues,
+        )
+    assert math.isnan(values["voice_correlation_dimension"])
+    matching = [issue for issue in issues if issue.feature == "voice_correlation_dimension"]
+    assert len(matching) == 1
+    assert matching[0].code == "INSUFFICIENT_VOICING"
+
+
+def test_nonlinear_correlation_dimension_large_input_skips_pairwise_allocation(monkeypatch):
+    advanced = importlib.import_module("speech_features.features.acoustic.advanced")
+
+    def unexpected_pdist(_embedding):
+        pytest.fail("pdist must not run above the exact-computation ceiling")
+
+    monkeypatch.setattr(advanced, "pdist", unexpected_pdist)
+    periods = np.linspace(0.009, 0.011, 60_000)
+    assert math.isnan(advanced.correlation_dimension(periods, minimum=1))
 
 
 def test_nonlinear_calibration_defaults_and_rejects_non_positive_values():

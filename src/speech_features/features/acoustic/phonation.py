@@ -86,13 +86,11 @@ from ...acoustic import _energy_vad, _f0_per_frame, _frames, _hnr_db
 from ...result import FeatureIssue
 from ...schema import ExtractionConfig
 from .advanced import (
+    _regional_perturbation_quotient,
     correlation_dimension,
     detrended_fluctuation_analysis,
-    jitter_ppq5,
-    jitter_rap,
     pitch_period_entropy,
     recurrence_period_density_entropy,
-    shimmer_apq,
 )
 from .definitions import PHONATION_KEYS
 
@@ -390,12 +388,13 @@ def phonation_features(
     voiced_rms = np.concatenate(rms_at_f0)
     periods = 1.0 / f0
 
-    features["voice_jitter_rap"] = jitter_rap(periods)
-    features["voice_jitter_ppq5"] = jitter_ppq5(periods)
+    period_regions = [1.0 / values for values in f0s]
+    features["voice_jitter_rap"] = _regional_perturbation_quotient(period_regions, 3)
+    features["voice_jitter_ppq5"] = _regional_perturbation_quotient(period_regions, 5)
     features["voice_jitter_ddp"] = 3.0 * features["voice_jitter_rap"]
-    features["voice_shimmer_apq3"] = shimmer_apq(voiced_rms, 3)
-    features["voice_shimmer_apq5"] = shimmer_apq(voiced_rms, 5)
-    features["voice_shimmer_apq11"] = shimmer_apq(voiced_rms, 11)
+    features["voice_shimmer_apq3"] = _regional_perturbation_quotient(rms_at_f0, 3)
+    features["voice_shimmer_apq5"] = _regional_perturbation_quotient(rms_at_f0, 5)
+    features["voice_shimmer_apq11"] = _regional_perturbation_quotient(rms_at_f0, 11)
     features["voice_shimmer_dda"] = 3.0 * features["voice_shimmer_apq3"]
     features["voice_pitch_period_entropy"] = pitch_period_entropy(
         periods, bins=config.entropy_bins, minimum=config.nonlinear_min_periods

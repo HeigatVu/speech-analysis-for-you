@@ -32,6 +32,14 @@ ADVANCED_KEYS = tuple(
 )
 
 _NONLINEAR_MIN_PERIODS = 64
+_MAX_EXACT_CORRELATION_PAIRS = 1_000_000
+
+
+def _perturbation_residuals(values: np.ndarray, window: int) -> np.ndarray:
+    local_means = np.convolve(values, np.ones(window) / window, mode="valid")
+    half = window // 2
+    centers = values[half : values.size - half]
+    return np.abs(centers - local_means)
 
 
 def _perturbation_quotient(values: np.ndarray, window: int) -> float:
@@ -41,10 +49,24 @@ def _perturbation_quotient(values: np.ndarray, window: int) -> float:
     denominator = float(np.mean(values))
     if denominator <= 0.0:
         return math.nan
-    local_means = np.convolve(values, np.ones(window) / window, mode="valid")
-    half = window // 2
-    centers = values[half : values.size - half]
-    return float(np.mean(np.abs(centers - local_means)) / denominator)
+    return float(np.mean(_perturbation_residuals(values, window)) / denominator)
+
+
+def _regional_perturbation_quotient(regions: list[np.ndarray], window: int) -> float:
+    """Pool within-region residuals by valid center count over one global mean."""
+    arrays = [np.asarray(region, dtype=float) for region in regions]
+    if not arrays:
+        return math.nan
+    values = np.concatenate(arrays)
+    denominator = float(np.mean(values))
+    if not np.all(np.isfinite(values)) or denominator <= 0.0:
+        return math.nan
+    residuals = [
+        _perturbation_residuals(region, window) for region in arrays if region.size >= window
+    ]
+    if not residuals:
+        return math.nan
+    return float(np.mean(np.concatenate(residuals)) / denominator)
 
 
 def jitter_rap(periods: np.ndarray) -> float:
@@ -148,11 +170,17 @@ def correlation_dimension(
     periods: np.ndarray,
     minimum: int = _NONLINEAR_MIN_PERIODS,
 ) -> float:
-    """Two-dimensional delay-one correlation-sum slope over eight radii."""
+    """Exact delay-one correlation-sum slope, bounded before pair allocation."""
     values = _period_series(periods, minimum)
     if values is None:
         return math.nan
-    distances = pdist(np.column_stack((values[:-1], values[1:])))
+    embedding = np.column_stack((values[:-1], values[1:]))
+    pair_count = embedding.shape[0] * (embedding.shape[0] - 1) // 2
+    # ponytail: exact pdist is capped at 1,000,000 pairs; use a validated bounded
+    # estimator if longer period series must be supported.
+    if pair_count == 0 or pair_count > _MAX_EXACT_CORRELATION_PAIRS:
+        return math.nan
+    distances = pdist(embedding)
     low, high = np.percentile(distances, (10, 60))
     if low <= 0.0 or high <= low:
         return math.nan
