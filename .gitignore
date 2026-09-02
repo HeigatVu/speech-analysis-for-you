@@ -27,4 +27,7 @@ log/
 .serena/
 .superpowers/
 .worktrees/
+.mimosa/
+.codegraph/
+.codex/
 docs/

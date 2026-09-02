@@ -34,11 +34,19 @@ from .extraction import (
     _validate_manifest_v2,
     extract_batch,
 )
-from .result import FeatureExtractionError
+from .result import FeatureExtractionError, InvalidConfigError
 from .schema import MissingInputError, validate_task_spec
 
 _OUTPUT_FILES = ("recordings.csv", "utterances.csv", "issues.csv", "provenance.json")
 _DEFAULT_PACKS = ("acoustic", "adult_neuro")
+
+
+def _contained_output_path(path: str | Path, kind: str) -> Path:
+    """Reject output paths that resolve outside the current working directory."""
+    path = Path(path)
+    if not path.expanduser().resolve().is_relative_to(Path.cwd().resolve()):
+        raise InvalidConfigError(f"{kind} escapes the working directory: {path}")
+    return path
 
 
 def _validate_command(input_path: str) -> str:
@@ -77,8 +85,9 @@ def _validate_command(input_path: str) -> str:
 
 def _convert_command(input_path: str, output_path: str, force: bool) -> None:
     """Load/detect the input document and save it by the output extension."""
+    output = _contained_output_path(output_path, "output path")
     document = load_document(input_path)
-    save_document(document, output_path, force=force)
+    save_document(document, output, force=force)
 
 
 def _extract_command(
@@ -86,12 +95,13 @@ def _extract_command(
 ) -> int:
     """Run extract_batch and write the four deterministic output files.
 
-    Pack selection and the manifest are validated before any directory is
-    created; pre-existing expected files are checked without ``mkdir`` so
-    invalid global input never leaves an output path behind.
+    Pack selection, the manifest, and output-path containment are validated
+    before any directory is created; pre-existing expected files are checked
+    without ``mkdir`` so invalid global input never leaves an output path
+    behind. The output directory must resolve inside the working directory.
     """
     canonical_packs = _canonical_packs(packs)  # invalid selection exits before touching disk
-    out = Path(output_dir)
+    out = _contained_output_path(output_dir, "output directory")
     existing = [out / name for name in _OUTPUT_FILES if (out / name).exists()]
     if existing and not force:
         raise FileExistsError(
@@ -109,9 +119,11 @@ def _extract_command(
         out / "utterances.csv", index=False, encoding="utf-8", lineterminator="\n"
     )
     bundle.issues.to_csv(out / "issues.csv", index=False, encoding="utf-8", lineterminator="\n")
-    with open(out / "provenance.json", "w", encoding="utf-8") as fh:
-        json.dump(dict(bundle.provenance), fh, ensure_ascii=False, sort_keys=True, indent=2)
-        fh.write("\n")
+    provenance_path = _contained_output_path(out / "provenance.json", "output path")
+    provenance_path.write_text(
+        json.dumps(dict(bundle.provenance), ensure_ascii=False, sort_keys=True, indent=2) + "\n",
+        encoding="utf-8",
+    )
     return 1 if "error" in set(bundle.issues["severity"]) else 0
 
 

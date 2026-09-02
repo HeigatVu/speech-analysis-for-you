@@ -129,6 +129,18 @@ class TestValidate:
 
 
 class TestConvert:
+    @pytest.fixture(autouse=True)
+    def _run_in_tmp_path(self, monkeypatch, tmp_path):
+        monkeypatch.chdir(tmp_path)
+
+    def test_convert_output_outside_cwd_exits_two(self, tmp_path, capsys):
+        src = tmp_path / "doc.json"
+        _write_json(src, _document_json())
+        outside = tmp_path.parent / "escaped.json"
+        assert main(["convert", str(src), str(outside)]) == 2
+        assert "escapes the working directory" in capsys.readouterr().err
+        assert not outside.exists()
+
     def test_convert_json_to_chat_round_trip(self, tmp_path, capsys):
         from speech_features.document import load_document
 
@@ -171,6 +183,18 @@ class TestConvert:
 
 
 class TestExtract:
+    @pytest.fixture(autouse=True)
+    def _run_in_tmp_path(self, monkeypatch, tmp_path):
+        monkeypatch.chdir(tmp_path)
+
+    def test_extract_output_outside_cwd_exits_two(self, tmp_path, capsys):
+        manifest = tmp_path / "manifest.json"
+        _write_json(manifest, _manifest([_row(tmp_path, "r1")]))
+        outside = tmp_path.parent / "escaped-out"
+        assert self._extract(tmp_path, manifest, outside) == 2
+        assert "escapes the working directory" in capsys.readouterr().err
+        assert not outside.exists()
+
     def _extract(self, tmp_path, manifest, output, *flags):
         return main(["extract", str(manifest), str(output), *flags])
 
