@@ -44,8 +44,8 @@ annotation layer values (lemma) of length ``N``, ``V`` types, ``V1`` hapax:
   ``NaN``); entropy = normalized Shannon ``-sum(p log p)/log(V)`` (a
   single-type sample is ``0``). SDs are population SDs (``ddof=0``).
 
-The ``lemma`` layer must map every target word-kind token id to a non-empty
-string; an absent/incomplete/non-string layer makes all eight lemma keys
+The ``lemma`` layer must map every representative target word token id to a
+non-empty string; an absent/incomplete/non-string layer makes all eight lemma keys
 ``NaN`` with ``MISSING_ANNOTATION``, with no fallback to surface forms.
 
 Disfluency
@@ -166,6 +166,21 @@ def _word_syllable_lengths(utterances) -> list[int]:
         lengths.extend(per_word_id.values())
         lengths.extend([1] * ungrouped)
     return lengths
+
+
+def _word_representatives(utterances):
+    """Return the first syllable token for each explicit word group."""
+    representatives = []
+    for utterance in utterances:
+        seen = set()
+        for token in utterance.tokens:
+            if token.kind != "word":
+                continue
+            word_key = token.word_id or token.id
+            if word_key not in seen:
+                seen.add(word_key)
+                representatives.append(token)
+    return representatives
 
 
 def _lemma_forms(document, word_tokens) -> list[str] | None:
@@ -347,7 +362,7 @@ def extract_lexical_features(
             issues,
         )
     else:
-        lemma_forms = _lemma_forms(document, word_tokens)
+        lemma_forms = _lemma_forms(document, _word_representatives(utterances))
         if lemma_forms is None:
             _flag(
                 features,

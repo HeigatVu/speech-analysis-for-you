@@ -19,7 +19,7 @@ and ``particle`` :class:`AnnotationLayer` values and the explicit
 ``kind == "word"`` tokens. ``%mor``/``%gra`` are never parsed and unavailable
 morphology is never inferred.
 
-- ``upos`` must hold a non-empty string for every target word token,
+- ``upos`` must hold a non-empty string for every representative target word token,
   case-normalised to uppercase, and each value must be one of the 17 locked
   Universal POS tags. An absent/incomplete/non-string/unknown layer makes all
   17 ``morph_upos_*_ratio`` keys and the four UPOS-derived composition keys
@@ -32,7 +32,8 @@ morphology is never inferred.
   ``token.language``; the ratio counts values not equal to the document
   language (NFC + casefold for comparison only).
 - Dependency features use only explicit ``dep_rel``/``dep_head``. Every
-  target word token needs a non-empty relation; an utterance's word tokens
+  representative target word token needs a non-empty relation; an utterance's
+  representative word tokens
   need exactly one root (``dep_rel == "root"`` with head ``None`` or itself);
   every other chain must reach that root through same-utterance heads without
   revisiting a token (cycles), or all 17 dependency distribution/structure
@@ -40,9 +41,9 @@ morphology is never inferred.
 
 Locked formulas (all ratios over target word tokens; population SDs)
 --------------------------------------------------------------------
-- UPOS ratios count each of the 17 tags over all target word tokens.
+- UPOS ratios count each of the 17 tags over representative target word tokens.
   Content tags ``ADJ, ADV, NOUN, PROPN, VERB`` and function tags
-  ``ADP, AUX, CCONJ, DET, PART, PRON, SCONJ`` divide by all target word
+  ``ADP, AUX, CCONJ, DET, PART, PRON, SCONJ`` divide by representative target word
   tokens; ``noun_verb = (NOUN + PROPN) / VERB`` and
   ``pronoun_noun = PRON / (NOUN + PROPN)``; a zero denominator is ``NaN`` +
   ``INSUFFICIENT_TOKENS``.
@@ -58,7 +59,7 @@ Locked formulas (all ratios over target word tokens; population SDs)
   same utterance for each non-root word token; the mean pools all edges and
   the SD is the population SD (mean needs one edge, SD two).
 - Tree depth is the number of head edges from a word token to its utterance
-  root (root depth 0); the mean covers all target word tokens.
+  root (root depth 0); the mean covers representative target word tokens.
 - Clause heads are tokens with relation in
   ``root, ccomp, xcomp, advcl, acl, acl:relcl, csubj, csubj:pass``;
   subordinate clause heads exclude ``root``. Clause rate divides by the
@@ -92,7 +93,14 @@ from collections import Counter
 
 from ...result import FeatureIssue
 from ...schema import TASK_SPEC_FIELDS, nfc, validate_task_spec
-from . import _mean, _normalise, _population_sd, _resolve_target_speaker, _word_syllable_lengths
+from . import (
+    _mean,
+    _normalise,
+    _population_sd,
+    _resolve_target_speaker,
+    _word_representatives,
+    _word_syllable_lengths,
+)
 from .definitions import (
     MORPH_COMPOSITION_KEYS,
     MORPH_DEP_DIST_KEYS,
@@ -278,7 +286,7 @@ def _dependency_analysis(target_utterances):
     clause_count = 0
     subordinate_count = 0
     for utterance in target_utterances:
-        word_tokens = [token for token in utterance.tokens if token.kind == "word"]
+        word_tokens = _word_representatives([utterance])
         if not word_tokens:
             continue
         if any(
@@ -385,7 +393,7 @@ def extract_morphosyntax_features(
         )
         return features, [], tuple(issues)
 
-    word_tokens = [token for token in tokens if token.kind == "word"]
+    word_tokens = _word_representatives(utterances)
     n_words = float(len(word_tokens))
 
     # UPOS distribution and the four UPOS-derived composition ratios.

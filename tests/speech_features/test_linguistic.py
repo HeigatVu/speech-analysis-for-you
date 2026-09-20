@@ -638,22 +638,21 @@ class TestAdultNeuroSurfaceDiversity:
 class TestAdultNeuroLemmaDiversity:
     def test_complete_lemma_layer_hand_calculated(self):
         features, issues = extract_lexical_features(_rich_vi_document(), target_speaker="p1")
-        # Lemma forms: mèo x2, đồng x2, xe x2, đạp x2 + 6 hapax -> N=14,
-        # V=10, V1=6. "Dồng" and "Đồng" share the lemma "đồng".
-        assert features["lex_lemma_ttr"] == pytest.approx(10 / 14)
-        assert features["lex_lemma_hapax_ratio"] == pytest.approx(6 / 14)
-        assert features["lex_lemma_brunet_w"] == pytest.approx(14 ** (10**-0.165))
-        assert features["lex_lemma_honore_r"] == pytest.approx(100 * math.log(14) / (1 - 6 / 10))
+        # Representative lemma forms: mèo x2, đồng x2, xe x2 + 6 hapax.
+        # Grouped syllables are not duplicated: N=12, V=9, V1=6.
+        assert features["lex_lemma_ttr"] == pytest.approx(9 / 12)
+        assert features["lex_lemma_hapax_ratio"] == pytest.approx(6 / 12)
+        assert features["lex_lemma_brunet_w"] == pytest.approx(12 ** (9**-0.165))
+        assert features["lex_lemma_honore_r"] == pytest.approx(100 * math.log(12) / (1 - 6 / 9))
         expected_entropy = -(
-            4 * (2 / 14) * math.log(2 / 14) + 6 * (1 / 14) * math.log(1 / 14)
-        ) / math.log(10)
+            3 * (2 / 12) * math.log(2 / 12) + 6 * (1 / 12) * math.log(1 / 12)
+        ) / math.log(9)
         assert features["lex_lemma_entropy"] == pytest.approx(expected_entropy)
         assert math.isnan(features["lex_lemma_mattr_20"])
         assert math.isnan(features["lex_lemma_hdd_42"])
-        # Forward: one close on the mèo pair, trailing 12 tokens/9 types
-        # (TTR 9/12, partial (1-9/12)/0.28). Reverse: one close at
-        # (đạp, xe, đạp, xe) -> trailing 9 tokens/7 types (TTR 7/9).
-        expected_lemma_mtld = (14 / (1 + (1 - 9 / 12) / 0.28) + 14 / (1 + (1 - 7 / 9) / 0.28)) / 2
+        # Forward: one close on the mèo pair, trailing 10 tokens/8 types.
+        # Reverse: one close on the xe pair, trailing 9 tokens/7 types.
+        expected_lemma_mtld = (12 / (1 + (1 - 8 / 10) / 0.28) + 12 / (1 + (1 - 7 / 9) / 0.28)) / 2
         assert features["lex_lemma_mtld"] == pytest.approx(expected_lemma_mtld)
         codes = [issue.code for issue in issues if issue.feature == "lex_lemma_mattr_20"]
         assert codes == ["INSUFFICIENT_TOKENS"]
@@ -790,7 +789,7 @@ class TestAdultNeuroTargetIsolation:
         assert features["lex_utterance_count"] == 2.0
         assert features["lex_unique_token_count"] == 11.0
         assert features["disfluency_filler_count"] == 2.0
-        assert features["lex_lemma_ttr"] == pytest.approx(10 / 14)
+        assert features["lex_lemma_ttr"] == pytest.approx(9 / 12)
 
     def test_single_speaker_is_inferred(self):
         features, _ = extract_lexical_features(_mattr_mtld_hdd_document())

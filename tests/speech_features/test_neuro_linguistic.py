@@ -67,6 +67,57 @@ def _layer(name, values):
     return AnnotationLayer(layer=name, source="reviewed", values=values)
 
 
+def test_grouped_syllables_use_one_representative_for_word_annotations():
+    document = _document(
+        _utterance(
+            "u1",
+            "PAR",
+            0.0,
+            2.0,
+            DocumentToken(
+                id="t1",
+                text="thành",
+                kind="word",
+                language="vie",
+                word_id="w1",
+                dep_head="t3",
+                dep_rel="nsubj",
+            ),
+            DocumentToken(
+                id="t2",
+                text="phố",
+                kind="word",
+                language="vie",
+                word_id="w1",
+            ),
+            DocumentToken(
+                id="t3",
+                text="đẹp",
+                kind="word",
+                language="vie",
+                dep_rel="root",
+            ),
+        ),
+        annotations=(
+            _layer("upos", {"t1": "NOUN", "t3": "ADJ"}),
+            _layer("lemma", {"t1": "thành phố", "t3": "đẹp"}),
+        ),
+    )
+
+    lexical, lexical_issues = extract_lexical_features(document, target_speaker="PAR")
+    morphosyntax, _, morphosyntax_issues = extract_morphosyntax_features(
+        document, target_speaker="PAR"
+    )
+
+    assert lexical["lex_word_count"] == 2.0
+    assert lexical["lex_lemma_ttr"] == pytest.approx(1.0)
+    assert _issues_for(lexical_issues, "lex_lemma_ttr") == []
+    assert morphosyntax["morph_upos_noun_ratio"] == pytest.approx(0.5)
+    assert morphosyntax["morph_upos_adj_ratio"] == pytest.approx(0.5)
+    assert morphosyntax["morph_dep_root_ratio"] == pytest.approx(0.5)
+    assert _issues_for(morphosyntax_issues, "morph_upos_noun_ratio") == []
+
+
 def _issues_for(issues, feature):
     return [issue for issue in issues if issue.feature == feature]
 
