@@ -334,7 +334,7 @@ _COMMON = dict(
 # Conservative source-supported metadata for the pre-expansion "SAY catalog
 # v1" keys: lexical/morphosyntactic features are language_dependent, and
 # disfluency/discourse features are language_sensitive. Disorder unions come
-# from docs/research/neurodegenerative-speech-feature-sources.md: lexical and
+# from docs/2026-08-10/neurodegenerative-speech-feature-expansion/1/RESEARCH-2026-08-10.md: lexical and
 # morphosyntactic from sources 2--4 and 9; disfluency from source 3; discourse
 # from sources 2--3.
 _LEXICAL_DISORDERS = (

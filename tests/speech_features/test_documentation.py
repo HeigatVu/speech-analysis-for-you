@@ -20,14 +20,17 @@ import speech_features
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DOCS = REPO_ROOT / "docs"
 
+DOCS_2026_08_06 = DOCS / "2026-08-06" / "say-vietnamese-speech-library" / "1"
+DOCS_2026_08_10 = DOCS / "2026-08-10" / "neurodegenerative-speech-feature-expansion" / "1"
+
 DOC_PATHS = {
     "README": REPO_ROOT / "README.md",
-    "feature-extraction": DOCS / "feature-extraction.md",
-    "transcript-formats": DOCS / "transcript-formats.md",
-    "feature-catalog-v1": DOCS / "feature-catalog-v1.md",
-    "neurodegenerative-feature-guide": DOCS / "neurodegenerative-feature-guide.md",
-    "migration-0.2": DOCS / "migration-0.2.md",
-    "review-summary": DOCS / "implementation" / "say-library" / "review-summary.md",
+    "feature-extraction": DOCS_2026_08_06 / "feature-extraction.md",
+    "transcript-formats": DOCS_2026_08_06 / "transcript-formats.md",
+    "feature-catalog-v1": DOCS_2026_08_06 / "feature-catalog-v1.md",
+    "neurodegenerative-feature-guide": DOCS_2026_08_10 / "neurodegenerative-feature-guide.md",
+    "migration-0.2": DOCS_2026_08_06 / "migration-0.2.md",
+    "review-summary": DOCS_2026_08_06 / "REVIEW-2026-08-06.md",
 }
 
 
@@ -61,14 +64,14 @@ class TestDocumentsExistAndCrossLink:
 
     def test_readme_links_to_every_guide(self):
         readme = _doc("README")
-        for name in (
-            "feature-extraction",
-            "transcript-formats",
-            "feature-catalog-v1",
-            "neurodegenerative-feature-guide",
-            "migration-0.2",
+        for path in (
+            "docs/2026-08-06/say-vietnamese-speech-library/1/feature-extraction.md",
+            "docs/2026-08-06/say-vietnamese-speech-library/1/transcript-formats.md",
+            "docs/2026-08-06/say-vietnamese-speech-library/1/feature-catalog-v1.md",
+            "docs/2026-08-10/neurodegenerative-speech-feature-expansion/1/neurodegenerative-feature-guide.md",
+            "docs/2026-08-06/say-vietnamese-speech-library/1/migration-0.2.md",
         ):
-            assert f"docs/{name}.md" in readme, f"README must link to docs/{name}.md"
+            assert path in readme, f"README must link to {path}"
 
     def test_guides_cross_link_to_readme_and_each_other(self):
         guides = ("feature-extraction", "transcript-formats", "feature-catalog-v1", "migration-0.2")

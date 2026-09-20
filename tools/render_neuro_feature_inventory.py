@@ -23,9 +23,17 @@ from speech_features.evidence import DEFERRED_EVIDENCE, EvidenceRecord, validate
 from speech_features.feature_documentation import documentation_for
 
 ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_CSV = ROOT / "docs/research/neurodegenerative-speech-feature-inventory.csv"
-DEFAULT_MARKDOWN = ROOT / "docs/research/neurodegenerative-speech-feature-inventory.md"
-DEFAULT_CATALOG = ROOT / "docs/feature-catalog-v1.md"
+DEFAULT_CSV = (
+    ROOT
+    / "docs/2026-08-10/neurodegenerative-speech-feature-expansion/1/neurodegenerative-speech-feature-inventory.csv"
+)
+DEFAULT_MARKDOWN = (
+    ROOT
+    / "docs/2026-08-10/neurodegenerative-speech-feature-expansion/1/neurodegenerative-speech-feature-inventory.md"
+)
+DEFAULT_CATALOG = (
+    ROOT / "docs/2026-08-06/say-vietnamese-speech-library/1/feature-catalog-v1.md"
+)
 
 EXPECTED_LIVE_COUNT = 485
 EXPECTED_PACK_COUNTS = {

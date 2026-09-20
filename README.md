@@ -24,19 +24,19 @@ label-free extraction pipeline, four built-in feature packs (`acoustic`,
 - [Documentation index](docs/README.md) — current phase, active pipeline records,
   and links to the built foundation.
 
-- [Feature extraction](docs/built-features/feature-extraction.md) — the label-free pipeline:
+- [Feature extraction](docs/2026-08-06/say-vietnamese-speech-library/1/feature-extraction.md) — the label-free pipeline:
   PCM WAV input, target-speaker isolation, `FeatureBundle` tables, issues,
   provenance, pack/level selection, manifest v2, batch behavior, CLI exit
   codes, and all stable error codes.
-- [Transcript formats](docs/built-features/transcript-formats.md) — JSON v2 and the CHAT
+- [Transcript formats](docs/2026-08-06/say-vietnamese-speech-library/1/transcript-formats.md) — JSON v2 and the CHAT
   subset, Vietnamese token/word grouping, normalization, annotation
   provenance, and the manual/automated transcription workflows.
-- [Feature catalog v1](docs/built-features/feature-catalog-v1.md) — every registered feature
+- [Feature catalog v1](docs/2026-08-06/say-vietnamese-speech-library/1/feature-catalog-v1.md) — every registered feature
   key with unit, level, prerequisites, formula, and missing-data behavior.
-- [Neurodegenerative feature guide](docs/built-features/neurodegenerative-feature-guide.md) —
+- [Neurodegenerative feature guide](docs/2026-08-10/neurodegenerative-speech-feature-expansion/1/neurodegenerative-feature-guide.md) —
   pack/task selection, reviewed annotation layers, evidence scope, and
   Vietnamese validation limits.
-- [Migrating to 0.2](docs/built-features/migration-0.2.md) — 0.1-to-0.2 API changes, legacy
+- [Migrating to 0.2](docs/2026-08-06/say-vietnamese-speech-library/1/migration-0.2.md) — 0.1-to-0.2 API changes, legacy
   AD imports, the deprecation window, and notebook retirement.
 
 ## Installation
@@ -135,10 +135,10 @@ JSON-serializable provenance:
 - `PACKS` is a **static** built-in mapping in 0.2; a future built-in pack
   (for example a child pack) requires an intentional source change and validation —
   no dynamic registry or entry-point discovery (see the
-  [catalog](docs/built-features/feature-catalog-v1.md) for the minimal example).
+  [catalog](docs/2026-08-06/say-vietnamese-speech-library/1/feature-catalog-v1.md) for the minimal example).
 - Legacy AD evaluation and task scorers remain available through
   `speech_features.legacy.ad` with a `DeprecationWarning`; see
-  [migration-0.2](docs/built-features/migration-0.2.md).
+  [migration-0.2](docs/2026-08-06/say-vietnamese-speech-library/1/migration-0.2.md).
 
 ## Future transcript automation
 

@@ -748,7 +748,7 @@ _DEFINITIONS = (
     ),
 )
 
-# Conservative domain unions from docs/research/neurodegenerative-speech-feature-sources.md:
+# Conservative domain unions from docs/2026-08-10/neurodegenerative-speech-feature-expansion/1/RESEARCH-2026-08-10.md:
 # timing sources 1--6 and 8; prosody sources 1--4 and 6--9; phonation sources
 # 1--3 and 5--9; spectral sources 2, 5, and 8. Standard MFCC/spectral
 # descriptors inherit only the source-supported spectral union.

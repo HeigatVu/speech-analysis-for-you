@@ -51,6 +51,11 @@ docs/2026-09-02/vietnamese-transcription-pipeline/1/*
 !docs/2026-09-02/vietnamese-transcription-pipeline/1/tasks-2026-09-02.json
 !docs/2026-09-02/vietnamese-transcription-pipeline/1/USAGE-*.md
 !docs/2026-09-02/vietnamese-transcription-pipeline/1/SPIKE-*.md
+!docs/2026-09-02/say-repo-analysis/
+docs/2026-09-02/say-repo-analysis/*
+!docs/2026-09-02/say-repo-analysis/1/
+docs/2026-09-02/say-repo-analysis/1/*
+!docs/2026-09-02/say-repo-analysis/1/ANALYSIS-2026-09-02.md
 !docs/2026-09-20/
 docs/2026-09-20/*
 !docs/2026-09-20/vietnamese-transcription-pipeline/

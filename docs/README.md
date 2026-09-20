@@ -58,7 +58,7 @@ v2 doesn't change):
 6. [v1 Plan and checkpoints](2026-09-02/vietnamese-transcription-pipeline/1/PLAN-2026-09-02.md)
 7. [v1 Tasks and acceptance tests](2026-09-02/vietnamese-transcription-pipeline/1/TASKS-2026-09-02.md)
 
-The active records use the dated path `docs/<date>/<slug>/<version>/`. Update
+The active and historical records use the dated path `docs/<date>/<slug>/<version>/`. Update
 this page when the current phase changes; update the task tracker whenever a
 task changes status.
 
@@ -66,18 +66,19 @@ task changes status.
 
 The existing `speech_features` package is the feature-extraction foundation:
 
-- [Feature extraction](built-features/feature-extraction.md)
-- [Transcript formats](built-features/transcript-formats.md)
-- [Feature catalog](built-features/feature-catalog-v1.md)
-- [Neurodegenerative feature guide](built-features/neurodegenerative-feature-guide.md)
-- [Migration guide](built-features/migration-0.2.md)
-- [Repository analysis](built-features/repo-analysis-2026-09.md)
+- [Feature extraction](2026-08-06/say-vietnamese-speech-library/1/feature-extraction.md)
+- [Transcript formats](2026-08-06/say-vietnamese-speech-library/1/transcript-formats.md)
+- [Feature catalog](2026-08-06/say-vietnamese-speech-library/1/feature-catalog-v1.md)
+- [Neurodegenerative feature guide](2026-08-10/neurodegenerative-speech-feature-expansion/1/neurodegenerative-feature-guide.md)
+- [Migration guide](2026-08-06/say-vietnamese-speech-library/1/migration-0.2.md)
+- [Repository analysis](2026-09-02/say-repo-analysis/1/ANALYSIS-2026-09-02.md)
 
 ## Evidence and history
 
-- [Research evidence and inventory](research/)
-- [Completed feature-library implementation reports](implementation/)
-- [Earlier designs and plans](superpowers/)
+- [Research evidence and inventory](2026-08-10/neurodegenerative-speech-feature-expansion/1/)
+- [Initial Alzheimer pipeline](2026-08-06/vietnamese-alzheimer-feature-library/1/)
+- [SAY 0.2 library refactor milestone](2026-08-06/say-vietnamese-speech-library/1/)
+- [Library repository cleanup milestone](2026-08-08/library-repository-cleanup/1/)
+- [Neurodegenerative feature expansion milestone](2026-08-10/neurodegenerative-speech-feature-expansion/1/)
 
-The older folders are reference material from the completed feature-library
-work. They are not the status tracker for `say_transcribe`.
+All project records consistently follow the dated path `docs/<date>/<slug>/<version>/`.

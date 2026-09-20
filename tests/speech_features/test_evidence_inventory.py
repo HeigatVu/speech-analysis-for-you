@@ -24,9 +24,30 @@ from speech_features._legacy_feature_docs import LEGACY_FEATURE_DOCS
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = REPO_ROOT / "tools" / "render_neuro_feature_inventory.py"
-CSV_PATH = REPO_ROOT / "docs" / "research" / "neurodegenerative-speech-feature-inventory.csv"
-MARKDOWN_PATH = REPO_ROOT / "docs" / "research" / "neurodegenerative-speech-feature-inventory.md"
-CATALOG_PATH = REPO_ROOT / "docs" / "feature-catalog-v1.md"
+CSV_PATH = (
+    REPO_ROOT
+    / "docs"
+    / "2026-08-10"
+    / "neurodegenerative-speech-feature-expansion"
+    / "1"
+    / "neurodegenerative-speech-feature-inventory.csv"
+)
+MARKDOWN_PATH = (
+    REPO_ROOT
+    / "docs"
+    / "2026-08-10"
+    / "neurodegenerative-speech-feature-expansion"
+    / "1"
+    / "neurodegenerative-speech-feature-inventory.md"
+)
+CATALOG_PATH = (
+    REPO_ROOT
+    / "docs"
+    / "2026-08-06"
+    / "say-vietnamese-speech-library"
+    / "1"
+    / "feature-catalog-v1.md"
+)
 
 EXACT_LIVE_COUNT = 485
 EXACT_PACK_COUNTS = {
