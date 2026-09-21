@@ -34,6 +34,10 @@ log/
 .claude/
 .agents/
 
+AGENTS.md
+CLAUDE.md
+GEMINI.md
+
 # Keep local docs ignored except the navigation page and this pipeline's
 # canonical dated decision records.
 docs/*

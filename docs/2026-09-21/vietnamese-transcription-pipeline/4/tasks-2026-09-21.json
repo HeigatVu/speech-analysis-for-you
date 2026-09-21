@@ -15,7 +15,7 @@
     {
       "id": "T2",
       "title": "Channel-safe native task clips",
-      "status": "queued",
+      "status": "done",
       "branch": "feature/vietnamese-transcription-pipeline-task-2-channel-clips",
       "dependsOn": ["T1"],
       "acceptance": "Canonical clips use the declared channel and sample bounds, preserve native PCM format, expose a separate ASR view, and publish no waveform, transcript, absolute path, participant metadata, or raw exception."
