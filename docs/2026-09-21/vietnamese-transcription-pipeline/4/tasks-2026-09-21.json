@@ -1,0 +1,105 @@
+{
+  "schemaVersion": 1,
+  "slug": "vietnamese-transcription-pipeline",
+  "date": "2026-09-21",
+  "version": 4,
+  "tasks": [
+    {
+      "id": "T1",
+      "title": "Annotation contract and package scaffold",
+      "status": "done",
+      "branch": "feature/vietnamese-transcription-pipeline-task-1-annotations",
+      "dependsOn": [],
+      "acceptance": "Immutable approved-annotation v1 accepts safe synthetic input and rejects unknown, unsafe, malformed, overlapping, stale, or draft input with stable redacted errors."
+    },
+    {
+      "id": "T2",
+      "title": "Channel-safe native task clips",
+      "status": "queued",
+      "branch": "feature/vietnamese-transcription-pipeline-task-2-channel-clips",
+      "dependsOn": ["T1"],
+      "acceptance": "Canonical clips use the declared channel and sample bounds, preserve native PCM format, expose a separate ASR view, and publish no waveform, transcript, absolute path, participant metadata, or raw exception."
+    },
+    {
+      "id": "T3",
+      "title": "SoX/GSM common-channel profile",
+      "status": "queued",
+      "branch": "feature/vietnamese-transcription-pipeline-task-3-sox-profile",
+      "dependsOn": ["T2"],
+      "acceptance": "Opt-in profile performs the pinned GSM Full Rate round-trip, PCM16 decode, 16 kHz resampling, 200 Hz high-pass, and 3.4 kHz low-pass with deterministic alignment and stable missing-tool errors."
+    },
+    {
+      "id": "T4",
+      "title": "Loudness and DeepFilterNet3 stage",
+      "status": "queued",
+      "branch": "feature/vietnamese-transcription-pipeline-task-4-loudness-denoise",
+      "dependsOn": ["T3"],
+      "acceptance": "FFmpeg EBU loudnorm and hash-pinned DeepFilterNet3 produce a PCM16 artifact and privacy-safe sidecar; unmeasurable loudness, altered model, clipping, and alignment drift fail closed."
+    },
+    {
+      "id": "T5",
+      "title": "Silero VAD artifact",
+      "status": "queued",
+      "branch": "feature/vietnamese-transcription-pipeline-task-5-silero-vad",
+      "dependsOn": ["T4"],
+      "acceptance": "Silero v6.2.2 CPU ONNX is lazy, hash-checked, and emits bounded half-open integer-sample intervals using explicit defaults and stable failure codes."
+    },
+    {
+      "id": "T6",
+      "title": "`silero_timing` feature pack",
+      "status": "queued",
+      "branch": "feature/vietnamese-transcription-pipeline-task-6-silero-timing",
+      "dependsOn": ["T5"],
+      "acceptance": "Validated preprocessing intervals intersect approved participant turns and emit the specified svad_* metrics/issues without changing native packs or fabricating zeros."
+    },
+    {
+      "id": "T7",
+      "title": "PhoWhisper-medium to `SpeechDocument`",
+      "status": "queued",
+      "branch": "feature/vietnamese-transcription-pipeline-task-7-phowhisper-document",
+      "dependsOn": ["T2"],
+      "acceptance": "Fake ASR produces valid timed Vietnamese SpeechDocument output; real PhoWhisper-medium configuration is lazy and fails safely when CUDA/model dependencies are unavailable."
+    },
+    {
+      "id": "T8",
+      "title": "Vietnamese word grouping",
+      "status": "queued",
+      "branch": "feature/vietnamese-transcription-pipeline-task-8-word-grouping",
+      "dependsOn": ["T7"],
+      "acceptance": "Underthesea grouping preserves every Vietnamese surface syllable and Unicode distinction, never crosses utterances, and reports localized alignment failures."
+    },
+    {
+      "id": "T9",
+      "title": "Participant-safe JSON and CHAT",
+      "status": "queued",
+      "branch": "feature/vietnamese-transcription-pipeline-task-9-json-chat",
+      "dependsOn": ["T5", "T8"],
+      "acceptance": "Approved speaker turns produce reloadable JSON v2 and optional Chatter-validated CHAT while excluding examiner, ambiguous, and unapproved time."
+    },
+    {
+      "id": "T10",
+      "title": "CLI, provenance, and manifest routing",
+      "status": "queued",
+      "branch": "feature/vietnamese-transcription-pipeline-task-10-cli-routing",
+      "dependsOn": ["T6", "T9"],
+      "acceptance": "preprocess and explicit native/processed run routing are atomic and opt-in; manifest v2 remains compatible with optional relative preprocess_path and redacted provenance."
+    },
+    {
+      "id": "T11",
+      "title": "Private A/B evaluator and promotion gate",
+      "status": "queued",
+      "branch": "feature/vietnamese-transcription-pipeline-task-11-evaluator",
+      "dependsOn": ["T10"],
+      "acceptance": "Synthetic tests prove Vietnamese normalization and aggregate ASR, VAD, timing, DER, format, count, and seeded bootstrap reporting while private data stays untracked."
+    },
+    {
+      "id": "T12",
+      "title": "Private GPU pilot handoff",
+      "status": "blocked",
+      "branch": "chore/vietnamese-transcription-pipeline-task-12-pilot-handoff",
+      "dependsOn": ["T11"],
+      "acceptance": "After CUDA smoke checks succeed, the private PhoWhisper-medium pilot records redacted aggregate quality, runtime, memory, compatibility, and review evidence.",
+      "note": "Blocked because nvidia-smi cannot currently communicate with the NVIDIA driver; queue only after nvidia-smi and a PyTorch CUDA smoke pass."
+    }
+  ]
+}
