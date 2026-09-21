@@ -34,6 +34,10 @@ log/
 .claude/
 .agents/
 
+AGENTS.md
+CLAUDE.md
+GEMINI.md
+
 # Keep local docs ignored except the navigation page and this pipeline's
 # canonical dated decision records.
 docs/*
@@ -78,3 +82,17 @@ docs/2026-09-20/vietnamese-transcription-pipeline/3/*
 !docs/2026-09-20/vietnamese-transcription-pipeline/3/tasks-2026-09-20.json
 !docs/2026-09-20/vietnamese-transcription-pipeline/3/USAGE-*.md
 !docs/2026-09-20/vietnamese-transcription-pipeline/3/SPIKE-*.md
+!docs/2026-09-21/
+docs/2026-09-21/*
+!docs/2026-09-21/vietnamese-transcription-pipeline/
+docs/2026-09-21/vietnamese-transcription-pipeline/*
+!docs/2026-09-21/vietnamese-transcription-pipeline/4/
+docs/2026-09-21/vietnamese-transcription-pipeline/4/*
+!docs/2026-09-21/vietnamese-transcription-pipeline/4/SPEC-2026-09-21.md
+!docs/2026-09-21/vietnamese-transcription-pipeline/4/PLAN-2026-09-21.md
+!docs/2026-09-21/vietnamese-transcription-pipeline/4/RESEARCH-2026-09-21.md
+!docs/2026-09-21/vietnamese-transcription-pipeline/4/TASKS-2026-09-21.md
+!docs/2026-09-21/vietnamese-transcription-pipeline/4/tasks-2026-09-21.json
+!docs/2026-09-21/vietnamese-transcription-pipeline/4/USAGE-*.md
+!docs/2026-09-21/vietnamese-transcription-pipeline/4/BENCHMARK-*.md
+!docs/2026-09-21/vietnamese-transcription-pipeline/4/SPIKE-*.md

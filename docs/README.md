@@ -1,84 +1,53 @@
 # SAY documentation
 
-This page is the documentation map. Start with **Current phase**; the detailed
-task tracker is the source of truth for progress.
-
 ## Current phase
 
-**Phase 0 - Contract, pre-implementation**
+The Vietnamese transcription pipeline version 4 is planned and ready for human review.
+Implementation has not started, and `src/say_transcribe/` does not exist yet.
 
-We are designing `say_transcribe`, a local-only companion that turns Vietnamese
-audio into a draft JSON v2 or CHAT transcript. The draft is human-reviewed and
-then consumed by the existing `speech_features` extractor. Version 2 of the
-spec adds a TELL-derived audio preprocessing stage group (channel norm,
-loudness norm, denoise, VAD) that feeds only the ASR/diarization branch.
+Version 4 is based on a read-only inspection of the pilot corpus. The data consists of five
+continuous masters, not 55 ready clips. Rates and stereo layouts differ, most task/speaker
+boundaries require curation, and only one session has a near-complete draft CHAT transcript. The
+pipeline therefore starts with approved private annotations and explicit channel selection.
 
-v3 research (2026-09-20) found that this routing is likely wrong: channel
-normalization and denoising measurably hurt ASR accuracy in the cited
-literature, so `channel_norm` as wired in v2 has no consumer that benefits
-from it today (acoustic features read the original audio; ASR is hurt by the
-preprocessed audio). Only VAD is evidenced as beneficial for ASR. An addendum
-to the research (§9) notes a planned second recording device gives
-`channel_norm` a possible future consumer (cross-device comparability), so it
-is built but shipped off by default rather than deleted.
+The production baseline is deliberately small: PhoWhisper-medium, model-native segments,
+Vietnamese word grouping, optional draft diarization followed by human approval, existing SAY
+JSON/CHAT serializers, provenance, and Vietnamese evaluation. A new `tell-inspired-v1` audio
+profile is opt-in and evaluated in parallel; native selected-channel audio remains authoritative.
+It uses pinned SoX/FFmpeg/DeepFilterNet3/Silero stages and publishes a separate timing feature
+family only. Multiple ASR engines, LLM stages, forced alignment, morphosyntax, and automatic
+role assignment remain deferred.
 
-The v3 **plan** (2026-09-20) resolves the routing question by measurement
-instead of guessing: a timeboxed spike (T28) with a human checkpoint decides
-whether `channel_norm`/`denoise` ship on or off, before either is enabled.
-The plan also folds in the real corpus (5 participants, continuous
-recordings, 11 tasks each, 44.1 kHz/12-bit) which doesn't fit
-`speech_features`'s one-recording-per-task manifest yet — corpus intake and
-an eval harness are now tracked as tasks (T21-T23) ahead of the preprocessing
-work.
+## Active records
 
-- v2 spec and research are written. v3 research (with the F3 addendum) is
-  written. **v3 PLAN and TASKS are now written**, covering all 33 tasks
-  (v1's 21 + v2 preprocessing + v3 reliability work).
-- `src/say_transcribe/` does not exist yet — Phase 0 has not started.
-- Next: human review of the plan, then T1 (package scaffold) and T21 (corpus
-  intake) in parallel.
+Read in this order:
 
-## Active project records
+1. [v4 research and source-code guide](2026-09-21/vietnamese-transcription-pipeline/4/RESEARCH-2026-09-21.md)
+2. [v4 specification](2026-09-21/vietnamese-transcription-pipeline/4/SPEC-2026-09-21.md)
+3. [v4 implementation plan](2026-09-21/vietnamese-transcription-pipeline/4/PLAN-2026-09-21.md)
+4. [v4 task acceptance criteria](2026-09-21/vietnamese-transcription-pipeline/4/TASKS-2026-09-21.md)
+5. [v4 machine-readable tasks](2026-09-21/vietnamese-transcription-pipeline/4/tasks-2026-09-21.json)
 
-Read the **v3** plan first, then its research (it corrects a v2 decision),
-then the v2 spec; v1 is superseded but kept as a historical decision record
-(do not edit it):
+T1–T11 are queued. T12 (the real pilot) is blocked until the local NVIDIA driver is repaired and
+both `nvidia-smi` and a PyTorch CUDA smoke test succeed.
 
-1. [v3 Plan and checkpoints](2026-09-20/vietnamese-transcription-pipeline/3/PLAN-2026-09-20.md)
-2. [v3 Tasks and acceptance tests](2026-09-20/vietnamese-transcription-pipeline/3/TASKS-2026-09-20.md)
-3. [v3 Research (reliability methods, routing correction + device-change addendum)](2026-09-20/vietnamese-transcription-pipeline/3/RESEARCH-2026-09-20.md)
-4. [v2 Research (preprocessing delta)](2026-09-20/vietnamese-transcription-pipeline/2/RESEARCH-2026-09-20.md)
-5. [v2 Specification](2026-09-20/vietnamese-transcription-pipeline/2/SPEC-2026-09-20.md)
+## Historical records
 
-Superseded v1 (Q1-Q10, ASR/CHAT/LLM design - still authoritative for anything
-v2 doesn't change):
+Versions 1 through 3 are retained as decision history and must not be used as the active contract:
 
-4. [v1 Research](2026-09-02/vietnamese-transcription-pipeline/1/RESEARCH-2026-09-02.md)
-5. [v1 Specification](2026-09-02/vietnamese-transcription-pipeline/1/SPEC-2026-09-02.md)
-6. [v1 Plan and checkpoints](2026-09-02/vietnamese-transcription-pipeline/1/PLAN-2026-09-02.md)
-7. [v1 Tasks and acceptance tests](2026-09-02/vietnamese-transcription-pipeline/1/TASKS-2026-09-02.md)
+- [v3 research](2026-09-20/vietnamese-transcription-pipeline/3/RESEARCH-2026-09-20.md)
+- [v3 plan](2026-09-20/vietnamese-transcription-pipeline/3/PLAN-2026-09-20.md)
+- [v3 tasks](2026-09-20/vietnamese-transcription-pipeline/3/TASKS-2026-09-20.md)
+- [v2 specification](2026-09-20/vietnamese-transcription-pipeline/2/SPEC-2026-09-20.md)
+- [v1 specification](2026-09-02/vietnamese-transcription-pipeline/1/SPEC-2026-09-02.md)
 
-The active and historical records use the dated path `docs/<date>/<slug>/<version>/`. Update
-this page when the current phase changes; update the task tracker whenever a
-task changes status.
+Other feature-library records remain under their dated directories.
 
-## Built foundation
+## Reference material
 
-The existing `speech_features` package is the feature-extraction foundation:
-
-- [Feature extraction](2026-08-06/say-vietnamese-speech-library/1/feature-extraction.md)
-- [Transcript formats](2026-08-06/say-vietnamese-speech-library/1/transcript-formats.md)
-- [Feature catalog](2026-08-06/say-vietnamese-speech-library/1/feature-catalog-v1.md)
-- [Neurodegenerative feature guide](2026-08-10/neurodegenerative-speech-feature-expansion/1/neurodegenerative-feature-guide.md)
-- [Migration guide](2026-08-06/say-vietnamese-speech-library/1/migration-0.2.md)
-- [Repository analysis](2026-09-02/say-repo-analysis/1/ANALYSIS-2026-09-02.md)
-
-## Evidence and history
-
-- [Research evidence and inventory](2026-08-10/neurodegenerative-speech-feature-expansion/1/)
-- [Initial Alzheimer pipeline](2026-08-06/vietnamese-alzheimer-feature-library/1/)
-- [SAY 0.2 library refactor milestone](2026-08-06/say-vietnamese-speech-library/1/)
-- [Library repository cleanup milestone](2026-08-08/library-repository-cleanup/1/)
-- [Neurodegenerative feature expansion milestone](2026-08-10/neurodegenerative-speech-feature-expansion/1/)
-
-All project records consistently follow the dated path `docs/<date>/<slug>/<version>/`.
+- [talkbank-tools + chatter repo map](repo-map/batchalign3/README.md) — directory/file-level
+  map of two upstream TalkBank repositories (Batchalign3 ML pipeline and the CHAT format
+  authority), for reference when adopting CHAT serialization or pipeline patterns.
+- [TalkBank/batchalign repo map](repo-map/batchalign-official/README.md) — a third,
+  related repository: the same Batchalign3 product under the TalkBank org and a Bazel
+  build, diverged from the map above.
