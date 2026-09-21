@@ -23,7 +23,7 @@
     {
       "id": "T3",
       "title": "SoX/GSM common-channel profile",
-      "status": "queued",
+      "status": "done",
       "branch": "feature/vietnamese-transcription-pipeline-task-3-sox-profile",
       "dependsOn": ["T2"],
       "acceptance": "Opt-in profile performs the pinned GSM Full Rate round-trip, PCM16 decode, 16 kHz resampling, 200 Hz high-pass, and 3.4 kHz low-pass with deterministic alignment and stable missing-tool errors."
