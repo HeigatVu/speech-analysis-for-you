@@ -25,6 +25,7 @@ transcribe = [
     "accelerate",
     "pyannote.audio>=3.1",
     "underthesea>=6.8.0",
+    "stanza>=1.14.0",
 ]
 
 [tool.ruff]

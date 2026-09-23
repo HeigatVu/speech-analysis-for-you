@@ -63,7 +63,7 @@
     {
       "id": "T8",
       "title": "Stanza vi → %mor/%gra projection",
-      "status": "queued",
+      "status": "done",
       "branch": "feat/v5-t8-morphosyntax",
       "dependsOn": ["T7"],
       "acceptance": "A Chatter fixture with _-joined words in %mor/%gra validates before any real-Stanza test is trusted; %mor keeps the _ joiner in lemma; %gra enforces the root-head-0/REL==ROOT invariant and the (n+1)|root|PUNCT terminator; comma renders as cm|cm; CHAT_MORPHOSYNTAX_UNAVAILABLE omits both tiers for only the failing utterance; offline unit tests run against a fake Stanza pipeline; the transcribe extra in pyproject.toml gains stanza."
