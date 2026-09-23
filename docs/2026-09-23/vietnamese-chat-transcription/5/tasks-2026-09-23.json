@@ -79,7 +79,7 @@
     {
       "id": "T10",
       "title": "CLI — diagnose, run, evaluate",
-      "status": "queued",
+      "status": "done",
       "branch": "feat/v5-t10-cli",
       "dependsOn": ["T9"],
       "acceptance": "[project.scripts] gains say-transcribe = \"say_transcribe.cli:main\"; [tool.setuptools.packages.find].include covers say_transcribe*; CLI tests cover exit codes 0/2/3/4 per SPEC §5; no dropped v4 error codes appear; no absolute path, transcript text, or raw exception appears in any CLI log/error line."

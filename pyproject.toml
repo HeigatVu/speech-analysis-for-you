@@ -14,6 +14,7 @@ dependencies = ["numpy>=1.26", "pandas>=2.1", "scipy>=1.11"]
 
 [project.scripts]
 say-features = "speech_features.cli:main"
+say-transcribe = "say_transcribe.cli:main"
 
 [project.optional-dependencies]
 legacy-ad = ["scikit-learn>=1.3"]
@@ -35,7 +36,7 @@ exclude = ["*.ipynb"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
-include = ["speech_features*"]
+include = ["speech_features*", "say_transcribe*"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
