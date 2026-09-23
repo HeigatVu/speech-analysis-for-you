@@ -95,7 +95,7 @@
     {
       "id": "T12",
       "title": "Private GPU pilot",
-      "status": "queued",
+      "status": "done",
       "branch": "feat/v5-t12-pilot",
       "dependsOn": ["T10", "T11"],
       "acceptance": "nvidia-smi succeeds on the host (verified 2026-09-23); the pipeline runs on the 5 pilot masters; one Delaware-shaped .cha (main tier + %wor + %mor + %gra) per session is written to the private output dir; metrics from T11 are recorded privately, never in tracked docs; only aggregate numbers (SyER/CER/DER/tier agreement/pass rate) enter tracked docs.",
