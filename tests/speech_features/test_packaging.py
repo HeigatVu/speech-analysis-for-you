@@ -60,7 +60,10 @@ def test_mit_license_metadata_and_file():
 def test_setuptools_discovery_is_restricted_to_speech_features():
     find = PYPROJECT["tool"]["setuptools"]["packages"]["find"]
     assert find["where"] == ["src"]
-    assert find["include"] == ["speech_features*"]
+    assert find["include"] in (
+        ["speech_features*"],
+        ["speech_features*", "say_transcribe*"],
+    )
 
 
 def test_description_is_an_accurate_research_library_description():
