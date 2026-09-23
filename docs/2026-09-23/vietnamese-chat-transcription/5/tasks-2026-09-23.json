@@ -87,7 +87,7 @@
     {
       "id": "T11",
       "title": "Evaluator — CER/WER/SyER/DER + bootstrap",
-      "status": "queued",
+      "status": "done",
       "branch": "feat/v5-t11-evaluate",
       "dependsOn": ["T9"],
       "acceptance": "Tests run against synthetic reference/hypothesis .cha file pairs, not real corpus data; bootstrap is seeded and deterministic across runs; the report never contains per-utterance text or per-speaker timestamps, aggregate metrics only."

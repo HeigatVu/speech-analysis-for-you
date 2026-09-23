@@ -122,6 +122,18 @@ def test_cli_evaluate_happy_path(tmp_path: Path):
     pred_dir = tmp_path / "pred"
     gold_dir.mkdir()
     pred_dir.mkdir()
+    dummy_cha = """@UTF8
+@Begin
+@Languages:\tvie
+@Participants:\tPAR Participant, INV Investigator
+@ID:\tvie|corpus|PAR|||||Participant|||
+@ID:\tvie|corpus|INV|||||Investigator|||
+@Media:\ts01, audio
+*PAR:\txin chào .\t\x150_1000\x15
+@End
+"""
+    (gold_dir / "s01.cha").write_text(dummy_cha, encoding="utf-8")
+    (pred_dir / "s01.cha").write_text(dummy_cha, encoding="utf-8")
     out_json = tmp_path / "report.json"
 
     ret = main(["evaluate", str(gold_dir), str(pred_dir), "--out", str(out_json)])
