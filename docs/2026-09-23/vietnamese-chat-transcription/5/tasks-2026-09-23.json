@@ -55,7 +55,7 @@
     {
       "id": "T7",
       "title": "Underthesea word grouping",
-      "status": "queued",
+      "status": "done",
       "branch": "feat/v5-t7-word-grouping",
       "dependsOn": ["T4"],
       "acceptance": "NFC, tone marks, and d/đ round-trip through grouping unchanged; grouping never merges tokens across two different ASR utterances; WORD_GROUPING_UNALIGNED is raised and tested for a syllable-count mismatch; the transcribe extra in pyproject.toml gains underthesea."
