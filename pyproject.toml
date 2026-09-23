@@ -19,6 +19,11 @@ say-features = "speech_features.cli:main"
 legacy-ad = ["scikit-learn>=1.3"]
 standardized-acoustic = ["opensmile>=2.5,<3"]
 dev = ["pytest>=8.0.0", "ruff>=0.1.0"]
+transcribe = [
+    "torch>=2.0",
+    "transformers>=4.36",
+    "accelerate",
+]
 
 [tool.ruff]
 line-length = 100

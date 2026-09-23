@@ -39,7 +39,7 @@
     {
       "id": "T5",
       "title": "PhoWhisper ASR → timed segments",
-      "status": "queued",
+      "status": "done",
       "branch": "feat/v5-t5-asr",
       "dependsOn": ["T4"],
       "acceptance": "Source WAV SHA-256 is computed and threaded through to the CHAT writer; word-level start_end timestamps are captured per word and threaded through to T9 (%wor), with CHAT_WORD_TIMING_UNAVAILABLE recorded when unavailable; importing say_transcribe does not import torch/transformers; GPU_UNAVAILABLE and MODEL_UNAVAILABLE are distinct tested error paths; unit tests run fully offline against a fake model; the transcribe extra in pyproject.toml covers this task's dependencies."
