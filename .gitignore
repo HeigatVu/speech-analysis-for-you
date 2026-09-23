@@ -31,10 +31,11 @@ log/
 .mimosa/
 .codegraph/
 .codex/
-/.agent-state/
+.agent-state/
 .claude/
 .agents/
 sound/
+gan-harness/
 
 # Guided LLM models
 AGENTS.md

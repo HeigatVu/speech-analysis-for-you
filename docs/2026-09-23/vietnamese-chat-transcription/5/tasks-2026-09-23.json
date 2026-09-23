@@ -47,7 +47,7 @@
     {
       "id": "T6",
       "title": "pyannote diarization draft",
-      "status": "queued",
+      "status": "done",
       "branch": "feat/v5-t6-diarize",
       "dependsOn": ["T5"],
       "acceptance": "Offline unit test with a fake diarizer exercises the talk-time PAR/INV rule; output marks labels as draft; GPU_UNAVAILABLE/MODEL_UNAVAILABLE are reused from T5, not redefined; the transcribe extra in pyproject.toml gains this task's dependency."
