@@ -93,6 +93,9 @@ def decode_chat(text: str, *, source: str = "", sha256: str | None = None) -> Sp
         text = text[1:]
     lines = [line.rstrip("\r\n") for line in text.splitlines() if line.strip()]
 
+    if lines and lines[0] == "@UTF8":
+        lines = lines[1:]
+
     if not lines or lines[0] != "@Begin":
         raise _invalid("CHAT file must start with @Begin")
     if lines.count("@Begin") != 1:
@@ -183,11 +186,21 @@ def decode_chat(text: str, *, source: str = "", sha256: str | None = None) -> Sp
                 continue
             if name == "@ID":
                 fields = [f.strip() for f in rest.split("|")]
-                if len(fields) < 4 or not fields[1]:
+                if len(fields) < 3 or not fields[1]:
                     raise _invalid(f"malformed @ID header {line!r}")
                 if fields[0] != "vie":
                     raise _invalid(f"@ID language must be 'vie', got {fields[0]!r}")
-                id_info[fields[1]] = (nfc(fields[2]), fields[3])
+                # Support standard TalkBank (@ID: lang|corpus|CODE|...) and legacy (@ID: lang|CODE|...)
+                participant_codes = {c for c, _ in participants}
+                if len(fields) >= 4 and fields[2] in participant_codes:
+                    spk_code = fields[2]
+                    spk_name = fields[7] if len(fields) > 7 and fields[7] else fields[3]
+                    spk_role = fields[8] if len(fields) > 8 and fields[8] else fields[3]
+                else:
+                    spk_code = fields[1]
+                    spk_name = fields[2] if len(fields) > 2 else ""
+                    spk_role = fields[3] if len(fields) > 3 else ""
+                id_info[spk_code] = (nfc(spk_name), spk_role)
                 continue
             if name == "@Media":
                 saw_media = True
@@ -233,6 +246,16 @@ def decode_chat(text: str, *, source: str = "", sha256: str | None = None) -> Sp
             code = tier[1:]
             if code not in {c for c, _ in participants}:
                 raise _invalid(f"speaker tier references unknown speaker {code!r}")
+
+            # Extract optional inline media bullet: \x15start_end\x15 or •start_end•
+            inline_start_s = None
+            inline_end_s = None
+            bullet_match = re.search(r"[\x15•](\d+)_(\d+)[\x15•]", content)
+            if bullet_match:
+                inline_start_s = int(bullet_match.group(1)) / 1000.0
+                inline_end_s = int(bullet_match.group(2)) / 1000.0
+                content = content[: bullet_match.start()] + content[bullet_match.end() :]
+
             items = content.strip().split()
             tokens = []
             for i, item in enumerate(items):
@@ -250,8 +273,8 @@ def decode_chat(text: str, *, source: str = "", sha256: str | None = None) -> Sp
                 "tokens": tokens,
                 "content": [t for t in tokens if t.kind in _CONTENT_KINDS],
                 "tiers": {},
-                "start_s": None,
-                "end_s": None,
+                "start_s": inline_start_s,
+                "end_s": inline_end_s,
             }
             continue
         raise _invalid(f"unexpected line {line!r}")

@@ -71,7 +71,7 @@
     {
       "id": "T9",
       "title": "CHAT writer",
-      "status": "queued",
+      "status": "done",
       "branch": "feat/v5-t9-chat-writer",
       "dependsOn": ["T5", "T6", "T8"],
       "acceptance": "Chatter validates a synthetic fixture session end to end; round-trip through src/speech_features/formats/chat.py preserves %wor/%mor/%gra content unchanged; %wor carries word-level start_end spans in Delaware shape; the source_sha256 and draft-speaker @Comment lines are present exactly once each; utterances missing %mor/%gra still get a main tier line and bullet."
