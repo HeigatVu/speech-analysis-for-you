@@ -10,6 +10,8 @@ from pathlib import Path
 import re
 from typing import Any
 
+from say_transcribe.denoise import DenoiserSpec
+
 _REQUIRED_FIELDS = (
     "session_id",
     "participant_id",
@@ -21,6 +23,8 @@ _REQUIRED_FIELDS = (
     "asr_revision",
 )
 _SPLITS = ("dev", "held_out")
+_DENOISER_ARMS = ("PF", "PD")
+_DENOISER_FIELDS = ("python", "worker", "checkpoint")
 _ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
 _SHA256_PATTERN = re.compile(r"^[0-9a-fA-F]{64}$")
 
@@ -118,3 +122,44 @@ def load_manifest(path: Path) -> tuple[ManifestRow, ...]:
             raise ManifestError(f"manifest row {index}: duplicate session_id")
         seen.add(row.session_id)
     return rows
+
+
+def load_denoiser_specs(path: Path) -> dict[str, DenoiserSpec]:
+    """Load the optional top-level "denoisers" mapping: arm id -> isolated env spec.
+
+    Keys are arm ids ("PF", "PD"); an absent key means that arm is not run.
+    Values carry the isolated environment's interpreter, worker script, and
+    local checkpoint. Messages name keys and fields only, never values.
+    """
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except OSError:
+        raise ManifestError("manifest file could not be read") from None
+    except json.JSONDecodeError:
+        raise ManifestError("manifest is not valid JSON") from None
+
+    denoisers = data.get("denoisers", {})
+    if not isinstance(denoisers, dict):
+        raise ManifestError("manifest 'denoisers' must be an object")
+    specs: dict[str, DenoiserSpec] = {}
+    for arm, config in denoisers.items():
+        if arm not in _DENOISER_ARMS:
+            raise ManifestError(f"manifest denoisers: unsupported arm '{arm}'")
+        if not isinstance(config, dict):
+            raise ManifestError(f"manifest denoisers.{arm}: entry must be an object")
+        missing = [field for field in _DENOISER_FIELDS if field not in config]
+        if missing:
+            raise ManifestError(f"manifest denoisers.{arm}: missing field '{missing[0]}'")
+        paths: dict[str, Path] = {}
+        for field in _DENOISER_FIELDS:
+            value = config[field]
+            if not isinstance(value, str) or not value.strip():
+                raise ManifestError(f"manifest denoisers.{arm}: field '{field}' must be a non-empty string")
+            paths[field] = Path(value)
+        specs[arm] = DenoiserSpec(
+            name=arm,
+            python=paths["python"],
+            worker=paths["worker"],
+            checkpoint=paths["checkpoint"],
+        )
+    return specs

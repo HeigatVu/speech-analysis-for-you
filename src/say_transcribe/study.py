@@ -1,15 +1,19 @@
 """Opt-in preprocessing A/B study: manifest-driven arms, scoring, and records.
 
-The native arms N0/N1 go through the exact ``say-transcribe compare`` code
-paths (``transcribe`` for baseline, ``transcribe_windows`` +
-``result_from_windows`` for ``vad_asr``); nothing here re-implements ASR or VAD.
-Every artifact this module writes belongs in a private output directory.
+Arms (SPEC "Comparison arms"): N0 baseline and N1 ``vad_asr`` run through the
+exact ``say-transcribe compare`` code paths (``transcribe``; ``transcribe_windows``
++ ``result_from_windows``); P0 runs the preprocessing profile on the same
+declared channel; PF/PD denoise the P0 signal through isolated-environment
+workers. Nothing here re-implements ASR, VAD, or DSP stages. Every artifact this
+module writes belongs in a private output directory.
 """
 
 from dataclasses import dataclass
 import json
 from pathlib import Path
 from typing import Any
+
+import numpy as np
 
 from say_transcribe.asr import (
     AsrResult,
@@ -20,12 +24,17 @@ from say_transcribe.asr import (
     transcribe_windows,
 )
 from say_transcribe.audio import extract_channel, read_wav, resample_to_16kHz
+from say_transcribe.denoise import DenoiserSpec, denoise_pcm
 from say_transcribe.evaluate import extract_session_items, items_from_texts, score_uncapped
-from say_transcribe.manifest import ManifestRow, load_manifest
+from say_transcribe.manifest import ManifestRow, load_denoiser_specs, load_manifest
+from say_transcribe.profile import apply_p0_profile
 from say_transcribe.vad import get_speech_windows, merge_asr_windows
 
 # Frozen per SPEC: value dev-selected in the v5 pilot; not tunable per arm.
 STUDY_VAD_THRESHOLD = 0.2
+
+# SPEC "Comparison arms" order; an arm is recorded only when its inputs exist.
+ARM_ORDER = ("N0", "N1", "P0", "PF", "PD")
 
 
 class StudyError(Exception):
@@ -38,9 +47,11 @@ class StudyError(Exception):
 
 
 @dataclass(frozen=True)
-class NativeArms:
-    baseline: AsrResult
-    vad_asr: AsrResult
+class AudioViews:
+    channel_samples: np.ndarray
+    sample_rate: int
+    sample_width: int
+    audio_16k: np.ndarray
 
 
 def verify_source(row: ManifestRow) -> str:
@@ -54,8 +65,38 @@ def verify_source(row: ManifestRow) -> str:
     return actual
 
 
-def compute_native_arms(row: ManifestRow, source_sha256: str, device: str, backend: Any) -> NativeArms:
-    """Compute N0 (baseline) and N1 (vad_asr) via the compare command's code paths."""
+def prepare_views(row: ManifestRow) -> AudioViews:
+    """Decode once: declared channel at native rate plus the 16 kHz ASR view."""
+    # ponytail: this decode+VAD glue mirrors cli.cmd_compare (whose tests patch
+    # cli-module names); N0's transcribe() still re-decodes internally, same
+    # parity as compare. Unify with cmd_compare if a third consumer appears.
+    audio = read_wav(row.audio_path)
+    channel_samples = extract_channel(audio, row.channel_index)
+    audio_16k = resample_to_16kHz(channel_samples, audio.sample_rate, audio.sample_width)
+    return AudioViews(
+        channel_samples=channel_samples,
+        sample_rate=audio.sample_rate,
+        sample_width=audio.sample_width,
+        audio_16k=audio_16k,
+    )
+
+
+def compute_vad_arm(audio_16k: np.ndarray, source_sha256: str, backend: Any) -> AsrResult:
+    """The compare command's ``vad_asr`` path on any 16 kHz mono signal."""
+    speech_windows = get_speech_windows(audio_16k, threshold=STUDY_VAD_THRESHOLD)
+    asr_windows = merge_asr_windows(speech_windows)
+    cached_windows = transcribe_windows(audio_16k, asr_windows, backend)
+    return result_from_windows(audio_16k, source_sha256, cached_windows)
+
+
+def compute_arm_results(
+    row: ManifestRow,
+    source_sha256: str,
+    device: str,
+    backend: Any,
+    denoisers: dict[str, DenoiserSpec],
+) -> dict[str, AsrResult]:
+    """Compute every arm whose inputs are configured, in SPEC arm order."""
     baseline = transcribe(
         audio_path=row.audio_path,
         channel_index=row.channel_index,
@@ -64,21 +105,24 @@ def compute_native_arms(row: ManifestRow, source_sha256: str, device: str, backe
     )
     if baseline.source_sha256.lower() != source_sha256.lower():
         raise StudyError("SOURCE_HASH_MISMATCH", "Master audio changed during processing")
-    # ponytail: decode+VAD glue mirrors cli.cmd_compare verbatim (its tests patch
-    # cli-module names, so unifying now would churn them); N0's transcribe() call
-    # re-decodes internally — same parity as compare. Unify both into one shared
-    # prepare+arms helper when T2's profile reshapes this sequence for P0/PF/PD.
-    audio = read_wav(row.audio_path)
-    channel_samples = extract_channel(audio, row.channel_index)
-    audio_16k = resample_to_16kHz(channel_samples, audio.sample_rate, audio.sample_width)
-    speech_windows = get_speech_windows(audio_16k, threshold=STUDY_VAD_THRESHOLD)
-    asr_windows = merge_asr_windows(speech_windows)
-    cached_windows = transcribe_windows(audio_16k, asr_windows, backend)
-    vad_asr = result_from_windows(audio_16k, source_sha256, cached_windows)
-    return NativeArms(baseline=baseline, vad_asr=vad_asr)
+
+    views = prepare_views(row)
+    profile = apply_p0_profile(views.channel_samples, views.sample_rate, views.sample_width)
+
+    signals: dict[str, np.ndarray] = {"N1": views.audio_16k, "P0": profile.samples}
+    if "PF" in denoisers:
+        signals["PF"] = denoise_pcm(profile.samples, profile.sample_rate, denoisers["PF"])
+    if "PD" in denoisers:
+        signals["PD"] = denoise_pcm(profile.samples, profile.sample_rate, denoisers["PD"])
+
+    results: dict[str, AsrResult] = {"N0": baseline}
+    for name in ARM_ORDER[1:]:
+        if name in signals:
+            results[name] = compute_vad_arm(signals[name], source_sha256, backend)
+    return results
 
 
-def session_record(row: ManifestRow, arms: NativeArms) -> dict[str, Any]:
+def session_record(row: ManifestRow, arms: dict[str, AsrResult]) -> dict[str, Any]:
     """Build the private per-session record: arm predictions plus uncapped scores."""
     try:
         reference_text = row.reference_path.read_text(encoding="utf-8")
@@ -87,6 +131,7 @@ def session_record(row: ManifestRow, arms: NativeArms) -> dict[str, Any]:
     gold = extract_session_items(reference_text)
     if not gold["syllables"]:
         raise StudyError("INVALID_ARGUMENT", "reference transcript contains no scorable text")
+
     record: dict[str, Any] = {
         "session_id": row.session_id,
         "participant_id": row.participant_id,
@@ -96,7 +141,10 @@ def session_record(row: ManifestRow, arms: NativeArms) -> dict[str, Any]:
         "asr_revision": row.asr_revision,
         "arms": {},
     }
-    for name, result in (("N0", arms.baseline), ("N1", arms.vad_asr)):
+    for name in ARM_ORDER:
+        if name not in arms:
+            continue
+        result = arms[name]
         hyp = items_from_texts([segment.text for segment in result.segments])
         record["arms"][name] = {
             "segments": [
@@ -125,12 +173,16 @@ def run_study(
     device: str = "cpu",
     asr_backend: Any = None,
 ) -> int:
-    """Run the native arms for every manifest row into a private output directory."""
+    """Run the study arms for every manifest row into a private output directory."""
     rows = load_manifest(manifest_path)
+    denoisers = load_denoiser_specs(manifest_path)
     if asr_backend is None:
         asr_backend = PhoWhisperBackend(device=device)
     for row in rows:
         source_sha256 = verify_source(row)
-        arms = compute_native_arms(row, source_sha256, device, asr_backend)
+        arms = compute_arm_results(row, source_sha256, device, asr_backend, denoisers)
+        # Re-verify after the (potentially hour-long) arm chain so a master swapped
+        # mid-run cannot mix sources into one record.
+        verify_source(row)
         write_session_record(session_record(row, arms), out_dir)
     return 0

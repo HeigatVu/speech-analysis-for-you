@@ -15,9 +15,11 @@ from say_transcribe.asr import (
 )
 from say_transcribe.audio import AudioPreparationError, extract_channel, read_wav, resample_to_16kHz
 from say_transcribe.chat_writer import UtteranceRecord, write_chat_file
+from say_transcribe.denoise import DenoiseError
 from say_transcribe.diarize import PyannoteBackend, WavlmClusterBackend, assign_speakers
 from say_transcribe.manifest import ManifestError
 from say_transcribe.morphosyntax import StanzaBackend, project_morphosyntax
+from say_transcribe.profile import ProfileError
 from say_transcribe.study import StudyError, run_study
 from say_transcribe.word_grouping import GroupedWord, WordGroupingError, group_utterance_words
 from say_transcribe.vad import VADUnavailableError, get_speech_windows, merge_asr_windows
@@ -498,6 +500,9 @@ def cmd_preprocess_study(manifest: Path, out_dir: Path, device: str = "cpu") -> 
     except AsrError as error:
         sys.stderr.write(f"[{error.code}] {error.message}\n")
         return 3 if error.code in ("GPU_UNAVAILABLE", "MODEL_UNAVAILABLE") else 4
+    except (DenoiseError, ProfileError) as error:
+        sys.stderr.write(f"[{error.code}] {error.message}\n")
+        return 3 if error.code == "DENOISER_UNAVAILABLE" else 4
     except AudioPreparationError as error:
         sys.stderr.write(f"[{error.code}] {error.message}\n")
         return 4

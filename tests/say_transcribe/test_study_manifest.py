@@ -7,7 +7,8 @@ import pytest
 
 from say_transcribe import cli
 from say_transcribe.asr import AsrResult, AsrSegment
-from say_transcribe.manifest import ManifestError, ManifestRow, load_manifest
+from say_transcribe.denoise import DenoiseError
+from say_transcribe.manifest import ManifestError, ManifestRow, load_denoiser_specs, load_manifest
 from say_transcribe.study import StudyError, run_study, session_record, verify_source, write_session_record
 
 _ROW_SHA256 = "ab" * 32
@@ -28,9 +29,12 @@ def _row(tmp_path: Path, **overrides) -> dict:
     return row
 
 
-def _write_manifest(tmp_path: Path, rows: list) -> Path:
+def _write_manifest(tmp_path: Path, rows: list, denoisers: dict | None = None) -> Path:
     manifest = tmp_path / "manifest.json"
-    manifest.write_text(json.dumps({"rows": rows}), encoding="utf-8")
+    payload: dict = {"rows": rows}
+    if denoisers is not None:
+        payload["denoisers"] = denoisers
+    manifest.write_text(json.dumps(payload), encoding="utf-8")
     return manifest
 
 
@@ -156,10 +160,10 @@ def test_verify_source_wraps_missing_audio_without_paths(tmp_path: Path):
 
 def test_session_record_rejects_missing_reference(tmp_path: Path):
     row = load_manifest(_write_manifest(tmp_path, [_row(tmp_path)]))[0]
-    arms = SimpleNamespace(
-        baseline=_fake_result("tôi là", _ROW_SHA256),
-        vad_asr=_fake_result("tôi là", _ROW_SHA256),
-    )
+    arms = {
+        "N0": _fake_result("tôi là", _ROW_SHA256),
+        "N1": _fake_result("tôi là", _ROW_SHA256),
+    }
 
     with pytest.raises(StudyError) as excinfo:
         session_record(row, arms)
@@ -172,10 +176,10 @@ def test_session_record_rejects_missing_reference(tmp_path: Path):
 def test_session_record_rejects_empty_reference(tmp_path: Path):
     (tmp_path / "ref.cha").write_text("@Begin\n@End\n", encoding="utf-8")
     row = load_manifest(_write_manifest(tmp_path, [_row(tmp_path)]))[0]
-    arms = SimpleNamespace(
-        baseline=_fake_result("tôi là", _ROW_SHA256),
-        vad_asr=_fake_result("tôi là", _ROW_SHA256),
-    )
+    arms = {
+        "N0": _fake_result("tôi là", _ROW_SHA256),
+        "N1": _fake_result("tôi là", _ROW_SHA256),
+    }
 
     with pytest.raises(StudyError) as excinfo:
         session_record(row, arms)
@@ -224,6 +228,10 @@ def test_native_arms_use_compare_code_paths_and_score_both(tmp_path: Path, monke
     )
     monkeypatch.setattr("say_transcribe.study.extract_channel", lambda audio, channel: np.zeros(4))
     monkeypatch.setattr("say_transcribe.study.resample_to_16kHz", lambda *args: np.zeros(4))
+    monkeypatch.setattr(
+        "say_transcribe.study.apply_p0_profile",
+        lambda samples, rate, width: SimpleNamespace(samples=np.zeros(4), sample_rate=16000),
+    )
     monkeypatch.setattr("say_transcribe.study.get_speech_windows", lambda audio, *, threshold: [(0, 4)])
     monkeypatch.setattr("say_transcribe.study.merge_asr_windows", lambda windows: windows)
     monkeypatch.setattr(
@@ -250,25 +258,184 @@ def test_native_arms_use_compare_code_paths_and_score_both(tmp_path: Path, monke
     record = json.loads((out_dir / "s1.json").read_text(encoding="utf-8"))
     assert record["session_id"] == "s1"
     assert record["split"] == "dev"
-    assert set(record["arms"]) == {"N0", "N1"}
+    # Without a denoisers config only the native + P0 arms run.
+    assert set(record["arms"]) == {"N0", "N1", "P0"}
     for arm in record["arms"].values():
         assert set(arm["scores"]) == {"syer", "cer", "wer"}
         assert arm["segments"][0]["text"]
+
+
+def test_denoiser_arms_run_when_configured(tmp_path: Path, monkeypatch):
+    ref = tmp_path / "ref.cha"
+    ref.write_text("@Begin\n*PAR:\ttôi là sinh_viên .\n@End\n", encoding="utf-8")
+    for name in ("python", "worker", "checkpoint"):
+        (tmp_path / name).write_text("stub", encoding="utf-8")
+    manifest = _write_manifest(
+        tmp_path,
+        [_row(tmp_path)],
+        denoisers={
+            "PD": {
+                "python": str(tmp_path / "python"),
+                "worker": str(tmp_path / "worker"),
+                "checkpoint": str(tmp_path / "checkpoint"),
+            }
+        },
+    )
+    seen_specs = []
+
+    monkeypatch.setattr("say_transcribe.study.compute_sha256", lambda path: _ROW_SHA256)
+    monkeypatch.setattr(
+        "say_transcribe.study.transcribe",
+        lambda **kwargs: _fake_result("tôi là", _ROW_SHA256),
+    )
+    monkeypatch.setattr(
+        "say_transcribe.study.read_wav",
+        lambda path: SimpleNamespace(sample_rate=16000, sample_width=2),
+    )
+    monkeypatch.setattr("say_transcribe.study.extract_channel", lambda audio, channel: np.zeros(4))
+    monkeypatch.setattr("say_transcribe.study.resample_to_16kHz", lambda *args: np.zeros(4))
+    monkeypatch.setattr(
+        "say_transcribe.study.apply_p0_profile",
+        lambda samples, rate, width: SimpleNamespace(samples=np.zeros(4), sample_rate=16000),
+    )
+    monkeypatch.setattr(
+        "say_transcribe.study.denoise_pcm",
+        lambda samples, rate, spec: (seen_specs.append(spec), np.zeros(4))[1],
+    )
+    monkeypatch.setattr("say_transcribe.study.get_speech_windows", lambda audio, *, threshold: [(0, 4)])
+    monkeypatch.setattr("say_transcribe.study.merge_asr_windows", lambda windows: windows)
+    monkeypatch.setattr("say_transcribe.study.transcribe_windows", lambda audio, windows, backend: ())
+    monkeypatch.setattr(
+        "say_transcribe.study.result_from_windows",
+        lambda audio, sha, windows: _fake_result("tôi là sinh_viên", _ROW_SHA256),
+    )
+
+    out_dir = tmp_path / "out"
+    run_study(manifest_path=manifest, out_dir=out_dir, asr_backend=object())
+
+    record = json.loads((out_dir / "s1.json").read_text(encoding="utf-8"))
+    assert set(record["arms"]) == {"N0", "N1", "P0", "PD"}
+    assert [spec.name for spec in seen_specs] == ["PD"]
 
 
 def test_session_record_scores_against_reference(tmp_path: Path):
     ref = tmp_path / "ref.cha"
     ref.write_text("@Begin\n*PAR:\ttôi là .\n@End\n", encoding="utf-8")
     row = load_manifest(_write_manifest(tmp_path, [_row(tmp_path)]))[0]
-    arms = SimpleNamespace(
-        baseline=_fake_result("tôi là", _ROW_SHA256),
-        vad_asr=_fake_result("tôi là sinh viên năm hai ba", _ROW_SHA256),
-    )
+    arms = {
+        "N0": _fake_result("tôi là", _ROW_SHA256),
+        "N1": _fake_result("tôi là sinh viên năm hai ba", _ROW_SHA256),
+    }
 
     record = session_record(row, arms)
 
     assert record["arms"]["N0"]["scores"]["syer"]["rate"] == 0.0
     assert record["arms"]["N1"]["scores"]["syer"]["rate"] > 1.0
+
+
+def test_load_denoiser_specs_parses_and_validates(tmp_path: Path):
+    config = {
+        "python": "/venv/bin/python",
+        "worker": "/opt/worker.py",
+        "checkpoint": "/models/df3",
+    }
+    manifest = _write_manifest(tmp_path, [_row(tmp_path)], denoisers={"PD": config})
+
+    specs = load_denoiser_specs(manifest)
+
+    assert set(specs) == {"PD"}
+    assert specs["PD"].name == "PD"
+    assert specs["PD"].python == Path("/venv/bin/python")
+
+    assert load_denoiser_specs(_write_manifest(tmp_path, [_row(tmp_path)])) == {}
+
+    with pytest.raises(ManifestError):
+        load_denoiser_specs(_write_manifest(tmp_path, [_row(tmp_path)], denoisers={"N0": config}))
+    broken = dict(config)
+    del broken["checkpoint"]
+    with pytest.raises(ManifestError):
+        load_denoiser_specs(_write_manifest(tmp_path, [_row(tmp_path)], denoisers={"PD": broken}))
+    with pytest.raises(ManifestError):
+        load_denoiser_specs(
+            _write_manifest(tmp_path, [_row(tmp_path)], denoisers={"PD": dict(config, worker="")})
+        )
+
+
+def test_mid_run_master_swap_raises_before_writing(tmp_path: Path, monkeypatch):
+    ref = tmp_path / "ref.cha"
+    ref.write_text("@Begin\n*PAR:\ttôi là sinh_viên .\n@End\n", encoding="utf-8")
+    manifest = _write_manifest(tmp_path, [_row(tmp_path)])
+    hashes = iter([_ROW_SHA256, "cd" * 32])
+    monkeypatch.setattr("say_transcribe.study.compute_sha256", lambda path: next(hashes))
+    monkeypatch.setattr(
+        "say_transcribe.study.transcribe", lambda **kwargs: _fake_result("tôi là", _ROW_SHA256)
+    )
+    monkeypatch.setattr(
+        "say_transcribe.study.read_wav",
+        lambda path: SimpleNamespace(sample_rate=16000, sample_width=2),
+    )
+    monkeypatch.setattr("say_transcribe.study.extract_channel", lambda audio, channel: np.zeros(4))
+    monkeypatch.setattr("say_transcribe.study.resample_to_16kHz", lambda *args: np.zeros(4))
+    monkeypatch.setattr(
+        "say_transcribe.study.apply_p0_profile",
+        lambda samples, rate, width: SimpleNamespace(samples=np.zeros(4), sample_rate=16000),
+    )
+    monkeypatch.setattr("say_transcribe.study.get_speech_windows", lambda audio, *, threshold: [(0, 4)])
+    monkeypatch.setattr("say_transcribe.study.merge_asr_windows", lambda windows: windows)
+    monkeypatch.setattr("say_transcribe.study.transcribe_windows", lambda audio, windows, backend: ())
+    monkeypatch.setattr(
+        "say_transcribe.study.result_from_windows",
+        lambda audio, sha, windows: _fake_result("tôi là sinh_viên", _ROW_SHA256),
+    )
+
+    out_dir = tmp_path / "out"
+    with pytest.raises(StudyError) as excinfo:
+        run_study(manifest_path=manifest, out_dir=out_dir, asr_backend=object())
+
+    assert excinfo.value.code == "SOURCE_HASH_MISMATCH"
+    assert not (out_dir / "s1.json").exists()
+
+
+def test_broken_denoiser_raises_and_never_skips_the_arm(tmp_path: Path, monkeypatch):
+    ref = tmp_path / "ref.cha"
+    ref.write_text("@Begin\n*PAR:\ttôi là sinh_viên .\n@End\n", encoding="utf-8")
+    for name in ("python", "worker", "checkpoint"):
+        (tmp_path / name).write_text("stub", encoding="utf-8")
+    manifest = _write_manifest(
+        tmp_path,
+        [_row(tmp_path)],
+        denoisers={
+            "PD": {
+                "python": str(tmp_path / "python"),
+                "worker": str(tmp_path / "worker"),
+                "checkpoint": str(tmp_path / "checkpoint"),
+            }
+        },
+    )
+    monkeypatch.setattr("say_transcribe.study.compute_sha256", lambda path: _ROW_SHA256)
+    monkeypatch.setattr(
+        "say_transcribe.study.transcribe", lambda **kwargs: _fake_result("tôi là", _ROW_SHA256)
+    )
+    monkeypatch.setattr(
+        "say_transcribe.study.read_wav",
+        lambda path: SimpleNamespace(sample_rate=16000, sample_width=2),
+    )
+    monkeypatch.setattr("say_transcribe.study.extract_channel", lambda audio, channel: np.zeros(4))
+    monkeypatch.setattr("say_transcribe.study.resample_to_16kHz", lambda *args: np.zeros(4))
+    monkeypatch.setattr(
+        "say_transcribe.study.apply_p0_profile",
+        lambda samples, rate, width: SimpleNamespace(samples=np.zeros(4), sample_rate=16000),
+    )
+
+    def broken_denoise(samples, rate, spec):
+        raise DenoiseError("DENOISER_UNAVAILABLE", "denoiser worker failed")
+
+    monkeypatch.setattr("say_transcribe.study.denoise_pcm", broken_denoise)
+
+    with pytest.raises(DenoiseError) as excinfo:
+        run_study(manifest_path=manifest, out_dir=tmp_path / "out", asr_backend=object())
+
+    assert excinfo.value.code == "DENOISER_UNAVAILABLE"
 
 
 def test_preprocess_study_cli_exit_codes(tmp_path: Path, monkeypatch, capsys):
@@ -290,3 +457,10 @@ def test_preprocess_study_cli_exit_codes(tmp_path: Path, monkeypatch, capsys):
     monkeypatch.setattr(cli, "run_study", invalid_manifest)
     assert cli.main(["preprocess-study", str(manifest), "--out", str(tmp_path / "out")]) == 2
     assert "[INVALID_ARGUMENT]" in capsys.readouterr().err
+
+    def broken_denoiser(**kwargs):
+        raise DenoiseError("DENOISER_UNAVAILABLE", "denoiser environment is missing")
+
+    monkeypatch.setattr(cli, "run_study", broken_denoiser)
+    assert cli.main(["preprocess-study", str(manifest), "--out", str(tmp_path / "out")]) == 3
+    assert "[DENOISER_UNAVAILABLE]" in capsys.readouterr().err
