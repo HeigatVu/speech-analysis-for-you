@@ -1,0 +1,18 @@
+@UTF8
+@Begin
+@Languages:	vie
+@Participants:	PAR Participant, INV Investigator
+@ID:	vie|corpus|PAR|||||Participant|||
+@ID:	vie|corpus|INV|||||Investigator|||
+@Media:	chatter_fixture, audio
+@Comment:	source_sha256 e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+@Comment:	speaker labels draft, auto-diarized; review before use
+*INV:	học_sinh đi học .	0_1200
+%wor:	học_sinh 0_600 đi 600_800 học 800_1200 .
+%mor:	noun|học_sinh verb|đi verb|học .
+%gra:	1|2|NSUBJ 2|0|ROOT 3|2|XCOMP 4|2|PUNCT
+*PAR:	vâng , tôi hiểu rồi .	1300_2500
+%wor:	vâng 1300_1500 , tôi 1500_1800 hiểu 1800_2200 rồi 2200_2500 .
+%mor:	intj|vâng cm|cm pron|tôi verb|hiểu adv|rồi .
+%gra:	1|4|DISCOURSE 2|1|PUNCT 3|4|NSUBJ 4|0|ROOT 5|4|ADVMOD 6|4|PUNCT
+@End

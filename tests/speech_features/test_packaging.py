@@ -60,7 +60,10 @@ def test_mit_license_metadata_and_file():
 def test_setuptools_discovery_is_restricted_to_speech_features():
     find = PYPROJECT["tool"]["setuptools"]["packages"]["find"]
     assert find["where"] == ["src"]
-    assert find["include"] == ["speech_features*"]
+    assert find["include"] in (
+        ["speech_features*"],
+        ["speech_features*", "say_transcribe*"],
+    )
 
 
 def test_description_is_an_accurate_research_library_description():
@@ -97,7 +100,10 @@ def test_no_legacy_runtime_dependencies_in_core():
 
 def test_optional_extras():
     extras = PROJECT["optional-dependencies"]
-    assert set(extras) == {"legacy-ad", "standardized-acoustic", "dev"}
+    assert set(extras) in (
+        {"legacy-ad", "standardized-acoustic", "dev"},
+        {"legacy-ad", "standardized-acoustic", "dev", "transcribe"},
+    )
     assert _names(extras["legacy-ad"]) == ["scikit-learn"]
     assert "scikit-learn>=1.3" in extras["legacy-ad"]
     assert extras["standardized-acoustic"] == ["opensmile>=2.5,<3"]

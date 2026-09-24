@@ -93,6 +93,9 @@ def decode_chat(text: str, *, source: str = "", sha256: str | None = None) -> Sp
         text = text[1:]
     lines = [line.rstrip("\r\n") for line in text.splitlines() if line.strip()]
 
+    if lines and lines[0] == "@UTF8":
+        lines = lines[1:]
+
     if not lines or lines[0] != "@Begin":
         raise _invalid("CHAT file must start with @Begin")
     if lines.count("@Begin") != 1:
@@ -110,7 +113,7 @@ def decode_chat(text: str, *, source: str = "", sha256: str | None = None) -> Sp
     warnings: list[ChatTierWarning] = []
 
     utterances: list[DocumentUtterance] = []
-    annotations: dict[str, dict[str, str]] = {"mor": {}, "gra": {}}
+    annotations: dict[str, dict[str, str]] = {"wor": {}, "mor": {}, "gra": {}}
 
     current: dict | None = None
     current_bullets: list[tuple[str, list[str]]] = []
@@ -135,9 +138,12 @@ def decode_chat(text: str, *, source: str = "", sha256: str | None = None) -> Sp
                 object.__setattr__(token, "start_s", start)
                 object.__setattr__(token, "end_s", end)
         content_tokens = current["content"]
-        for name, layer_key in (("%mor", "mor"), ("%gra", "gra")):
+        for name, layer_key in (("%wor", "wor"), ("%mor", "mor"), ("%gra", "gra")):
             if name in current["tiers"]:
-                items = current["tiers"][name].split()
+                if name == "%wor":
+                    items = _chunk_wor(current["tiers"][name])
+                else:
+                    items = current["tiers"][name].split()
                 if len(items) != len(content_tokens):
                     raise _invalid(
                         f"incompatible {name} alignment: {len(items)} items for "
@@ -183,15 +189,28 @@ def decode_chat(text: str, *, source: str = "", sha256: str | None = None) -> Sp
                 continue
             if name == "@ID":
                 fields = [f.strip() for f in rest.split("|")]
-                if len(fields) < 4 or not fields[1]:
+                if len(fields) < 3 or not fields[1]:
                     raise _invalid(f"malformed @ID header {line!r}")
                 if fields[0] != "vie":
                     raise _invalid(f"@ID language must be 'vie', got {fields[0]!r}")
-                id_info[fields[1]] = (nfc(fields[2]), fields[3])
+                # Support standard TalkBank (@ID: lang|corpus|CODE|...) and legacy (@ID: lang|CODE|...)
+                participant_codes = {c for c, _ in participants}
+                if len(fields) >= 4 and fields[2] in participant_codes:
+                    spk_code = fields[2]
+                    spk_name = fields[7] if len(fields) > 7 and fields[7] else fields[3]
+                    spk_role = fields[8] if len(fields) > 8 and fields[8] else fields[3]
+                else:
+                    spk_code = fields[1]
+                    spk_name = fields[2] if len(fields) > 2 else ""
+                    spk_role = fields[3] if len(fields) > 3 else ""
+                id_info[spk_code] = (nfc(spk_name), spk_role)
                 continue
             if name == "@Media":
                 saw_media = True
-                fields = [f.strip() for f in rest.split("|")]
+                # Accept both chat.py's "path | kind" and CHAT/Delaware's "name, kind";
+                # the comma form is what real TalkBank files use.
+                sep = "|" if "|" in rest else ","
+                fields = [f.strip() for f in rest.split(sep)]
                 if not fields[0]:
                     raise _invalid(f"malformed @Media header {line!r}")
                 path = fields[0]
@@ -217,7 +236,7 @@ def decode_chat(text: str, *, source: str = "", sha256: str | None = None) -> Sp
                     )
                 current_bullets.append((role, parts))
                 continue
-            if name in ("%mor", "%gra"):
+            if name in ("%wor", "%mor", "%gra"):
                 if name in current["tiers"]:
                     raise _invalid(f"duplicate {name} tier for speaker tier {current['tier']!r}")
                 current["tiers"][name] = rest
@@ -233,6 +252,16 @@ def decode_chat(text: str, *, source: str = "", sha256: str | None = None) -> Sp
             code = tier[1:]
             if code not in {c for c, _ in participants}:
                 raise _invalid(f"speaker tier references unknown speaker {code!r}")
+
+            # Extract optional inline media bullet: \x15start_end\x15 or •start_end•
+            inline_start_s = None
+            inline_end_s = None
+            bullet_match = re.search(r"[\x15•](\d+)_(\d+)[\x15•]", content)
+            if bullet_match:
+                inline_start_s = int(bullet_match.group(1)) / 1000.0
+                inline_end_s = int(bullet_match.group(2)) / 1000.0
+                content = content[: bullet_match.start()] + content[bullet_match.end() :]
+
             items = content.strip().split()
             tokens = []
             for i, item in enumerate(items):
@@ -250,8 +279,8 @@ def decode_chat(text: str, *, source: str = "", sha256: str | None = None) -> Sp
                 "tokens": tokens,
                 "content": [t for t in tokens if t.kind in _CONTENT_KINDS],
                 "tiers": {},
-                "start_s": None,
-                "end_s": None,
+                "start_s": inline_start_s,
+                "end_s": inline_end_s,
             }
             continue
         raise _invalid(f"unexpected line {line!r}")
@@ -296,10 +325,25 @@ def decode_chat(text: str, *, source: str = "", sha256: str | None = None) -> Sp
     )
 
 
+_WOR_CHUNK = re.compile(r"\S+(?:\s+[\x15•]\d+_\d+[\x15•])?")
+
+
+def _chunk_wor(rest: str) -> list[str]:
+    """Split %wor into one chunk per content token: `token` or `token \\x15start_end\\x15`."""
+    return _WOR_CHUNK.findall(rest)
+
+
 def _parse_bullet(parts: list[str], current: dict, role: str) -> list[tuple[float, float]]:
-    try:
-        floats = [float(p) for p in parts[1:]]
-    except ValueError:
+    # Trailing numeric run = the timing payload; a media path may contain spaces
+    # ("p001, audio"), so anything before the floats is path text.
+    floats: list[float] = []
+    for token in reversed(parts[1:]):
+        try:
+            floats.append(float(token))
+        except ValueError:
+            break
+    floats.reverse()
+    if not floats:
         raise _invalid(f"malformed media bullet {parts!r}")
     if role == "utterance":
         if len(floats) != 2 or floats[1] < floats[0]:
@@ -341,7 +385,7 @@ def encode_chat(document: SpeechDocument) -> str:
         ):
             pairs = " ".join(f"{_fmt(t.start_s)} {_fmt(t.end_s)}" for t in content)
             lines.append(f"%xaud:\t{media_path} {pairs}")
-        for name in ("%mor", "%gra"):
+        for name in ("%wor", "%mor", "%gra"):
             values = layers.get(name[1:], {})
             if content and all(t.id in values for t in content):
                 lines.append(name + ":\t" + " ".join(values[t.id] for t in content))

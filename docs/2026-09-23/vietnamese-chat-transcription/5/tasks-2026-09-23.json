@@ -1,0 +1,113 @@
+{
+  "schemaVersion": 1,
+  "slug": "vietnamese-chat-transcription",
+  "date": "2026-09-23",
+  "version": 5,
+  "tasks": [
+    {
+      "id": "T1",
+      "title": "Annotation contract",
+      "status": "done (superseded)",
+      "branch": "(historical, merged under v4)",
+      "dependsOn": [],
+      "acceptance": "Historical. Superseded by SPEC-2026-09-23.md §1 (out of scope). Code removed in T4."
+    },
+    {
+      "id": "T2",
+      "title": "Native task clips",
+      "status": "done (superseded)",
+      "branch": "(historical, merged under v4)",
+      "dependsOn": [],
+      "acceptance": "Historical. Superseded by SPEC-2026-09-23.md §1 (out of scope, no task spans in v5). Code removed in T4."
+    },
+    {
+      "id": "T3",
+      "title": "SoX GSM audio profile",
+      "status": "done (superseded)",
+      "branch": "(historical, merged under v4)",
+      "dependsOn": [],
+      "acceptance": "Historical. Superseded by SPEC-2026-09-23.md §1 (out of scope). Code removed in T4."
+    },
+    {
+      "id": "T4",
+      "title": "Cleanup — remove annotation-era code",
+      "status": "done",
+      "branch": "feat/v5-t4-cleanup",
+      "dependsOn": [],
+      "acceptance": "annotations.py, audio_profile.py, prepare.py, preprocess.py, test_annotations.py, and test_preprocess_contract.py are deleted; crop_task_clip is removed from audio.py while read_wav, extract_channel, resample_to_16kHz, AudioPreparationError, and Audio are kept unchanged; test_audio_prepare.py is trimmed to audio-loading/channel/resample tests only; __init__.py no longer imports from annotations; a grep for annotations|audio_profile|preprocess|crop_task_clip under src/say_transcribe and tests/say_transcribe returns nothing; ruff and pytest pass."
+    },
+    {
+      "id": "T5",
+      "title": "PhoWhisper ASR → timed segments",
+      "status": "done",
+      "branch": "feat/v5-t5-asr",
+      "dependsOn": ["T4"],
+      "acceptance": "Source WAV SHA-256 is computed and threaded through to the CHAT writer; word-level start_end timestamps are captured per word and threaded through to T9 (%wor), with CHAT_WORD_TIMING_UNAVAILABLE recorded when unavailable; importing say_transcribe does not import torch/transformers; GPU_UNAVAILABLE and MODEL_UNAVAILABLE are distinct tested error paths; unit tests run fully offline against a fake model; the transcribe extra in pyproject.toml covers this task's dependencies."
+    },
+    {
+      "id": "T6",
+      "title": "pyannote diarization draft",
+      "status": "done",
+      "branch": "feat/v5-t6-diarize",
+      "dependsOn": ["T5"],
+      "acceptance": "Offline unit test with a fake diarizer exercises the talk-time PAR/INV rule; output marks labels as draft; GPU_UNAVAILABLE/MODEL_UNAVAILABLE are reused from T5, not redefined; the transcribe extra in pyproject.toml gains this task's dependency."
+    },
+    {
+      "id": "T7",
+      "title": "Underthesea word grouping",
+      "status": "done",
+      "branch": "feat/v5-t7-word-grouping",
+      "dependsOn": ["T4"],
+      "acceptance": "NFC, tone marks, and d/đ round-trip through grouping unchanged; grouping never merges tokens across two different ASR utterances; WORD_GROUPING_UNALIGNED is raised and tested for a syllable-count mismatch; the transcribe extra in pyproject.toml gains underthesea."
+    },
+    {
+      "id": "T8",
+      "title": "Stanza vi → %mor/%gra projection",
+      "status": "done",
+      "branch": "feat/v5-t8-morphosyntax",
+      "dependsOn": ["T7"],
+      "acceptance": "A Chatter fixture with _-joined words in %mor/%gra validates before any real-Stanza test is trusted; %mor keeps the _ joiner in lemma; %gra enforces the root-head-0/REL==ROOT invariant and the (n+1)|root|PUNCT terminator; comma renders as cm|cm; CHAT_MORPHOSYNTAX_UNAVAILABLE omits both tiers for only the failing utterance; offline unit tests run against a fake Stanza pipeline; the transcribe extra in pyproject.toml gains stanza."
+    },
+    {
+      "id": "T9",
+      "title": "CHAT writer",
+      "status": "done",
+      "branch": "feat/v5-t9-chat-writer",
+      "dependsOn": ["T5", "T6", "T8"],
+      "acceptance": "Chatter validates a synthetic fixture session end to end; round-trip through src/speech_features/formats/chat.py preserves %wor/%mor/%gra content unchanged; %wor carries word-level start_end spans in Delaware shape; the source_sha256 and draft-speaker @Comment lines are present exactly once each; utterances missing %mor/%gra still get a main tier line and bullet."
+    },
+    {
+      "id": "T10",
+      "title": "CLI — diagnose, run, evaluate",
+      "status": "done",
+      "branch": "feat/v5-t10-cli",
+      "dependsOn": ["T9"],
+      "acceptance": "[project.scripts] gains say-transcribe = \"say_transcribe.cli:main\"; [tool.setuptools.packages.find].include covers say_transcribe*; CLI tests cover exit codes 0/2/3/4 per SPEC §5; no dropped v4 error codes appear; no absolute path, transcript text, or raw exception appears in any CLI log/error line."
+    },
+    {
+      "id": "T11",
+      "title": "Evaluator — CER/WER/SyER/DER + bootstrap",
+      "status": "done",
+      "branch": "feat/v5-t11-evaluate",
+      "dependsOn": ["T9"],
+      "acceptance": "Tests run against synthetic reference/hypothesis .cha file pairs, not real corpus data; bootstrap is seeded and deterministic across runs; the report never contains per-utterance text or per-speaker timestamps, aggregate metrics only."
+    },
+    {
+      "id": "T12",
+      "title": "Private GPU pilot",
+      "status": "done",
+      "branch": "feat/v5-t12-pilot",
+      "dependsOn": ["T10", "T11"],
+      "acceptance": "nvidia-smi succeeds on the host (verified 2026-09-23); the pipeline runs on the 5 pilot masters; one Delaware-shaped .cha (main tier + %wor + %mor + %gra) per session is written to the private output dir; metrics from T11 are recorded privately, never in tracked docs; only aggregate numbers (SyER/CER/DER/tier agreement/pass rate) enter tracked docs.",
+      "note": "GPU blocker cleared 2026-09-23 (RTX 5070, CUDA 13.0)."
+    },
+    {
+      "id": "T13",
+      "title": "§8 pilot comparison — VAD windowing, CTC alignment, compare CLI",
+      "status": "done",
+      "branch": "feat/v5-t12-pilot",
+      "dependsOn": ["T12"],
+      "acceptance": "get_speech_windows (Silero VAD, ONNX) and merge_asr_windows (WhisperX-style greedy fold, <=20s) produce the ASR windows for the two VAD-guided variants, with VAD_UNAVAILABLE and INVALID_VAD_WINDOWS as distinct tested error paths; align_words (Vietnamese CTC) times the aligned variant and leaves a word it cannot encode untimed without nulling out the rest of the utterance, with ALIGNMENT_UNAVAILABLE as a distinct tested error path; a Whisper repetition loop or <unk> decode is replaced with the CHAT xxx marker and flagged with ASR_REPETITION_SUSPECTED instead of being emitted as real text; say-transcribe compare writes the baseline/VAD/VAD+aligned variants for one session, validates --vad-threshold and --expected-sha256 before any I/O, and never overwrites an existing file (OUTPUT_EXISTS); extract_session_items scores an untimed draft or a transcript with malformed headers via a lenient main-tier scan instead of raising InvalidChatError, without weakening the strict parser used elsewhere; p001 acceptance per SPEC §8 is measured: zero repetition loops/<unk> reach the main tier untagged, aligned-variant timed utterances >= 90%, bag-of-syllable recall >= the baseline path's own recall, VAD windows touch >= 95% of human-timed utterances."
+    }
+  ]
+}

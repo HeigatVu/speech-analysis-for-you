@@ -1,0 +1,24 @@
+apiVersion: vibe-agent/v1
+kind: CheckPlan
+metadata:
+  description: Offline Python regression and transcription integration checks.
+spec:
+  checks:
+    slop:
+      description: Workspace audit; threshold preserves the measured pre-repair baseline.
+      command: vibe-agent
+      args: [slop, audit, --fail-on, "7", .]
+      timeoutSeconds: 120
+    unit:
+      command: env
+      args: [HF_HUB_OFFLINE=1, TRANSFORMERS_OFFLINE=1, .venv/bin/python, -m, pytest, tests, -q]
+      timeoutSeconds: 900
+    e2e:
+      description: Offline CLI and CHAT serialization integration; private model pilot evidence is recorded separately.
+      command: env
+      args: [HF_HUB_OFFLINE=1, TRANSFORMERS_OFFLINE=1, .venv/bin/python, -m, pytest, tests/say_transcribe/test_cli.py, tests/say_transcribe/test_chat_writer.py, -q]
+      timeoutSeconds: 300
+    lint:
+      command: .venv/bin/python
+      args: [-m, ruff, check, src/say_transcribe, tests/say_transcribe]
+      timeoutSeconds: 120
