@@ -182,3 +182,276 @@ def test_errors_do_not_leak_paths_or_raw_exceptions(tmp_path):
         backend.load()
     assert str(tmp_path) not in str(exc_info.value)
     assert exc_info.value.__cause__ is None
+
+
+def test_transcribe_audio_windows_at_20s_and_offsets_timestamps():
+    backend = PhoWhisperBackend(model_id="fake", device="cpu")
+    calls: list[int] = []
+
+    def fake_pipe(inp, **kwargs):
+        calls.append(len(inp["raw"]))
+        return {
+            "chunks": [
+                {"text": "hở", "timestamp": (0.0, 0.5)},
+                {"text": ".", "timestamp": (0.5, 0.6)},
+            ]
+        }
+
+    backend._pipe = fake_pipe
+    audio = np.zeros(16000 * 21, dtype=np.float32)
+    segs = backend.transcribe_audio(audio)
+
+    assert len(calls) == 2
+    assert calls[0] == 16000 * 20
+    assert len(segs) == 2
+    assert segs[0]["start_ms"] == 0
+    assert segs[1]["start_ms"] == 20000
+    assert segs[1]["words"][0]["start_ms"] == 20000
+    assert segs[1]["end_ms"] == 20600
+
+
+def test_short_audio_caps_generation_to_avoid_repetition_loops():
+    backend = PhoWhisperBackend(model_id="fake", device="cpu")
+    token_limits = []
+
+    def fake_pipe(_input, **kwargs):
+        token_limits.append(kwargs["max_new_tokens"])
+        return {"chunks": []}
+
+    backend._pipe = fake_pipe
+    backend.transcribe_audio(np.zeros(16000 // 2, dtype=np.float32))
+    backend.transcribe_audio(np.zeros(20 * 16000, dtype=np.float32))
+
+    assert token_limits == [32, 400]
+
+
+def test_repetition_loop_becomes_unintelligible_marker_instead_of_hallucinated_text():
+    backend = PhoWhisperBackend(model_id="fake", device="cpu")
+    looped = [{"text": "a", "timestamp": (i * 0.1, i * 0.1 + 0.05)} for i in range(30)]
+    looped.append({"text": ".", "timestamp": None})
+
+    def fake_pipe(_input, **kwargs):
+        return {"chunks": looped}
+
+    backend._pipe = fake_pipe
+    segs = backend.transcribe_audio(np.zeros(16000, dtype=np.float32))
+
+    assert len(segs) == 1
+    assert segs[0]["text"] == "xxx"
+    assert segs[0]["words"] == [{"word": "xxx", "start_ms": None, "end_ms": None}]
+    assert segs[0]["start_ms"] is None
+    assert segs[0]["end_ms"] is None
+
+
+def test_unk_token_becomes_unintelligible_marker():
+    backend = PhoWhisperBackend(model_id="fake", device="cpu")
+
+    def fake_pipe(_input, **kwargs):
+        return {"chunks": [{"text": "unk", "timestamp": (0.0, 0.5)}, {"text": ".", "timestamp": None}]}
+
+    backend._pipe = fake_pipe
+    segs = backend.transcribe_audio(np.zeros(16000, dtype=np.float32))
+
+    assert segs[0]["text"] == "xxx"
+    assert "unk" not in segs[0]["text"]
+
+
+def test_unk_token_with_attached_punctuation_becomes_unintelligible_marker():
+    # Real PhoWhisper word-level chunks attach trailing punctuation to the word
+    # itself (single chunk "unk.") rather than emitting it as a separate chunk.
+    backend = PhoWhisperBackend(model_id="fake", device="cpu")
+
+    def fake_pipe(_input, **kwargs):
+        return {"chunks": [{"text": "unk.", "timestamp": (0.0, 0.5)}]}
+
+    backend._pipe = fake_pipe
+    segs = backend.transcribe_audio(np.zeros(16000, dtype=np.float32))
+
+    assert segs[0]["text"] == "xxx"
+    assert "unk" not in segs[0]["text"]
+
+
+def test_transcribe_flags_repetition_suspected_segment_with_a_warning(sample_wav):
+    words = [{"word": "a", "start_ms": None, "end_ms": None} for _ in range(30)]
+    fake_segments = [
+        {
+            "start_ms": None,
+            "end_ms": None,
+            "text": " ".join(w["word"] for w in words),
+            "words": words,
+            "repetition_suspected": True,
+        }
+    ]
+    backend = FakePhoWhisperBackend(fake_segments)
+    result = transcribe(sample_wav, channel_index=0, backend=backend)
+
+    assert result.segments[0].text == " ".join(["a"] * 30)
+    assert "ASR_REPETITION_SUSPECTED:1" in result.warnings
+
+
+@pytest.mark.parametrize(
+    "start_ms,end_ms",
+    [
+        (None, None),
+        (100, None),
+        (500, 500),
+        (800, 400),
+        (float("nan"), 500),
+        (-1, 10),
+        (1000, 1100),
+    ],
+)
+def test_invalid_word_timing_is_unavailable_without_losing_text(
+    sample_wav, start_ms, end_ms
+):
+    backend = FakePhoWhisperBackend(
+        [
+            {
+                "start_ms": 100,
+                "end_ms": 900,
+                "text": "xin lỗi",
+                "words": [
+                    {"word": "xin", "start_ms": 100, "end_ms": 300},
+                    {"word": "lỗi", "start_ms": start_ms, "end_ms": end_ms},
+                ],
+            }
+        ]
+    )
+
+    result = transcribe(sample_wav, backend=backend)
+
+    assert result.segments[0].text == "xin lỗi"
+    assert result.segments[0].words == (
+        WordTiming("xin", 100, 300),
+        WordTiming("lỗi", None, None),
+    )
+    assert result.warnings == ("CHAT_WORD_TIMING_UNAVAILABLE:1",)
+
+
+def test_all_untimed_asr_text_does_not_get_a_fabricated_zero_span(sample_wav):
+    backend = FakePhoWhisperBackend(
+        [{"start_ms": None, "end_ms": None, "text": "xin chào", "words": []}]
+    )
+
+    result = transcribe(sample_wav, backend=backend)
+
+    assert result.segments[0] == AsrSegment(None, None, "xin chào", ())
+    assert result.warnings == (
+        "CHAT_WORD_TIMING_UNAVAILABLE:1",
+        "CHAT_UTTERANCE_TIMING_UNAVAILABLE:1",
+    )
+
+
+def test_word_chunks_without_timestamps_keep_text_and_missing_segment_span():
+    backend = PhoWhisperBackend(model_id="fake", device="cpu")
+    backend._pipe = lambda *_args, **_kwargs: {
+        "chunks": [{"text": "không", "timestamp": (None, None)}]
+    }
+
+    segments = backend.transcribe_audio(np.zeros(16000, dtype=np.float32))
+
+    assert segments[0]["text"] == "không"
+    assert segments[0]["start_ms"] is None
+    assert segments[0]["end_ms"] is None
+
+
+def test_word_timing_outside_its_inference_window_is_discarded():
+    backend = PhoWhisperBackend(model_id="fake", device="cpu")
+    backend._pipe = lambda *_args, **_kwargs: {
+        "chunks": [{"text": "ngoài", "timestamp": (20.1, 20.2)}]
+    }
+
+    segments = backend.transcribe_audio(np.zeros(20 * 16000, dtype=np.float32))
+
+    assert segments[0]["text"] == "ngoài"
+    assert segments[0]["start_ms"] is None
+    assert segments[0]["end_ms"] is None
+    assert segments[0]["words"][0]["start_ms"] is None
+    assert segments[0]["words"][0]["end_ms"] is None
+
+
+def test_word_timing_outside_declared_segment_is_discarded(sample_wav):
+    backend = FakePhoWhisperBackend(
+        [
+            {
+                "start_ms": 100,
+                "end_ms": 200,
+                "text": "xin",
+                "words": [{"word": "xin", "start_ms": 50, "end_ms": 150}],
+            }
+        ]
+    )
+
+    result = transcribe(sample_wav, backend=backend)
+
+    assert result.segments[0].start_ms == 100
+    assert result.segments[0].end_ms == 200
+    assert result.segments[0].words == (WordTiming("xin", None, None),)
+    assert result.warnings == ("CHAT_WORD_TIMING_UNAVAILABLE:1",)
+
+
+def test_backwards_word_timing_is_discarded(sample_wav):
+    backend = FakePhoWhisperBackend(
+        [
+            {
+                "start_ms": 50,
+                "end_ms": 200,
+                "text": "xin rồi",
+                "words": [
+                    {"word": "xin", "start_ms": 100, "end_ms": 150},
+                    {"word": "rồi", "start_ms": 50, "end_ms": 90},
+                ],
+            }
+        ]
+    )
+
+    result = transcribe(sample_wav, backend=backend)
+
+    assert result.segments[0].text == "xin rồi"
+    assert result.segments[0].words == (
+        WordTiming("xin", 100, 150),
+        WordTiming("rồi", None, None),
+    )
+    assert result.warnings == ("CHAT_WORD_TIMING_UNAVAILABLE:1",)
+
+
+def test_partial_word_times_do_not_create_an_utterance_span(sample_wav):
+    backend = FakePhoWhisperBackend(
+        [
+            {
+                "start_ms": None,
+                "end_ms": None,
+                "text": "xin chào",
+                "words": [
+                    {"word": "xin", "start_ms": 100, "end_ms": 200},
+                    {"word": "chào", "start_ms": None, "end_ms": None},
+                ],
+            }
+        ]
+    )
+
+    result = transcribe(sample_wav, backend=backend)
+
+    assert result.segments[0].text == "xin chào"
+    assert result.segments[0].start_ms is None
+    assert result.segments[0].end_ms is None
+    assert result.warnings == (
+        "CHAT_WORD_TIMING_UNAVAILABLE:1",
+        "CHAT_UTTERANCE_TIMING_UNAVAILABLE:1",
+    )
+
+
+def test_chunk_words_with_missing_lexical_boundary_do_not_create_segment_span():
+    backend = PhoWhisperBackend(model_id="fake", device="cpu")
+    backend._pipe = lambda *_args, **_kwargs: {
+        "chunks": [
+            {"text": "xin", "timestamp": (None, None)},
+            {"text": "chào", "timestamp": (0.1, 0.2)},
+        ]
+    }
+
+    segments = backend.transcribe_audio(np.zeros(16000, dtype=np.float32))
+
+    assert segments[0]["text"] == "xin chào"
+    assert segments[0]["start_ms"] is None
+    assert segments[0]["end_ms"] is None

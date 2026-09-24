@@ -100,6 +100,14 @@
       "dependsOn": ["T10", "T11"],
       "acceptance": "nvidia-smi succeeds on the host (verified 2026-09-23); the pipeline runs on the 5 pilot masters; one Delaware-shaped .cha (main tier + %wor + %mor + %gra) per session is written to the private output dir; metrics from T11 are recorded privately, never in tracked docs; only aggregate numbers (SyER/CER/DER/tier agreement/pass rate) enter tracked docs.",
       "note": "GPU blocker cleared 2026-09-23 (RTX 5070, CUDA 13.0)."
+    },
+    {
+      "id": "T13",
+      "title": "§8 pilot comparison — VAD windowing, CTC alignment, compare CLI",
+      "status": "done",
+      "branch": "feat/v5-t12-pilot",
+      "dependsOn": ["T12"],
+      "acceptance": "get_speech_windows (Silero VAD, ONNX) and merge_asr_windows (WhisperX-style greedy fold, <=20s) produce the ASR windows for the two VAD-guided variants, with VAD_UNAVAILABLE and INVALID_VAD_WINDOWS as distinct tested error paths; align_words (Vietnamese CTC) times the aligned variant and leaves a word it cannot encode untimed without nulling out the rest of the utterance, with ALIGNMENT_UNAVAILABLE as a distinct tested error path; a Whisper repetition loop or <unk> decode is replaced with the CHAT xxx marker and flagged with ASR_REPETITION_SUSPECTED instead of being emitted as real text; say-transcribe compare writes the baseline/VAD/VAD+aligned variants for one session, validates --vad-threshold and --expected-sha256 before any I/O, and never overwrites an existing file (OUTPUT_EXISTS); extract_session_items scores an untimed draft or a transcript with malformed headers via a lenient main-tier scan instead of raising InvalidChatError, without weakening the strict parser used elsewhere; p001 acceptance per SPEC §8 is measured: zero repetition loops/<unk> reach the main tier untagged, aligned-variant timed utterances >= 90%, bag-of-syllable recall >= the baseline path's own recall, VAD windows touch >= 95% of human-timed utterances."
     }
   ]
 }

@@ -125,3 +125,18 @@ def test_grouping_without_word_timings_succeeds():
     assert res[0].word == "sinh_viên"
     assert res[0].start_ms is None
     assert res[0].end_ms is None
+
+
+def test_glued_punctuation_splits_and_aligns():
+    from say_transcribe.asr import AsrSegment, WordTiming
+
+    seg = AsrSegment(
+        start_ms=0,
+        end_ms=900,
+        text="hở ,",
+        words=(WordTiming(word="hở,", start_ms=100, end_ms=500),),
+    )
+    grouped = group_utterance_words(seg, tokenizer=lambda t: ["hở", ","])
+    assert [g.word for g in grouped] == ["hở", ","]
+    assert (grouped[0].start_ms, grouped[0].end_ms) == (100, 500)
+    assert (grouped[1].start_ms, grouped[1].end_ms) == (None, None)

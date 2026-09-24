@@ -20,7 +20,7 @@ class SpeakerDiarizationResult:
     utterance_speakers: tuple[str, ...]  # "PAR" or "INV" per utterance
     is_draft: bool = True
     draft_comment: str = DRAFT_SPEAKER_NOTE
-    cluster_to_role: dict[str, str] = None  # type: ignore[assignment]
+    cluster_to_role: dict[str, str] | None = None
 
 
 class PyannoteBackend:
@@ -49,11 +49,13 @@ class PyannoteBackend:
 
         try:
             from pyannote.audio import Pipeline
+            from huggingface_hub import get_token
             import torch
 
+            token = self.auth_token or get_token()
             self._pipeline = Pipeline.from_pretrained(
                 self.model_id,
-                use_auth_token=self.auth_token,
+                token=token,
             )
             if self._pipeline is None:
                 raise AsrError("MODEL_UNAVAILABLE", "Pyannote pipeline could not be loaded")
@@ -76,7 +78,8 @@ class PyannoteBackend:
 
             # pyannote expects torch.Tensor of shape (channels, samples)
             tensor = torch.from_numpy(audio_16k_mono).unsqueeze(0)
-            diarization = self._pipeline({"waveform": tensor, "sample_rate": sample_rate})
+            result = self._pipeline({"waveform": tensor, "sample_rate": sample_rate})
+            diarization = getattr(result, "speaker_diarization", result)
 
             turns: list[DiarizationTurn] = []
             for turn, _, speaker in diarization.itertracks(yield_label=True):
@@ -131,6 +134,10 @@ def assign_speakers(
     utterance_speakers: list[str] = []
 
     for seg in asr_segments:
+        if seg.start_ms is None or seg.end_ms is None:
+            utterance_speakers.append("PAR")
+            continue
+
         # Find overlapping turns
         overlap_per_cluster: dict[str, int] = {}
         for turn in turns:
@@ -161,3 +168,118 @@ def assign_speakers(
         draft_comment=DRAFT_SPEAKER_NOTE,
         cluster_to_role=cluster_to_role,
     )
+
+
+class WavlmClusterBackend:
+    """Ungated diarization fallback: WavLM-SV window embeddings + agglomerative clustering.
+
+    Same DiarizationTurn contract as PyannoteBackend. ponytail: k=speakers is fixed at
+    2 (SPEC §4 two-party sessions); raise n_speakers if multi-party data arrives.
+    """
+
+    def __init__(
+        self,
+        model_id: str = "microsoft/wavlm-base-sv",
+        device: str = "cpu",
+        n_speakers: int = 2,
+        win_ms: int = 1500,
+        hop_ms: int = 750,
+    ) -> None:
+        self.model_id = model_id
+        self.device = device
+        self.n_speakers = n_speakers
+        self.win_ms = win_ms
+        self.hop_ms = hop_ms
+        self._model: Any = None
+        self._fe: Any = None
+
+    def load(self) -> None:
+        if self.device == "cuda":
+            try:
+                import torch
+
+                if not torch.cuda.is_available():
+                    raise AsrError("GPU_UNAVAILABLE", "CUDA device requested but not available")
+            except ImportError:
+                raise AsrError("GPU_UNAVAILABLE", "PyTorch with CUDA not available") from None
+
+        try:
+            import torch
+            from transformers import AutoFeatureExtractor, WavLMForXVector
+
+            self._fe = AutoFeatureExtractor.from_pretrained(self.model_id)
+            self._model = WavLMForXVector.from_pretrained(self.model_id)
+            if self.device == "cuda":
+                self._model.to(torch.device("cuda"))
+            self._model.eval()
+        except AsrError:
+            raise
+        except Exception:
+            raise AsrError("MODEL_UNAVAILABLE", "Failed to load WavLM speaker model") from None
+
+    def _embed(self, wav: np.ndarray) -> np.ndarray:
+        """L2-normalized xvector embedding for one utterance."""
+        import torch
+
+        # ponytail: per-utterance level boost for the quiet INV mic on this corpus
+        # (analysis view only; source audio is never altered). Gain capped at 30x so
+        # near-dead windows do not amplify digital noise into "speaker" signal.
+        rms = float(np.sqrt((wav**2).mean()))
+        if rms > 1e-6:
+            wav = np.clip(wav * min(0.1 / rms, 30.0), -1.0, 1.0)
+
+        feats = self._fe(wav, sampling_rate=16000, return_tensors="pt")
+        dev = next(self._model.parameters()).device
+        with torch.no_grad():
+            vec = self._model(input_values=feats["input_values"].to(dev)).embeddings
+        vec = vec.squeeze(0).float().cpu().numpy()
+        norm = float(np.linalg.norm(vec)) or 1.0
+        return vec / norm
+
+    def diarize(
+        self,
+        audio_16k_mono: np.ndarray,
+        sample_rate: int = 16000,
+        segments: Sequence[AsrSegment] | None = None,
+    ) -> Sequence[DiarizationTurn]:
+        if self._model is None:
+            self.load()
+
+        try:
+            from scipy.cluster.hierarchy import fcluster, linkage
+        except Exception:
+            raise AsrError("MODEL_UNAVAILABLE", "scipy clustering unavailable") from None
+
+        try:
+            # Cluster at the ASR-utterance level: each segment is one speaker's turn,
+            # so embeddings stay single-speaker (fixed windows straddle turn changes
+            # and an energy gate starves quiet dual-mono recordings).
+            pairs = []
+            for seg in segments or ():
+                if seg.start_ms is None or seg.end_ms is None or seg.end_ms - seg.start_ms < 300:
+                    continue
+                start = int(seg.start_ms * 16)
+                end = min(int(seg.end_ms * 16), len(audio_16k_mono))
+                chunk = audio_16k_mono[start:end]
+                if len(chunk) >= 4800:
+                    pairs.append((seg, self._embed(chunk.astype(np.float32))))
+            if not pairs:
+                return ()
+
+            matrix = np.stack([emb for _, emb in pairs])
+            if len(pairs) == 1:
+                labels = [1]
+            else:
+                labels = fcluster(
+                    linkage(matrix, method="average"), t=self.n_speakers, criterion="maxclust"
+                )
+            return tuple(
+                DiarizationTurn(
+                    start_ms=seg.start_ms,
+                    end_ms=seg.end_ms,
+                    cluster_id=str(int(label) - 1),
+                )
+                for (seg, _), label in zip(pairs, labels)
+            )
+        except Exception:
+            raise AsrError("MODEL_UNAVAILABLE", "Diarization inference execution failed") from None

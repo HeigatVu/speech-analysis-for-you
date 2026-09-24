@@ -22,11 +22,13 @@ standardized-acoustic = ["opensmile>=2.5,<3"]
 dev = ["pytest>=8.0.0", "ruff>=0.1.0"]
 transcribe = [
     "torch>=2.0",
+    "torchaudio>=2.11,<3",
     "transformers>=4.36",
     "accelerate",
-    "pyannote.audio>=3.1",
+    "pyannote.audio>=4.0,<5",
     "underthesea>=6.8.0",
     "stanza>=1.14.0",
+    "silero-vad[onnx-cpu]==6.2.3",
 ]
 
 [tool.ruff]

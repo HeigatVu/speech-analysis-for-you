@@ -1,8 +1,32 @@
 from dataclasses import dataclass
 from typing import Callable, Sequence
+import re
 import unicodedata
 
 from say_transcribe.asr import AsrSegment, WordTiming
+
+_PUNCT_SPLIT = re.compile(r"([^\w\s]+)", re.UNICODE)
+
+
+def _split_punct_timings(words: Sequence[WordTiming]) -> list[WordTiming]:
+    """Split glued punctuation off ASR words so they align with underthesea's
+    punctuation-separated tokens ("hở," -> "hở" + ","). Punct pieces carry no span."""
+    out: list[WordTiming] = []
+    for w in words:
+        pieces = [p for p in _PUNCT_SPLIT.split(w.word) if p]
+        if len(pieces) <= 1:
+            out.append(w)
+            continue
+        for p in pieces:
+            is_punct = bool(_PUNCT_SPLIT.fullmatch(p))
+            out.append(
+                WordTiming(
+                    word=p,
+                    start_ms=None if is_punct else w.start_ms,
+                    end_ms=None if is_punct else w.end_ms,
+                )
+            )
+    return out
 
 
 class WordGroupingError(Exception):
@@ -55,15 +79,17 @@ def group_utterance_words(
     tokens = tokenizer(norm_text)
     norm_tokens = [unicodedata.normalize("NFC", t) for t in tokens]
 
-    input_words = [
-        WordTiming(
-            word=unicodedata.normalize("NFC", w.word.strip()),
-            start_ms=w.start_ms,
-            end_ms=w.end_ms,
-        )
-        for w in segment.words
-        if w.word.strip()
-    ]
+    input_words = _split_punct_timings(
+        [
+            WordTiming(
+                word=unicodedata.normalize("NFC", w.word.strip()),
+                start_ms=w.start_ms,
+                end_ms=w.end_ms,
+            )
+            for w in segment.words
+            if w.word.strip()
+        ]
+    )
 
     # If no word-level timings were captured, produce grouped words without spans
     if not input_words:

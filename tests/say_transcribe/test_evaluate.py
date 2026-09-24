@@ -3,6 +3,7 @@ from pathlib import Path
 
 from say_transcribe.evaluate import (
     compute_der,
+    extract_session_items,
     levenshtein,
     run_evaluation,
 )
@@ -25,6 +26,30 @@ def test_der_computation():
     # Opposite speaker -> DER 1.0
     hyp_opp = [(0, 1000, "INV"), (1100, 2000, "PAR")]
     assert compute_der(ref, hyp_opp, collar_ms=100) == 1.0
+
+
+def test_extract_session_items_scores_an_untimed_draft_without_raising():
+    draft_cha = """@Begin
+*PAR:\ttôi là sinh_viên .
+@End
+"""
+    items = extract_session_items(draft_cha)
+
+    assert items["words"] == ["tôi", "là", "sinh_viên"]
+    assert items["syllables"] == ["tôi", "là", "sinh", "viên"]
+    assert items["intervals"] == []
+
+
+def test_extract_session_items_scans_main_tier_despite_malformed_headers():
+    malformed_cha = """@Window:\t0_1000
+@Begin
+@Lnaugage:\tvie
+*PAR:\tem chào \x150_500\x15
+@End
+"""
+    items = extract_session_items(malformed_cha)
+
+    assert items["words"] == ["em", "chào"]
 
 
 def test_run_evaluation_synthetic_pairs(tmp_path: Path):

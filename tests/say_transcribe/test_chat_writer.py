@@ -1,9 +1,24 @@
 from pathlib import Path
+import pytest
 
 from say_transcribe.chat_writer import UtteranceRecord, format_chat_session, write_chat_file
 from say_transcribe.morphosyntax import GraItem, MorItem, UtteranceMorphosyntax
 from say_transcribe.word_grouping import GroupedWord
-from speech_features.formats.chat import decode_chat
+from speech_features.formats.chat import InvalidChatError, decode_chat
+
+
+def test_untimed_utterance_preserves_text_without_fabricated_bullet():
+    utterance = UtteranceRecord(
+        speaker="PAR", start_ms=None, end_ms=None, text="xin chào",
+        words=(), morphosyntax=None,
+    )
+    content = format_chat_session("synthetic", "a" * 64, [utterance])
+    assert "*PAR:\txin chào .\n" in content
+    assert "\x15" not in content
+    assert "utterance timing incomplete; align before timing-based analysis" in content
+    # Feature extraction must still reject a draft that has not been aligned.
+    with pytest.raises(InvalidChatError, match="no media bullet"):
+        decode_chat(content)
 
 
 def test_chat_writer_format_and_provenance_lines(tmp_path: Path):
@@ -84,6 +99,16 @@ def test_chat_writer_format_and_provenance_lines(tmp_path: Path):
     assert out_file.exists()
 
 
+def test_write_chat_file_refuses_to_overwrite_an_existing_transcript(tmp_path: Path):
+    out_file = tmp_path / "p001.cha"
+    out_file.write_text("manual transcript, never overwrite", encoding="utf-8")
+
+    with pytest.raises(FileExistsError):
+        write_chat_file(out_file, "p001", "a" * 64, [])
+
+    assert out_file.read_text(encoding="utf-8") == "manual transcript, never overwrite"
+
+
 def test_round_trip_through_speech_features_chat_codec(tmp_path: Path):
     sha = "b" * 64
     session_id = "roundtrip_session"
@@ -126,13 +151,73 @@ def test_round_trip_through_speech_features_chat_codec(tmp_path: Path):
     assert u.end_s == 1.5
     assert [t.text for t in u.tokens] == ["tôi", "là", "sinh_viên", "."]
 
-    # Verify annotations preserved
+    # Verify annotations preserved (%wor is a first-class layer now)
     layers = {a.layer: a.values for a in doc.annotations}
+    assert "wor" in layers
     assert "mor" in layers
     assert "gra" in layers
+    assert len(layers["wor"]) == 4
     assert len(layers["mor"]) == 4
     assert len(layers["gra"]) == 4
-
-    # Verify raw tiers preserved %wor and comments
-    assert "%wor" in doc.raw_tiers
     assert "@Comment" in doc.raw_tiers
+
+
+def test_missing_final_punct_gets_mor_gra_terminator(tmp_path):
+    from say_transcribe.chat_writer import UtteranceRecord, format_chat_session
+    from say_transcribe.morphosyntax import GraItem, MorItem, UtteranceMorphosyntax
+    from say_transcribe.word_grouping import GroupedWord
+
+    words = (GroupedWord(word="hở", start_ms=100, end_ms=500, syllables=()),)
+    ms = UtteranceMorphosyntax(
+        mor_items=(MorItem(pos="noun", lemma="hở"),),
+        gra_items=(GraItem(index=1, head=0, rel="ROOT"),),
+    )
+    utt = UtteranceRecord(
+        speaker="PAR", start_ms=100, end_ms=500, text="hở", words=words, morphosyntax=ms
+    )
+    out = format_chat_session("pX", "0" * 64, [utt])
+    mor = next(ln for ln in out.splitlines() if ln.startswith("%mor:")).split("\t")[1].split()
+    gra = next(ln for ln in out.splitlines() if ln.startswith("%gra:")).split("\t")[1].split()
+    assert mor[-1] == "."
+    assert len(mor) == 2
+    assert gra[-1] == "2|1|PUNCT"
+    assert len(gra) == 2
+
+
+def test_session_round_trips_through_chat_py_with_spaced_media(tmp_path):
+    from speech_features.formats.chat import decode_chat, encode_chat
+
+    from say_transcribe.chat_writer import UtteranceRecord, format_chat_session
+    from say_transcribe.morphosyntax import GraItem, MorItem, UtteranceMorphosyntax
+    from say_transcribe.word_grouping import GroupedWord
+
+    words = (
+        GroupedWord(word="hở", start_ms=0, end_ms=500, syllables=()),
+        GroupedWord(word="hở", start_ms=600, end_ms=900, syllables=()),
+        GroupedWord(word=".", start_ms=None, end_ms=None, syllables=()),
+    )
+    ms = UtteranceMorphosyntax(
+        mor_items=(MorItem(pos="noun", lemma="hở"), MorItem(pos="noun", lemma="hở"), MorItem(pos="", lemma=".")),
+        gra_items=(GraItem(index=1, head=0, rel="ROOT"), GraItem(index=2, head=1, rel="COMPOUND"), GraItem(index=3, head=1, rel="PUNCT")),
+    )
+    utt = UtteranceRecord(
+        speaker="PAR", start_ms=0, end_ms=900, text="hở hở .", words=words, morphosyntax=ms
+    )
+    raw = format_chat_session("pX", "0" * 64, [utt])
+    doc = decode_chat(raw, source="t")
+    doc2 = decode_chat(encode_chat(doc), source="t")
+
+    def shape(d):
+        layers = {a.layer: a.values for a in d.annotations}
+        out = []
+        for u in d.utterances:
+            ann = tuple(
+                (kind, layers[kind][t.id])
+                for kind in ("wor", "mor", "gra")
+                for t in u.tokens
+                if t.id in layers.get(kind, {})
+            )
+            out.append((u.speaker_id, tuple(t.text for t in u.tokens), ann))
+        return out
+
+    assert shape(doc) == shape(doc2)

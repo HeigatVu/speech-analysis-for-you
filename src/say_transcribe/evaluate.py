@@ -1,11 +1,15 @@
 import json
 from pathlib import Path
+import re
 from typing import Any, Sequence
 import unicodedata
 
 import numpy as np
 
-from speech_features.formats.chat import decode_chat
+from speech_features.formats.chat import InvalidChatError, decode_chat
+
+_MAIN_TIER_LINE = re.compile(r"^\*[A-Z]{3}:\s*(.*)$")
+_PUNCTUATION_ONLY = {".", "?", "!", ",", "...", "…"}
 
 
 def levenshtein(seq1: Sequence[Any], seq2: Sequence[Any]) -> int:
@@ -28,9 +32,48 @@ def levenshtein(seq1: Sequence[Any], seq2: Sequence[Any]) -> int:
     return dp[n][m]
 
 
+def _extract_lenient_text_items(cha_text: str) -> dict[str, Any]:
+    """Best-effort main-tier word/syllable/char scan for transcripts the strict
+    CHAT parser rejects (untimed drafts, malformed headers). Text-similarity
+    metrics only: intervals and morphosyntax tiers need the strict parser, so
+    those come back empty rather than being guessed at.
+    """
+    syllables: list[str] = []
+    words: list[str] = []
+    chars: list[str] = []
+    for line in cha_text.splitlines():
+        match = _MAIN_TIER_LINE.match(line.strip())
+        if not match:
+            continue
+        content = re.sub(r"[\x15•]\d+_\d+[\x15•]", "", match.group(1))
+        for item in content.split():
+            norm_word = unicodedata.normalize("NFC", item.strip())
+            if not norm_word or norm_word in _PUNCTUATION_ONLY:
+                continue
+            words.append(norm_word)
+            syllables.extend(norm_word.split("_"))
+            chars.extend(norm_word.replace("_", ""))
+    return {
+        "syllables": syllables,
+        "words": words,
+        "chars": chars,
+        "pos": [],
+        "heads": [],
+        "rels": [],
+        "intervals": [],
+    }
+
+
 def extract_session_items(cha_text: str) -> dict[str, Any]:
-    """Parse .cha transcript and extract evaluation items without logging private data."""
-    doc = decode_chat(cha_text)
+    """Parse .cha transcript and extract evaluation items without logging private data.
+
+    Falls back to a lenient main-tier scan for text-similarity metrics when the
+    strict CHAT parser rejects the file; see `_extract_lenient_text_items`.
+    """
+    try:
+        doc = decode_chat(cha_text)
+    except InvalidChatError:
+        return _extract_lenient_text_items(cha_text)
 
     syllables: list[str] = []
     words: list[str] = []
