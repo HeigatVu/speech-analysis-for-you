@@ -16,7 +16,9 @@ from say_transcribe.asr import (
 from say_transcribe.audio import AudioPreparationError, extract_channel, read_wav, resample_to_16kHz
 from say_transcribe.chat_writer import UtteranceRecord, write_chat_file
 from say_transcribe.diarize import PyannoteBackend, WavlmClusterBackend, assign_speakers
+from say_transcribe.manifest import ManifestError
 from say_transcribe.morphosyntax import StanzaBackend, project_morphosyntax
+from say_transcribe.study import StudyError, run_study
 from say_transcribe.word_grouping import GroupedWord, WordGroupingError, group_utterance_words
 from say_transcribe.vad import VADUnavailableError, get_speech_windows, merge_asr_windows
 
@@ -74,6 +76,16 @@ def build_parser() -> argparse.ArgumentParser:
     )
     eval_parser.add_argument(
         "--out", type=Path, required=True, help="Path to write evaluation report JSON"
+    )
+
+    # preprocess-study (opt-in audio preprocessing A/B study)
+    study_parser = subparsers.add_parser(
+        "preprocess-study", help="Run the opt-in preprocessing A/B study from a private manifest"
+    )
+    study_parser.add_argument("manifest", type=Path, help="Path to private study manifest JSON")
+    study_parser.add_argument("--out", type=Path, required=True, help="Private output directory")
+    study_parser.add_argument(
+        "--device", choices=["cpu", "cuda"], default="cpu", help="Compute device"
     )
 
     return parser
@@ -472,6 +484,31 @@ def cmd_evaluate(gold_dir: Path, pred_dir: Path, out_file: Path) -> int:
         return 4
 
 
+def cmd_preprocess_study(manifest: Path, out_dir: Path, device: str = "cpu") -> int:
+    try:
+        run_study(manifest_path=manifest, out_dir=out_dir, device=device)
+        sys.stdout.write("Study run complete\n")
+        return 0
+    except ManifestError as error:
+        sys.stderr.write(f"[{error.code}] {error.message}\n")
+        return 2
+    except StudyError as error:
+        sys.stderr.write(f"[{error.code}] {error.message}\n")
+        return 2 if error.code == "SOURCE_HASH_MISMATCH" else 4
+    except AsrError as error:
+        sys.stderr.write(f"[{error.code}] {error.message}\n")
+        return 3 if error.code in ("GPU_UNAVAILABLE", "MODEL_UNAVAILABLE") else 4
+    except AudioPreparationError as error:
+        sys.stderr.write(f"[{error.code}] {error.message}\n")
+        return 4
+    except VADUnavailableError:
+        sys.stderr.write("[VAD_UNAVAILABLE] Speech activity detection failed\n")
+        return 4
+    except Exception:
+        sys.stderr.write("[STUDY_FAILED] Study pipeline execution failed\n")
+        return 4
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     try:
@@ -502,6 +539,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             gold_dir=args.gold_dir,
             pred_dir=args.pred_dir,
             out_file=args.out,
+        )
+    elif args.command == "preprocess-study":
+        return cmd_preprocess_study(
+            manifest=args.manifest,
+            out_dir=args.out,
+            device=args.device,
         )
     return 2
 
