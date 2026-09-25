@@ -1,9 +1,10 @@
 """PF arm: FullSubNet dispatch through the isolated-environment worker protocol."""
 
+import hashlib
+from pathlib import Path
 import subprocess
 import sys
 import textwrap
-from pathlib import Path
 
 import numpy as np
 import pytest
@@ -245,3 +246,35 @@ class TestChunkArithmetic:
 
         with pytest.raises(ValueError):
             pcm_chunks.overlap_add(900, 400, 200, bad_values)
+
+
+def test_denoise_pcm_checkpoint_sha256_verification(tmp_path: Path):
+    worker = _stub_worker(tmp_path, _PASSTHROUGH)
+    checkpoint = tmp_path / "model.ckpt"
+    checkpoint.write_bytes(b"model-weights-content")
+    real_sha = hashlib.sha256(b"model-weights-content").hexdigest()
+    samples = np.linspace(-0.5, 0.5, FULLSUBNET_RATE).astype(np.float32)
+
+    # Valid sha256 passes through successfully
+    good_spec = DenoiserSpec(
+        name="fullsubnet",
+        python=Path(sys.executable),
+        worker=worker,
+        checkpoint=checkpoint,
+        sha256=real_sha,
+    )
+    enhanced = denoise_pcm(samples, FULLSUBNET_RATE, good_spec)
+    assert np.array_equal(enhanced, samples)
+
+    # Mismatching sha256 raises DenoiseError with DENOISER_UNAVAILABLE
+    bad_spec = DenoiserSpec(
+        name="fullsubnet",
+        python=Path(sys.executable),
+        worker=worker,
+        checkpoint=checkpoint,
+        sha256="0" * 64,
+    )
+    with pytest.raises(DenoiseError) as excinfo:
+        denoise_pcm(samples, FULLSUBNET_RATE, bad_spec)
+    assert excinfo.value.code == "DENOISER_UNAVAILABLE"
+    assert "hash mismatch" in excinfo.value.message

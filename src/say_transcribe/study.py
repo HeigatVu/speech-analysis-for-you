@@ -550,8 +550,16 @@ def session_record(
 def write_session_record(record: dict[str, Any], out_dir: Path) -> Path:
     target = out_dir / f"{record['session_id']}.json"
     try:
-        out_dir.mkdir(parents=True, exist_ok=True)
+        out_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+        try:
+            out_dir.chmod(0o700)
+        except OSError:
+            pass
         target.write_text(json.dumps(record, ensure_ascii=False, indent=2), encoding="utf-8")
+        try:
+            target.chmod(0o600)
+        except OSError:
+            pass
     except OSError:
         raise StudyError("STUDY_FAILED", "study output could not be written") from None
     return target
@@ -600,6 +608,7 @@ def compute_session(
     record["audio_seconds"] = float(run.signals["N1"].shape[0]) / SAMPLE_RATE
     record["asr_model"] = getattr(backend, "model_id", None)
     record["profile"] = _loudness_report(run.loudness)
+    record["device"] = device
     return record
 
 
@@ -1022,8 +1031,16 @@ def write_summary(summary: dict[str, Any], out_dir: Path) -> Path:
     """Write the redacted aggregate summary into the private output directory."""
     target = out_dir / "summary.json"
     try:
-        out_dir.mkdir(parents=True, exist_ok=True)
+        out_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+        try:
+            out_dir.chmod(0o700)
+        except OSError:
+            pass
         target.write_text(json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
+        try:
+            target.chmod(0o600)
+        except OSError:
+            pass
     except OSError:
         raise StudyError("STUDY_FAILED", "study summary could not be written") from None
     return target

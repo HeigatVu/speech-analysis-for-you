@@ -199,6 +199,14 @@ def test_write_session_record_wraps_unwritable_output(tmp_path: Path):
     assert str(tmp_path) not in excinfo.value.message
 
 
+def test_write_session_record_restricts_permissions(tmp_path: Path):
+    out_dir = tmp_path / "private_out"
+    written = write_session_record({"session_id": "s1", "text": "secret"}, out_dir)
+    assert written.is_file()
+    assert out_dir.stat().st_mode & 0o777 == 0o700
+    assert written.stat().st_mode & 0o777 == 0o600
+
+
 def _fake_result(text: str, source_sha256: str) -> AsrResult:
     return AsrResult(
         source_sha256=source_sha256,
@@ -437,6 +445,26 @@ def test_load_denoiser_specs_parses_and_validates(tmp_path: Path):
             )
         )
     assert "not supported" in unsupported_config.value.message
+
+    valid_sha = "a" * 64
+    with_sha = load_denoiser_specs(
+        _write_manifest(
+            tmp_path,
+            [_row(tmp_path)],
+            denoisers={"PD": dict(config, sha256=valid_sha)},
+        )
+    )
+    assert with_sha["PD"].sha256 == valid_sha
+
+    with pytest.raises(ManifestError) as bad_sha:
+        load_denoiser_specs(
+            _write_manifest(
+                tmp_path,
+                [_row(tmp_path)],
+                denoisers={"PD": dict(config, sha256="not-valid-hex")},
+            )
+        )
+    assert "sha256" in bad_sha.value.message
 
 
 def test_mid_run_master_swap_raises_before_writing(tmp_path: Path, monkeypatch):

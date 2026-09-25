@@ -74,7 +74,10 @@ def _load_model(config: dict, checkpoint: Path):
 
     model_config = config["model"]
     model = initialize_module(model_config["path"], args=model_config["args"], initialize=True)
-    state = torch.load(checkpoint, map_location="cpu")
+    try:
+        state = torch.load(checkpoint, map_location="cpu", weights_only=True)
+    except TypeError:
+        state = torch.load(checkpoint, map_location="cpu")
     if not isinstance(state, dict) or "model" not in state:
         _fail("checkpoint has no 'model' state dict")
     weights = {key.replace("module.", ""): value for key, value in state["model"].items()}
@@ -134,15 +137,16 @@ def main() -> int:
     # Same two entries the project's own inference.py driver adds: the recipe
     # directory for "model.Model" and the checkout root for "audio_zen".
     repo_root = _find_repo_root(config_dir)
-    sys.path.insert(0, str(config_dir))
-    sys.path.insert(0, str(repo_root))
-
     import toml
 
     config = toml.load(config_path)
     inference_type = config.get("inferencer", {}).get("type")
     if inference_type != _SUPPORTED_INFERENCE_TYPE:
         _fail("pinned config is not a full_band_crm_mask recipe")
+
+    # Add config directory for recipe "model.Model" and repo root for "audio_zen"
+    sys.path.insert(0, str(config_dir))
+    sys.path.insert(0, str(repo_root))
 
     raw = sys.stdin.buffer.read()
     samples = np.frombuffer(raw, dtype="<f4").copy()

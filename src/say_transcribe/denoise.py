@@ -19,6 +19,7 @@ TOML); it is the model configuration file, never audio.
 """
 
 from dataclasses import dataclass
+import hashlib
 from pathlib import Path
 import subprocess
 
@@ -44,6 +45,7 @@ class DenoiserSpec:
     worker: Path  # standalone worker script
     checkpoint: Path  # local checkpoint; never downloaded at run time
     config: Path | None = None  # optional pinned model config file (e.g. recipe TOML)
+    sha256: str | None = None  # optional expected SHA-256 for checkpoint verification
 
 
 def denoise_pcm(
@@ -68,6 +70,12 @@ def denoise_pcm(
         raise DenoiseError("DENOISER_UNAVAILABLE", "denoiser checkpoint is missing")
     if spec.config is not None and not spec.config.is_file():
         raise DenoiseError("DENOISER_UNAVAILABLE", "denoiser config is missing")
+    if spec.sha256 is not None:
+        if not spec.checkpoint.is_file():
+            raise DenoiseError("DENOISER_UNAVAILABLE", "denoiser checkpoint is not a file")
+        computed = hashlib.sha256(spec.checkpoint.read_bytes()).hexdigest()
+        if computed.lower() != spec.sha256.lower():
+            raise DenoiseError("DENOISER_UNAVAILABLE", "denoiser checkpoint hash mismatch")
 
     command = [
         str(spec.python),

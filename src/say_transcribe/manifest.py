@@ -25,7 +25,7 @@ _REQUIRED_FIELDS = (
 _SPLITS = ("dev", "held_out")
 _DENOISER_ARMS = ("PF", "PD")
 _DENOISER_FIELDS = ("python", "worker", "checkpoint")
-_DENOISER_OPTIONAL_FIELDS = ("config",)
+_DENOISER_OPTIONAL_FIELDS = ("config", "sha256")
 # Workers that take a pinned model configuration file; declaring (or omitting)
 # it for the wrong arm would only surface later as a worker argparse failure.
 _DENOISER_CONFIG_ARMS = ("PF",)
@@ -164,12 +164,17 @@ def load_denoiser_specs(path: Path) -> dict[str, DenoiserSpec]:
             value = config[field]
             if not isinstance(value, str) or not value.strip():
                 raise ManifestError(f"manifest denoisers.{arm}: field '{field}' must be a non-empty string")
-            paths[field] = Path(value)
+            if field == "sha256":
+                if not _SHA256_PATTERN.match(value):
+                    raise ManifestError(f"manifest denoisers.{arm}: field 'sha256' must be a 64-character hex string")
+            else:
+                paths[field] = Path(value)
         specs[arm] = DenoiserSpec(
             name=arm,
             python=paths["python"],
             worker=paths["worker"],
             checkpoint=paths["checkpoint"],
             config=paths.get("config"),
+            sha256=config.get("sha256"),
         )
     return specs
