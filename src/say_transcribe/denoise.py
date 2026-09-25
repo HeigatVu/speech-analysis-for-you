@@ -10,10 +10,12 @@ This module never imports torch/torchaudio/df and never touches the network: it
 validates a :class:`DenoiserSpec`, pipes raw little-endian float32 mono PCM to
 the worker's stdin, and reads the enhanced signal from stdout.
 
-Worker protocol: ``<python> <worker> --rate R --checkpoint PATH``; stdin is raw
-little-endian float32 mono at R; stdout is the same format and the same length.
-Workers own any model-specific resampling (DeepFilterNet3 runs at 48 kHz) and
-must return exactly the input length; the dispatch enforces that contract.
+Worker protocol: ``<python> <worker> --rate R --checkpoint PATH [--config PATH]``;
+stdin is raw little-endian float32 mono at R; stdout is the same format and the
+same length. Workers own any model-specific resampling (DeepFilterNet3 runs at
+48 kHz) and must return exactly the input length; the dispatch enforces that
+contract. ``--config`` is passed only when the spec pins one (FullSubNet's recipe
+TOML); it is the model configuration file, never audio.
 """
 
 from dataclasses import dataclass
@@ -23,6 +25,7 @@ import subprocess
 import numpy as np
 
 DEFAULT_DF3_WORKER = Path(__file__).resolve().parent / "workers" / "deepfilternet3_worker.py"
+DEFAULT_FULLSUBNET_WORKER = Path(__file__).resolve().parent / "workers" / "fullsubnet_worker.py"
 
 
 class DenoiseError(Exception):
@@ -40,6 +43,7 @@ class DenoiserSpec:
     python: Path  # interpreter of the isolated environment
     worker: Path  # standalone worker script
     checkpoint: Path  # local checkpoint; never downloaded at run time
+    config: Path | None = None  # optional pinned model config file (e.g. recipe TOML)
 
 
 def denoise_pcm(
@@ -62,17 +66,23 @@ def denoise_pcm(
         raise DenoiseError("DENOISER_UNAVAILABLE", "denoiser worker is missing")
     if not spec.checkpoint.exists():
         raise DenoiseError("DENOISER_UNAVAILABLE", "denoiser checkpoint is missing")
+    if spec.config is not None and not spec.config.is_file():
+        raise DenoiseError("DENOISER_UNAVAILABLE", "denoiser config is missing")
+
+    command = [
+        str(spec.python),
+        str(spec.worker),
+        "--rate",
+        str(sample_rate),
+        "--checkpoint",
+        str(spec.checkpoint),
+    ]
+    if spec.config is not None:
+        command += ["--config", str(spec.config)]
 
     try:
         process = subprocess.run(
-            [
-                str(spec.python),
-                str(spec.worker),
-                "--rate",
-                str(sample_rate),
-                "--checkpoint",
-                str(spec.checkpoint),
-            ],
+            command,
             input=samples.astype("<f4").tobytes(),
             capture_output=True,
             check=False,

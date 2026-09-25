@@ -346,6 +346,16 @@ def test_load_denoiser_specs_parses_and_validates(tmp_path: Path):
     assert set(specs) == {"PD"}
     assert specs["PD"].name == "PD"
     assert specs["PD"].python == Path("/venv/bin/python")
+    assert specs["PD"].config is None
+
+    pinned = load_denoiser_specs(
+        _write_manifest(
+            tmp_path,
+            [_row(tmp_path)],
+            denoisers={"PF": dict(config, config="/opt/inference.toml")},
+        )
+    )
+    assert pinned["PF"].config == Path("/opt/inference.toml")
 
     assert load_denoiser_specs(_write_manifest(tmp_path, [_row(tmp_path)])) == {}
 
@@ -358,6 +368,10 @@ def test_load_denoiser_specs_parses_and_validates(tmp_path: Path):
     with pytest.raises(ManifestError):
         load_denoiser_specs(
             _write_manifest(tmp_path, [_row(tmp_path)], denoisers={"PD": dict(config, worker="")})
+        )
+    with pytest.raises(ManifestError):
+        load_denoiser_specs(
+            _write_manifest(tmp_path, [_row(tmp_path)], denoisers={"PD": dict(config, config="")})
         )
 
 

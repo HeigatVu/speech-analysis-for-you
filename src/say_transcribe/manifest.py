@@ -25,6 +25,7 @@ _REQUIRED_FIELDS = (
 _SPLITS = ("dev", "held_out")
 _DENOISER_ARMS = ("PF", "PD")
 _DENOISER_FIELDS = ("python", "worker", "checkpoint")
+_DENOISER_OPTIONAL_FIELDS = ("config",)
 _ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
 _SHA256_PATTERN = re.compile(r"^[0-9a-fA-F]{64}$")
 
@@ -151,7 +152,9 @@ def load_denoiser_specs(path: Path) -> dict[str, DenoiserSpec]:
         if missing:
             raise ManifestError(f"manifest denoisers.{arm}: missing field '{missing[0]}'")
         paths: dict[str, Path] = {}
-        for field in _DENOISER_FIELDS:
+        for field in (*_DENOISER_FIELDS, *_DENOISER_OPTIONAL_FIELDS):
+            if field not in config:
+                continue
             value = config[field]
             if not isinstance(value, str) or not value.strip():
                 raise ManifestError(f"manifest denoisers.{arm}: field '{field}' must be a non-empty string")
@@ -161,5 +164,6 @@ def load_denoiser_specs(path: Path) -> dict[str, DenoiserSpec]:
             python=paths["python"],
             worker=paths["worker"],
             checkpoint=paths["checkpoint"],
+            config=paths.get("config"),
         )
     return specs
