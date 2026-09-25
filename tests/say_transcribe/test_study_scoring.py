@@ -51,14 +51,26 @@ def test_score_uncapped_empty_reference_keeps_insertion_count():
 
 
 def test_items_from_texts_matches_extract_session_items_conventions():
-    text = "tôi là sinh_viên ."
-    cha_text = f"@Begin\n*PAR:\t{text}\n@End\n"
+    # Every _PUNCTUATION_ONLY token, so a mismatch between the two tokenizers'
+    # punctuation sets (gold vs hypothesis) can't slip past this test. Needs a
+    # full CHAT header (@Participants/@ID/@Media) so decode_chat takes the
+    # strict path instead of falling back to the lenient main-tier scan.
+    text = "tôi là sinh_viên . ? ! , ... …"
+    cha_text = (
+        "@UTF8\n@Begin\n@Languages:\tvie\n"
+        "@Participants:\tPAR Participant, INV Investigator\n"
+        "@ID:\tvie|corpus|PAR|||||Participant|||\n"
+        "@ID:\tvie|corpus|INV|||||Investigator|||\n"
+        "@Media:\ts01, audio\n"
+        f"*PAR:\t{text}\t\x150_2000\x15\n@End\n"
+    )
 
     from_texts = items_from_texts([text])
     from_cha = extract_session_items(cha_text)
 
     for key in ("syllables", "words", "chars"):
         assert from_texts[key] == from_cha[key]
+    assert from_cha["words"] == ["tôi", "là", "sinh_viên"]
 
 
 def test_items_from_texts_preserves_nfc_vietnamese_text():
