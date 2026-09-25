@@ -6,12 +6,20 @@ exact ``say-transcribe compare`` code paths (``transcribe``; ``transcribe_window
 declared channel; PF/PD denoise the P0 signal through isolated-environment
 workers. Nothing here re-implements ASR, VAD, or DSP stages. Every artifact this
 module writes belongs in a private output directory.
+
+Coverage metrics are pure functions of one arm's VAD windows and the frozen
+reference intervals, so no arm can be scored differently from another. They work
+in integer milliseconds on purpose: the SPEC's retention rule is "at least 50% of
+the reference duration", and integer ``2 * overlap >= duration`` tests that
+boundary exactly, where float seconds can land either side of it. The feature
+package's interval helpers stay in float seconds because they measure speech
+frames, not a thresholded boundary.
 """
 
 from dataclasses import dataclass
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, Sequence
 
 import numpy as np
 
@@ -28,7 +36,8 @@ from say_transcribe.denoise import DenoiserSpec, denoise_pcm
 from say_transcribe.evaluate import extract_session_items, items_from_texts, score_uncapped
 from say_transcribe.manifest import ManifestRow, load_denoiser_specs, load_manifest
 from say_transcribe.profile import apply_p0_profile
-from say_transcribe.vad import get_speech_windows, merge_asr_windows
+from say_transcribe.vad import SAMPLE_RATE, get_speech_windows, merge_asr_windows
+from speech_features.formats.chat import InvalidChatError, decode_chat
 
 # Frozen per SPEC: value dev-selected in the v5 pilot; not tunable per arm.
 STUDY_VAD_THRESHOLD = 0.2
@@ -81,12 +90,132 @@ def prepare_views(row: ManifestRow) -> AudioViews:
     )
 
 
-def compute_vad_arm(audio_16k: np.ndarray, source_sha256: str, backend: Any) -> AsrResult:
+def arm_vad_windows(audio_16k: np.ndarray) -> tuple[tuple[int, int], ...]:
+    """Frozen-threshold Silero speech windows, in samples, for one arm's signal.
+
+    Computed once per arm and reused by both the ASR arm and the coverage metric,
+    so the two can never disagree about which audio an arm selected.
+    """
+    return tuple(get_speech_windows(audio_16k, threshold=STUDY_VAD_THRESHOLD))
+
+
+def compute_vad_arm(
+    audio_16k: np.ndarray,
+    source_sha256: str,
+    backend: Any,
+    windows: Sequence[tuple[int, int]] | None = None,
+) -> AsrResult:
     """The compare command's ``vad_asr`` path on any 16 kHz mono signal."""
-    speech_windows = get_speech_windows(audio_16k, threshold=STUDY_VAD_THRESHOLD)
+    speech_windows = arm_vad_windows(audio_16k) if windows is None else tuple(windows)
     asr_windows = merge_asr_windows(speech_windows)
     cached_windows = transcribe_windows(audio_16k, asr_windows, backend)
     return result_from_windows(audio_16k, source_sha256, cached_windows)
+
+
+@dataclass(frozen=True)
+class ReferenceIntervals:
+    """Frozen reference timing: one interval per participant (``PAR``) utterance.
+
+    ``zero_duration`` counts PAR utterances whose bullet has no duration. They
+    cannot retain audio, so they are excluded from the denominators and reported
+    separately rather than silently counted as retained or silently dropped.
+    """
+
+    utterances: tuple[tuple[int, int], ...]
+    zero_duration: int
+
+
+def load_reference_document(reference_text: str):
+    """Strictly decode a verified reference; timing and features reuse the result."""
+    try:
+        return decode_chat(reference_text)
+    except InvalidChatError:
+        raise StudyError("INVALID_ARGUMENT", "reference transcript is not a valid CHAT document") from None
+
+
+def reference_intervals(document) -> ReferenceIntervals:
+    """Participant utterance intervals of a reference document, in milliseconds.
+
+    ``decode_chat`` rejects a speaker tier without a media bullet, so every
+    utterance reaching here carries verified timing.
+    """
+    participant: list[tuple[int, int]] = []
+    for utterance in document.utterances:
+        if utterance.speaker_id != "PAR":
+            continue
+        participant.append((int(round(utterance.start_s * 1000)), int(round(utterance.end_s * 1000))))
+    if not participant:
+        raise StudyError("INVALID_ARGUMENT", "reference transcript has no participant (PAR) intervals")
+    usable = tuple((start, end) for start, end in participant if end > start)
+    return ReferenceIntervals(utterances=usable, zero_duration=len(participant) - len(usable))
+
+
+def windows_to_ms(
+    windows: Sequence[tuple[int, int]], sample_rate: int = SAMPLE_RATE
+) -> tuple[tuple[int, int], ...]:
+    """Convert sample-index windows to ``(start_ms, end_ms)``."""
+    scale = 1000.0 / sample_rate
+    return tuple((int(round(start * scale)), int(round(end * scale))) for start, end in windows)
+
+
+def _merge_ms(intervals: Sequence[tuple[int, int]]) -> list[tuple[int, int]]:
+    """Union of ``[start, end)`` millisecond intervals, sorted and disjoint."""
+    merged: list[tuple[int, int]] = []
+    for start, end in sorted(intervals):
+        if end <= start:
+            continue
+        if merged and start <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+        else:
+            merged.append((start, end))
+    return merged
+
+
+def _overlap_ms(start: int, end: int, merged: Sequence[tuple[int, int]]) -> int:
+    """Total duration of ``[start, end)`` covered by a sorted, disjoint union."""
+    total = 0
+    for window_start, window_end in merged:
+        if window_end <= start:
+            continue
+        if window_start >= end:
+            break
+        total += min(end, window_end) - max(start, window_start)
+    return total
+
+
+def coverage_metrics(
+    vad_windows_ms: Sequence[tuple[int, int]], reference: ReferenceIntervals
+) -> dict[str, Any]:
+    """Speech coverage and retained-utterance fraction against frozen references.
+
+    Coverage is retained participant-speech duration divided by reference
+    participant-speech duration. An utterance is retained when at least half of
+    its reference duration overlaps a VAD window (exactly 50% counts as
+    retained). Arm-agnostic: only the windows and the reference enter.
+    """
+    reference_windows = _merge_ms(reference.utterances)
+    selected = _merge_ms(vad_windows_ms)
+
+    reference_ms = sum(end - start for start, end in reference_windows)
+    retained_ms = sum(_overlap_ms(start, end, selected) for start, end in reference_windows)
+
+    retained_utterances = sum(
+        1
+        for start, end in reference.utterances
+        if 2 * _overlap_ms(start, end, selected) >= end - start
+    )
+    utterance_count = len(reference.utterances)
+    return {
+        "reference_speech_ms": reference_ms,
+        "retained_speech_ms": retained_ms,
+        "coverage": retained_ms / reference_ms if reference_ms else 0.0,
+        "utterance_count": utterance_count,
+        "retained_utterance_count": retained_utterances,
+        "retained_utterance_fraction": (
+            retained_utterances / utterance_count if utterance_count else 0.0
+        ),
+        "zero_duration_utterances": reference.zero_duration,
+    }
 
 
 def compute_arm_results(
