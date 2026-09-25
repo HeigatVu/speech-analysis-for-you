@@ -137,6 +137,29 @@ def test_participant_utterance_without_a_bullet_fails_loudly(tmp_path: Path):
     assert excinfo.value.__cause__ is None
 
 
+def test_reversed_utterance_timing_fails_loudly(tmp_path: Path):
+    """A transposed inline bullet must not be reclassified as a zero-length utterance."""
+    path = tmp_path / "reversed.cha"
+    path.write_text(
+        _HEADER + f"*PAR:\t{_WORDS} .\t{_BULLET}12000_2000{_BULLET}\n@End\n", encoding="utf-8"
+    )
+
+    with pytest.raises(StudyError) as excinfo:
+        reference_intervals(load_reference_document(path.read_text(encoding="utf-8")))
+
+    assert excinfo.value.code == "INVALID_ARGUMENT"
+    assert excinfo.value.__cause__ is None
+
+
+def test_reference_without_a_usable_interval_fails_loudly(tmp_path: Path):
+    """All-zero-length participant speech has no defined coverage ratio."""
+    with pytest.raises(StudyError) as excinfo:
+        _intervals(tmp_path, [("PAR", 1500, 1500)])
+
+    assert excinfo.value.code == "INVALID_ARGUMENT"
+    assert "usable" in excinfo.value.message
+
+
 def test_malformed_reference_is_not_silently_scored(tmp_path: Path):
     with pytest.raises(StudyError) as excinfo:
         load_reference_document("@Begin\n*PAR:\t" + _WORDS + " .\n@End\n")

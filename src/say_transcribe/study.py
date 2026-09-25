@@ -136,17 +136,28 @@ def load_reference_document(reference_text: str):
 def reference_intervals(document) -> ReferenceIntervals:
     """Participant utterance intervals of a reference document, in milliseconds.
 
-    ``decode_chat`` rejects a speaker tier without a media bullet, so every
-    utterance reaching here carries verified timing.
+    ``decode_chat`` rejects a speaker tier without a media bullet and a reversed
+    ``%xaud`` bullet, but it does not range-check the inline ``start_end`` bullet
+    it also accepts, so a transposed one reaches here. Reversed timing would
+    silently shrink the retention gate's denominator, so it fails loud instead;
+    only a genuinely zero-length utterance is reported as ``zero_duration``.
     """
     participant: list[tuple[int, int]] = []
     for utterance in document.utterances:
         if utterance.speaker_id != "PAR":
             continue
-        participant.append((int(round(utterance.start_s * 1000)), int(round(utterance.end_s * 1000))))
+        start = int(round(utterance.start_s * 1000))
+        end = int(round(utterance.end_s * 1000))
+        if end < start:
+            raise StudyError(
+                "INVALID_ARGUMENT", "reference participant utterance ends before it starts"
+            )
+        participant.append((start, end))
     if not participant:
         raise StudyError("INVALID_ARGUMENT", "reference transcript has no participant (PAR) intervals")
     usable = tuple((start, end) for start, end in participant if end > start)
+    if not usable:
+        raise StudyError("INVALID_ARGUMENT", "reference transcript has no usable participant intervals")
     return ReferenceIntervals(utterances=usable, zero_duration=len(participant) - len(usable))
 
 
