@@ -26,6 +26,9 @@ _SPLITS = ("dev", "held_out")
 _DENOISER_ARMS = ("PF", "PD")
 _DENOISER_FIELDS = ("python", "worker", "checkpoint")
 _DENOISER_OPTIONAL_FIELDS = ("config",)
+# Workers that take a pinned model configuration file; declaring (or omitting)
+# it for the wrong arm would only surface later as a worker argparse failure.
+_DENOISER_CONFIG_ARMS = ("PF",)
 _ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
 _SHA256_PATTERN = re.compile(r"^[0-9a-fA-F]{64}$")
 
@@ -151,6 +154,10 @@ def load_denoiser_specs(path: Path) -> dict[str, DenoiserSpec]:
         missing = [field for field in _DENOISER_FIELDS if field not in config]
         if missing:
             raise ManifestError(f"manifest denoisers.{arm}: missing field '{missing[0]}'")
+        if arm in _DENOISER_CONFIG_ARMS and "config" not in config:
+            raise ManifestError(f"manifest denoisers.{arm}: missing field 'config'")
+        if arm not in _DENOISER_CONFIG_ARMS and "config" in config:
+            raise ManifestError(f"manifest denoisers.{arm}: field 'config' is not supported for this arm")
         paths: dict[str, Path] = {}
         for field in (*_DENOISER_FIELDS, *_DENOISER_OPTIONAL_FIELDS):
             if field not in config:

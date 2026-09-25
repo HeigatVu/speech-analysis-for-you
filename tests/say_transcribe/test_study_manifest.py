@@ -373,6 +373,20 @@ def test_load_denoiser_specs_parses_and_validates(tmp_path: Path):
         load_denoiser_specs(
             _write_manifest(tmp_path, [_row(tmp_path)], denoisers={"PD": dict(config, config="")})
         )
+    # The FullSubNet worker needs its pinned recipe config; the DeepFilterNet
+    # worker takes none, so declaring it there would only fail inside the worker.
+    with pytest.raises(ManifestError) as missing_config:
+        load_denoiser_specs(_write_manifest(tmp_path, [_row(tmp_path)], denoisers={"PF": config}))
+    assert "config" in missing_config.value.message
+    with pytest.raises(ManifestError) as unsupported_config:
+        load_denoiser_specs(
+            _write_manifest(
+                tmp_path,
+                [_row(tmp_path)],
+                denoisers={"PD": dict(config, config="/opt/inference.toml")},
+            )
+        )
+    assert "not supported" in unsupported_config.value.message
 
 
 def test_mid_run_master_swap_raises_before_writing(tmp_path: Path, monkeypatch):

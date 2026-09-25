@@ -24,9 +24,11 @@ must run with no network access. Session-length audio is rendered in fixed
 model cannot run over tens of thousands of frames in one pass; the overlap-add is
 unity-gain, so chunking does not change the level of the retained speech.
 
-API shape targets the pinned checkout and its recipe TOML. End-to-end behavior
-against real FullSubNet weights is verified at the CP1 private run, which is
-blocked until the isolated environment and checkpoint are pinned (task T0).
+API shape targets the pinned checkout and its recipe TOML. The isolated
+environment and the checkpoint are not pinned yet (task T0), so nothing here has
+run against real FullSubNet weights: the API calls, the checkpoint state-dict
+handling, and the chunked inference above are what CP1 must exercise for the PF
+arm before any study conclusion uses it.
 """
 
 import argparse

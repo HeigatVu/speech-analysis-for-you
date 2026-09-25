@@ -43,7 +43,7 @@
     {
       "id": "T4",
       "title": "FullSubNet adapter, isolated environment",
-      "status": "queued",
+      "status": "done",
       "branch": "feat/audio-preprocessing-t4-fullsubnet",
       "dependsOn": [
         "T3"
@@ -54,7 +54,7 @@
     {
       "id": "T5",
       "title": "Coverage metrics against frozen PAR intervals",
-      "status": "queued",
+      "status": "done",
       "branch": "feat/audio-preprocessing-t5-coverage",
       "dependsOn": [
         "T1",
@@ -65,7 +65,7 @@
     {
       "id": "T6",
       "title": "Acoustic pack + PAR-only eGeMAPS",
-      "status": "queued",
+      "status": "done",
       "branch": "feat/audio-preprocessing-t6-features",
       "dependsOn": [
         "T5"
@@ -75,7 +75,7 @@
     {
       "id": "T7",
       "title": "Selection, statistics, redacted summary",
-      "status": "queued",
+      "status": "done",
       "branch": "feat/audio-preprocessing-t7-selection",
       "dependsOn": [
         "T6"
