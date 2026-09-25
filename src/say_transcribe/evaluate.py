@@ -94,7 +94,7 @@ def extract_session_items(cha_text: str) -> dict[str, Any]:
 
         for t in u.tokens:
             norm_word = unicodedata.normalize("NFC", t.text.strip())
-            if not norm_word or norm_word in {".", "?", "!", ",", "...", "…"}:
+            if not norm_word or norm_word in _PUNCTUATION_ONLY:
                 continue
             words.append(norm_word)
             # Syllables from word
@@ -124,6 +124,54 @@ def extract_session_items(cha_text: str) -> dict[str, Any]:
         "rels": rels,
         "intervals": speaker_intervals,
     }
+
+
+def items_from_texts(texts: Sequence[str]) -> dict[str, Any]:
+    """Tokenize plain transcript text into the item shape of ``extract_session_items``.
+
+    Same conventions: NFC normalization, punctuation-only tokens dropped,
+    ``_``-delimited syllable splitting. Morphosyntax and intervals stay empty.
+    """
+    syllables: list[str] = []
+    words: list[str] = []
+    chars: list[str] = []
+    for text in texts:
+        for item in text.split():
+            norm_word = unicodedata.normalize("NFC", item.strip())
+            if not norm_word or norm_word in _PUNCTUATION_ONLY:
+                continue
+            words.append(norm_word)
+            syllables.extend(norm_word.split("_"))
+            chars.extend(norm_word.replace("_", ""))
+    return {
+        "syllables": syllables,
+        "words": words,
+        "chars": chars,
+        "pos": [],
+        "heads": [],
+        "rels": [],
+        "intervals": [],
+    }
+
+
+def score_uncapped(gold: dict[str, Any], hyp: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """Uncapped SyER/CER/WER with edit counts for participant-level pooling.
+
+    Unlike ``run_evaluation``'s capped metrics, ``rate`` is never clamped and may
+    exceed 1.0 for insertion-heavy hypotheses.
+    """
+    scores: dict[str, dict[str, Any]] = {}
+    for key, field in (("syer", "syllables"), ("cer", "chars"), ("wer", "words")):
+        ref = gold[field]
+        hyp_items = hyp[field]
+        edits = levenshtein(ref, hyp_items)
+        ref_count = len(ref)
+        scores[key] = {
+            "edits": edits,
+            "ref_count": ref_count,
+            "rate": edits / ref_count if ref_count else 0.0,
+        }
+    return scores
 
 
 def compute_der(

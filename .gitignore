@@ -44,6 +44,13 @@ GEMINI.md
 # Keep local docs ignored except the navigation page and this pipeline's
 # canonical dated decision records.
 docs/*
+!docs/2026-09-24/
+docs/2026-09-24/*
+!docs/2026-09-24/audio-preprocessing-experiment/
+docs/2026-09-24/audio-preprocessing-experiment/*
+!docs/2026-09-24/audio-preprocessing-experiment/1/
+docs/2026-09-24/audio-preprocessing-experiment/1/*
+!docs/2026-09-24/audio-preprocessing-experiment/1/SPEC-2026-09-24.md
 !docs/README.md
 !docs/2026-09-02/
 docs/2026-09-02/*
@@ -112,9 +119,22 @@ docs/2026-09-23/vietnamese-chat-transcription/5/*
 !docs/2026-09-23/vietnamese-chat-transcription/5/tasks-2026-09-23.json
 !docs/2026-09-23/vietnamese-chat-transcription/5/USAGE-*.md
 !docs/2026-09-23/vietnamese-chat-transcription/5/SPIKE-*.md
+!docs/2026-09-25/
+docs/2026-09-25/*
+!docs/2026-09-25/audio-preprocessing-experiment/
+docs/2026-09-25/audio-preprocessing-experiment/*
+!docs/2026-09-25/audio-preprocessing-experiment/2/
+docs/2026-09-25/audio-preprocessing-experiment/2/*
+!docs/2026-09-25/audio-preprocessing-experiment/2/SPEC-2026-09-25.md
+!docs/2026-09-25/audio-preprocessing-experiment/2/PLAN-2026-09-25.md
+!docs/2026-09-25/audio-preprocessing-experiment/2/RESEARCH-2026-09-25.md
+!docs/2026-09-25/audio-preprocessing-experiment/2/TASKS-2026-09-25.md
+!docs/2026-09-25/audio-preprocessing-experiment/2/tasks-2026-09-25.json
+!docs/2026-09-25/audio-preprocessing-experiment/2/RESULTS-*.md
 
 # secrets (never commit)
 .env
 
 # temporary runtime directory
 tmp/
+.venvs/
