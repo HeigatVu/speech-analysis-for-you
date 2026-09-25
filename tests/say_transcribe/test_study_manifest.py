@@ -207,6 +207,27 @@ def _fake_result(text: str, source_sha256: str) -> AsrResult:
     )
 
 
+# One second of 16 kHz audio, so a stub run has a signal the reference fits in.
+_STUB_SAMPLES = 16000
+
+
+def _profile_stub(samples):
+    """A P0 profile result shaped like the real one, loudness report included."""
+    return SimpleNamespace(
+        samples=samples,
+        sample_rate=16000,
+        loudness=SimpleNamespace(
+            input_i=-23.0,
+            input_tp=-1.0,
+            input_lra=7.0,
+            output_i=-23.0,
+            output_tp=-1.0,
+            output_lra=7.0,
+            normalization_type="linear",
+        ),
+    )
+
+
 def _verified_reference(tmp_path: Path, name: str = "ref.cha") -> Path:
     """A reference shaped like a verified one: strict CHAT plus participant timing."""
     path = tmp_path / name
@@ -255,13 +276,13 @@ def test_native_arms_use_compare_code_paths_and_score_both(tmp_path: Path, monke
         "say_transcribe.study.read_wav",
         lambda path: (events.append("decode"), SimpleNamespace(sample_rate=16000, sample_width=2))[1],
     )
-    monkeypatch.setattr("say_transcribe.study.extract_channel", lambda audio, channel: np.zeros(4))
-    monkeypatch.setattr("say_transcribe.study.resample_to_16kHz", lambda *args: np.zeros(4))
+    monkeypatch.setattr("say_transcribe.study.extract_channel", lambda audio, channel: np.zeros(_STUB_SAMPLES))
+    monkeypatch.setattr("say_transcribe.study.resample_to_16kHz", lambda *args: np.zeros(_STUB_SAMPLES))
     monkeypatch.setattr(
         "say_transcribe.study.apply_p0_profile",
-        lambda samples, rate, width: SimpleNamespace(samples=np.zeros(4), sample_rate=16000),
+        lambda samples, rate, width: _profile_stub(np.zeros(_STUB_SAMPLES)),
     )
-    monkeypatch.setattr("say_transcribe.study.get_speech_windows", lambda audio, *, threshold: [(0, 4)])
+    monkeypatch.setattr("say_transcribe.study.get_speech_windows", lambda audio, *, threshold: [(0, _STUB_SAMPLES)])
     monkeypatch.setattr("say_transcribe.study.merge_asr_windows", lambda windows: windows)
     monkeypatch.setattr(
         "say_transcribe.study.transcribe_windows",
@@ -321,17 +342,17 @@ def test_denoiser_arms_run_when_configured(tmp_path: Path, monkeypatch):
         "say_transcribe.study.read_wav",
         lambda path: SimpleNamespace(sample_rate=16000, sample_width=2),
     )
-    monkeypatch.setattr("say_transcribe.study.extract_channel", lambda audio, channel: np.zeros(4))
-    monkeypatch.setattr("say_transcribe.study.resample_to_16kHz", lambda *args: np.zeros(4))
+    monkeypatch.setattr("say_transcribe.study.extract_channel", lambda audio, channel: np.zeros(_STUB_SAMPLES))
+    monkeypatch.setattr("say_transcribe.study.resample_to_16kHz", lambda *args: np.zeros(_STUB_SAMPLES))
     monkeypatch.setattr(
         "say_transcribe.study.apply_p0_profile",
-        lambda samples, rate, width: SimpleNamespace(samples=np.zeros(4), sample_rate=16000),
+        lambda samples, rate, width: _profile_stub(np.zeros(_STUB_SAMPLES)),
     )
     monkeypatch.setattr(
         "say_transcribe.study.denoise_pcm",
-        lambda samples, rate, spec: (seen_specs.append(spec), np.zeros(4))[1],
+        lambda samples, rate, spec: (seen_specs.append(spec), np.zeros(_STUB_SAMPLES))[1],
     )
-    monkeypatch.setattr("say_transcribe.study.get_speech_windows", lambda audio, *, threshold: [(0, 4)])
+    monkeypatch.setattr("say_transcribe.study.get_speech_windows", lambda audio, *, threshold: [(0, _STUB_SAMPLES)])
     monkeypatch.setattr("say_transcribe.study.merge_asr_windows", lambda windows: windows)
     monkeypatch.setattr("say_transcribe.study.transcribe_windows", lambda audio, windows, backend: ())
     monkeypatch.setattr(
@@ -431,13 +452,13 @@ def test_mid_run_master_swap_raises_before_writing(tmp_path: Path, monkeypatch):
         "say_transcribe.study.read_wav",
         lambda path: SimpleNamespace(sample_rate=16000, sample_width=2),
     )
-    monkeypatch.setattr("say_transcribe.study.extract_channel", lambda audio, channel: np.zeros(4))
-    monkeypatch.setattr("say_transcribe.study.resample_to_16kHz", lambda *args: np.zeros(4))
+    monkeypatch.setattr("say_transcribe.study.extract_channel", lambda audio, channel: np.zeros(_STUB_SAMPLES))
+    monkeypatch.setattr("say_transcribe.study.resample_to_16kHz", lambda *args: np.zeros(_STUB_SAMPLES))
     monkeypatch.setattr(
         "say_transcribe.study.apply_p0_profile",
-        lambda samples, rate, width: SimpleNamespace(samples=np.zeros(4), sample_rate=16000),
+        lambda samples, rate, width: _profile_stub(np.zeros(_STUB_SAMPLES)),
     )
-    monkeypatch.setattr("say_transcribe.study.get_speech_windows", lambda audio, *, threshold: [(0, 4)])
+    monkeypatch.setattr("say_transcribe.study.get_speech_windows", lambda audio, *, threshold: [(0, _STUB_SAMPLES)])
     monkeypatch.setattr("say_transcribe.study.merge_asr_windows", lambda windows: windows)
     monkeypatch.setattr("say_transcribe.study.transcribe_windows", lambda audio, windows, backend: ())
     monkeypatch.setattr(
@@ -477,11 +498,11 @@ def test_broken_denoiser_raises_and_never_skips_the_arm(tmp_path: Path, monkeypa
         "say_transcribe.study.read_wav",
         lambda path: SimpleNamespace(sample_rate=16000, sample_width=2),
     )
-    monkeypatch.setattr("say_transcribe.study.extract_channel", lambda audio, channel: np.zeros(4))
-    monkeypatch.setattr("say_transcribe.study.resample_to_16kHz", lambda *args: np.zeros(4))
+    monkeypatch.setattr("say_transcribe.study.extract_channel", lambda audio, channel: np.zeros(_STUB_SAMPLES))
+    monkeypatch.setattr("say_transcribe.study.resample_to_16kHz", lambda *args: np.zeros(_STUB_SAMPLES))
     monkeypatch.setattr(
         "say_transcribe.study.apply_p0_profile",
-        lambda samples, rate, width: SimpleNamespace(samples=np.zeros(4), sample_rate=16000),
+        lambda samples, rate, width: _profile_stub(np.zeros(_STUB_SAMPLES)),
     )
 
     def broken_denoise(samples, rate, spec):
