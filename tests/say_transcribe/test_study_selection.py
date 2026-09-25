@@ -405,6 +405,16 @@ def test_bootstrap_is_deterministic_for_the_frozen_seed():
     assert bootstrap_mean_interval(values, resamples=0)["ci95"] is None
 
 
+def test_sign_agreement_counts_participants_the_candidate_improved():
+    # Lower SyER is better. p1, p2 improve (candidate < baseline); p3 does not.
+    candidate = {"p1": Fraction(1, 10), "p2": Fraction(2, 10), "p3": Fraction(5, 10)}
+    baseline = {"p1": Fraction(3, 10), "p2": Fraction(3, 10), "p3": Fraction(1, 10)}
+
+    summary = paired_difference(candidate, baseline)
+
+    assert summary["sign_agreement"] == pytest.approx(2 / 3)
+
+
 def test_two_participant_split_reports_sign_agreement_instead_of_an_interval():
     candidate = {"p1": Fraction(1, 10), "p2": Fraction(4, 10)}
     baseline = {"p1": Fraction(3, 10), "p2": Fraction(2, 10)}
