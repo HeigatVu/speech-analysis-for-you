@@ -798,11 +798,11 @@ def paired_difference(
     """Candidate minus baseline per participant, with the split's uncertainty."""
     shared = sorted(set(candidate) & set(baseline))
     differences = {name: candidate[name] - baseline[name] for name in shared}
-    positive = sum(1 for value in differences.values() if value < 0)
+    improved = sum(1 for value in differences.values() if value < 0)
     summary: dict[str, Any] = {
         "participants": len(shared),
         "mean_difference": float(macro_mean(differences)) if differences else None,
-        "sign_agreement": (positive / len(differences)) if differences else None,
+        "sign_agreement": (improved / len(differences)) if differences else None,
     }
     if len(shared) >= MIN_BOOTSTRAP_PARTICIPANTS:
         summary["bootstrap"] = bootstrap_mean_interval(differences)
