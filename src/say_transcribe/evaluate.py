@@ -94,7 +94,7 @@ def extract_session_items(cha_text: str) -> dict[str, Any]:
 
         for t in u.tokens:
             norm_word = unicodedata.normalize("NFC", t.text.strip())
-            if not norm_word or norm_word in {".", "?", "!", ",", "...", "…"}:
+            if not norm_word or norm_word in _PUNCTUATION_ONLY:
                 continue
             words.append(norm_word)
             # Syllables from word
