@@ -124,7 +124,7 @@ def gsm_roundtrip(samples_8k: np.ndarray) -> np.ndarray:
         "CODEC_UNAVAILABLE",
     )
     decoded_samples = np.frombuffer(decoded, dtype="<i2")
-    if len(decoded_samples) < len(pcm_in) // 2:
+    if len(decoded_samples) < len(samples_8k):
         raise ProfileError("CODEC_UNAVAILABLE", "GSM round trip returned fewer samples than sent")
     trimmed = decoded_samples[: len(samples_8k)]
     return trimmed.astype(np.float64) / 32768.0
