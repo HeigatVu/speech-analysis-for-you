@@ -53,6 +53,16 @@ out-slice30/}`.
    gate) and value-level coverage — and this needs a SPEC decision: scope validity to keys whose
    prerequisites are present, or gate on value coverage.
 
+   **Correction (2026-09-25, `refactor/audio-preprocessing-simplify-review`):** the claim above is
+   inaccurate. `study.py`'s gate counts *extractions* (one acoustic vector per session, one eGeMAPS
+   vector per eligible utterance), not per-value finiteness — an acoustic vector with 5–6 NaN keys
+   still counts as one valid extraction. Recomputed independently from dev records only
+   (`build_summary` over `p001`–`p003`): 137 vectors, 134 valid → 0.9781 ≥ 0.95, so the gate
+   **passes** on real data (`summary.json` agrees exactly). See
+   `output/CODE-REVIEW-AND-RUN-REPORT-2026-09-25.md` §9.3 for the full per-extraction vs. per-value
+   breakdown; the open question is which unit the SPEC should require, not whether the gate can
+   pass.
+
 4. **At 44.1 kHz the arms are one sample apart.** For p001 the native 16 kHz ASR view holds
    16,648,897 samples while the profile output holds 16,648,896 (0.06 ms). The 48 kHz sessions agree
    exactly. The mismatch is bounded and far below the metric resolution, but the two paths do not
