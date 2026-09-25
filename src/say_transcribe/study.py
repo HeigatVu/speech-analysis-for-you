@@ -400,14 +400,15 @@ def extract_arm_features(
         )
 
     valid_rows = sum(1 for row in rows if row["valid"])
+    truncated_rows = sum(1 for row in rows if row.get("reason") == "TRUNCATED")
     vector_count = len(pooled)
     finite_values = sum(1 for values in pooled.values() for value in values if _is_finite(value))
     total_values = sum(len(values) for values in pooled.values())
     record["egemaps"] = {
         "utterances": len(eligible),
-        "extracted": len(rows) - sum(1 for row in rows if row.get("reason") == "TRUNCATED"),
+        "extracted": len(rows) - truncated_rows,
         "valid_utterances": valid_rows,
-        "truncated_utterances": sum(1 for row in rows if row.get("reason") == "TRUNCATED"),
+        "truncated_utterances": truncated_rows,
         "keys": vector_count,
         "values": total_values,
         "finite": finite_values,
