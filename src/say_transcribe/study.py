@@ -17,12 +17,15 @@ frames, not a thresholded boundary.
 """
 
 from dataclasses import dataclass
+from fractions import Fraction
 from functools import lru_cache
 import importlib.util
 import json
 import math
 from pathlib import Path
-from typing import Any, Sequence
+import random
+import time
+from typing import Any, Mapping, Sequence
 
 import numpy as np
 
@@ -402,45 +405,83 @@ def extract_arm_features(
     return record
 
 
+@dataclass(frozen=True)
+class ArmRun:
+    """One session's arm outputs and the per-arm inputs the metrics need.
+
+    ``signals`` are the 16 kHz mono arrays each arm actually fed to ASR; the
+    feature stage consumes the same arrays so an arm is never described by audio
+    it did not use.
+    """
+
+    results: dict[str, AsrResult]
+    signals: dict[str, np.ndarray]
+    windows: dict[str, tuple[tuple[int, int], ...]]  # sample-index VAD windows per VAD arm
+    seconds: dict[str, float]  # wall clock per arm
+
+
 def compute_arm_results(
     row: ManifestRow,
     source_sha256: str,
     device: str,
     backend: Any,
     denoisers: dict[str, DenoiserSpec],
-) -> dict[str, AsrResult]:
+) -> ArmRun:
     """Compute every arm whose inputs are configured, in SPEC arm order."""
+    started = time.perf_counter()
     baseline = transcribe(
         audio_path=row.audio_path,
         channel_index=row.channel_index,
         device=device,
         backend=backend,
     )
+    baseline_seconds = time.perf_counter() - started
     if baseline.source_sha256.lower() != source_sha256.lower():
         raise StudyError("SOURCE_HASH_MISMATCH", "Master audio changed during processing")
 
     views = prepare_views(row)
     profile = apply_p0_profile(views.channel_samples, views.sample_rate, views.sample_width)
 
-    signals: dict[str, np.ndarray] = {"N1": views.audio_16k, "P0": profile.samples}
+    # N0 and N1 describe the same native selected-channel signal; P0 onwards
+    # describe the profile output, optionally denoised.
+    signals: dict[str, np.ndarray] = {"N0": views.audio_16k, "N1": views.audio_16k, "P0": profile.samples}
     if "PF" in denoisers:
         signals["PF"] = denoise_pcm(profile.samples, profile.sample_rate, denoisers["PF"])
     if "PD" in denoisers:
         signals["PD"] = denoise_pcm(profile.samples, profile.sample_rate, denoisers["PD"])
 
     results: dict[str, AsrResult] = {"N0": baseline}
+    windows: dict[str, tuple[tuple[int, int], ...]] = {}
+    seconds: dict[str, float] = {"N0": baseline_seconds}
     for name in ARM_ORDER[1:]:
-        if name in signals:
-            results[name] = compute_vad_arm(signals[name], source_sha256, backend)
-    return results
+        if name not in signals:
+            continue
+        armed = time.perf_counter()
+        windows[name] = arm_vad_windows(signals[name])
+        results[name] = compute_vad_arm(signals[name], source_sha256, backend, windows[name])
+        seconds[name] = time.perf_counter() - armed
+    return ArmRun(results=results, signals=signals, windows=windows, seconds=seconds)
 
 
-def session_record(row: ManifestRow, arms: dict[str, AsrResult]) -> dict[str, Any]:
-    """Build the private per-session record: arm predictions plus uncapped scores."""
+def _read_reference(row: ManifestRow) -> str:
     try:
-        reference_text = row.reference_path.read_text(encoding="utf-8")
+        return row.reference_path.read_text(encoding="utf-8")
     except OSError:
         raise StudyError("INVALID_ARGUMENT", "reference transcript could not be read") from None
+
+
+def session_record(
+    row: ManifestRow,
+    arms: dict[str, AsrResult],
+    *,
+    extras: dict[str, dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Build the private per-session record: arm predictions plus uncapped scores.
+
+    ``extras`` are per-arm additions (coverage, features, runtime) computed by the
+    study run; the scoring record itself is unchanged without them.
+    """
+    reference_text = _read_reference(row)
     gold = extract_session_items(reference_text)
     if not gold["syllables"]:
         raise StudyError("INVALID_ARGUMENT", "reference transcript contains no scorable text")
@@ -466,6 +507,7 @@ def session_record(row: ManifestRow, arms: dict[str, AsrResult]) -> dict[str, An
             ],
             "warnings": list(result.warnings),
             "scores": score_uncapped(gold, hyp),
+            **(extras or {}).get(name, {}),
         }
     return record
 
@@ -480,22 +522,378 @@ def write_session_record(record: dict[str, Any], out_dir: Path) -> Path:
     return target
 
 
+def compute_session(
+    row: ManifestRow,
+    backend: Any,
+    denoisers: dict[str, DenoiserSpec],
+    device: str = "cpu",
+) -> dict[str, Any]:
+    """One session end to end: hash gate, arms, coverage, features, private record.
+
+    The master hash is verified before anything decodes it; the eGeMAPS
+    dependency gate fires only once the source is known good, so a hash problem
+    is never masked by an environment problem.
+    """
+    source_sha256 = verify_source(row)
+    require_egemaps_available()
+    run = compute_arm_results(row, source_sha256, device, backend, denoisers)
+    # Re-verify after the (potentially hour-long) arm chain so a master swapped
+    # mid-run cannot mix sources into one record.
+    verify_source(row)
+
+    document = load_reference_document(_read_reference(row))
+    reference = reference_intervals(document)
+
+    extras: dict[str, dict[str, Any]] = {}
+    for name in ARM_ORDER:
+        if name not in run.results:
+            continue
+        entry: dict[str, Any] = {
+            "runtime_s": run.seconds[name],
+            "features": extract_arm_features(run.signals[name], SAMPLE_RATE, document, reference),
+        }
+        if name in run.windows:
+            entry["vad"] = coverage_metrics(windows_to_ms(run.windows[name]), reference)
+        extras[name] = entry
+
+    record = session_record(row, run.results, extras=extras)
+    record["audio_seconds"] = float(run.signals["N1"].shape[0]) / SAMPLE_RATE
+    return record
+
+
+# --- Aggregation, gates, selection, and the redacted summary (T7) ---
+
+# SPEC "Selection and statistics": seeded participant-cluster bootstrap.
+BOOTSTRAP_RESAMPLES = 2000
+BOOTSTRAP_SEED = 42
+# SPEC gates: VAD retention and feature validity are each at least 95%.
+GATE_MINIMUM = Fraction(95, 100)
+# SPEC tie-break: 1.0 percentage point of participant-macro mean SyER.
+PRACTICAL_TIE = Fraction(1, 100)
+# SPEC: a held-out split with only two participants gets no bootstrap interval.
+MIN_BOOTSTRAP_PARTICIPANTS = 3
+
+
+def _arm_names(records: Sequence[dict[str, Any]]) -> tuple[str, ...]:
+    seen = {name for record in records for name in record["arms"]}
+    return tuple(name for name in ARM_ORDER if name in seen)
+
+
+def participant_syer(records: Sequence[dict[str, Any]]) -> dict[str, dict[str, Fraction]]:
+    """Pooled participant-level SyER per arm: edits and syllables summed per participant.
+
+    Pooling is exact rational arithmetic so the selection thresholds can be
+    compared without float drift at their exact boundaries.
+    """
+    pooled: dict[str, dict[str, list[int]]] = {}
+    for record in records:
+        participant = record["participant_id"]
+        for name, arm in record["arms"].items():
+            score = arm["scores"]["syer"]
+            total = pooled.setdefault(participant, {}).setdefault(name, [0, 0])
+            total[0] += int(score["edits"])
+            total[1] += int(score["ref_count"])
+    return {
+        participant: {
+            name: Fraction(edits, syllables) for name, (edits, syllables) in arms.items() if syllables
+        }
+        for participant, arms in pooled.items()
+    }
+
+
+def macro_mean(values: Mapping[str, Fraction]) -> Fraction:
+    """Unweighted mean across participants; zero when no participant contributed."""
+    if not values:
+        return Fraction(0)
+    return sum(values.values(), Fraction(0)) / len(values)
+
+
+def _pooled_coverage(records: Sequence[dict[str, Any]], arm: str) -> dict[str, Any]:
+    reference_ms = retained_ms = utterances = retained = 0
+    for record in records:
+        vad = record["arms"].get(arm, {}).get("vad")
+        if vad is None:
+            continue
+        reference_ms += int(vad["reference_speech_ms"])
+        retained_ms += int(vad["retained_speech_ms"])
+        utterances += int(vad["utterance_count"])
+        retained += int(vad["retained_utterance_count"])
+    return {
+        "reference_speech_ms": reference_ms,
+        "retained_speech_ms": retained_ms,
+        "utterance_count": utterances,
+        "retained_utterance_count": retained,
+        "duration_retention": Fraction(retained_ms, reference_ms) if reference_ms else None,
+        "utterance_retention": Fraction(retained, utterances) if utterances else None,
+    }
+
+
+def _pooled_features(records: Sequence[dict[str, Any]], arm: str) -> dict[str, Any]:
+    total = finite = 0
+    sessions = 0
+    failed_sessions = 0
+    for record in records:
+        features = record["arms"].get(arm, {}).get("features")
+        if features is None:
+            continue
+        sessions += 1
+        acoustic = features["acoustic"]
+        egemaps = features["egemaps"]
+        total += int(acoustic["values"]) + int(egemaps["values"])
+        finite += int(acoustic["finite"]) + int(egemaps["finite"])
+        if int(acoustic["finite"]) == 0 or (
+            int(egemaps["utterances"]) > 0 and int(egemaps["valid_utterances"]) == 0
+        ):
+            failed_sessions += 1
+    return {
+        "sessions": sessions,
+        "values": total,
+        "finite": finite,
+        "validity": Fraction(finite, total) if total else None,
+        "failed_sessions": failed_sessions,
+    }
+
+
+def evaluate_gates(records: Sequence[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """SPEC validity gates per arm: retention, feature validity, no failed session."""
+    gates: dict[str, dict[str, Any]] = {}
+    for arm in _arm_names(records):
+        coverage = _pooled_coverage(records, arm)
+        features = _pooled_features(records, arm)
+        duration = coverage["duration_retention"]
+        utterances = coverage["utterance_retention"]
+        validity = features["validity"]
+        checks = {
+            "duration_retention": None if duration is None else duration >= GATE_MINIMUM,
+            "utterance_retention": None if utterances is None else utterances >= GATE_MINIMUM,
+            "feature_validity": None if validity is None else validity >= GATE_MINIMUM,
+            "no_failed_session": features["failed_sessions"] == 0,
+        }
+        gates[arm] = {
+            "checks": checks,
+            "passed": all(value for value in checks.values() if value is not None),
+            "coverage": coverage,
+            "features": features,
+        }
+    return gates
+
+
+def bootstrap_mean_interval(
+    values: Mapping[str, Fraction],
+    *,
+    resamples: int = BOOTSTRAP_RESAMPLES,
+    seed: int = BOOTSTRAP_SEED,
+) -> dict[str, Any]:
+    """Participant-cluster bootstrap of a mean: resample participants, not sessions."""
+    participants = sorted(values)
+    if not participants:
+        return {"participants": 0, "mean": None, "ci95": None, "resamples": 0, "seed": seed}
+    rng = random.Random(seed)
+    means = []
+    for _ in range(resamples):
+        draw = rng.choices(participants, k=len(participants))
+        means.append(sum((values[item] for item in draw), Fraction(0)) / len(draw))
+    means.sort()
+    lower = means[max(0, int(0.025 * resamples) - 1)]
+    upper = means[min(resamples - 1, int(0.975 * resamples))]
+    return {
+        "participants": len(participants),
+        "mean": float(sum(values.values(), Fraction(0)) / len(participants)),
+        "ci95": [float(lower), float(upper)],
+        "resamples": resamples,
+        "seed": seed,
+    }
+
+
+def paired_difference(
+    candidate: Mapping[str, Fraction], baseline: Mapping[str, Fraction]
+) -> dict[str, Any]:
+    """Candidate minus baseline per participant, with the split's uncertainty."""
+    shared = sorted(set(candidate) & set(baseline))
+    differences = {name: candidate[name] - baseline[name] for name in shared}
+    positive = sum(1 for value in differences.values() if value < 0)
+    summary: dict[str, Any] = {
+        "participants": len(shared),
+        "mean_difference": float(macro_mean(differences)) if differences else None,
+        "sign_agreement": (positive / len(differences)) if differences else None,
+    }
+    if len(shared) >= MIN_BOOTSTRAP_PARTICIPANTS:
+        summary["bootstrap"] = bootstrap_mean_interval(differences)
+    else:
+        summary["bootstrap"] = None
+        summary["note"] = "too few participants for a participant-cluster bootstrap"
+    return summary
+
+
+def select_denoiser(
+    records: Sequence[dict[str, Any]], candidates: Sequence[str] = ("PF", "PD")
+) -> dict[str, Any]:
+    """Apply the SPEC gates and tie-break on development records only.
+
+    Returns the selected arm (or ``None``) plus the exact quantities the decision
+    used, so a reader can re-derive it without the private records.
+    """
+    arms = _arm_names(records)
+    gates = evaluate_gates(records)
+    syer = participant_syer(records)
+    macro = {arm: macro_mean({p: values[arm] for p, values in syer.items() if arm in values}) for arm in arms}
+    decision: dict[str, Any] = {
+        "candidates": [arm for arm in candidates if arm in arms],
+        "macro_syer": {arm: float(value) for arm, value in macro.items()},
+        "gates": {arm: gates[arm]["checks"] for arm in arms},
+    }
+
+    if "P0" not in arms:
+        decision.update({"selected": None, "reason": "the P0 baseline arm is missing"})
+        return decision
+
+    eligible = [arm for arm in decision["candidates"] if gates[arm]["passed"]]
+    decision["eligible"] = eligible
+    if not eligible:
+        decision.update({"selected": None, "reason": "no denoiser passed the validity gates"})
+        return decision
+
+    no_worse = [arm for arm in eligible if macro[arm] <= macro["P0"]]
+    decision["no_worse_than_p0"] = no_worse
+    if not no_worse:
+        decision.update({"selected": None, "reason": "no denoiser was at least as good as P0 on SyER"})
+        return decision
+
+    best = min(no_worse, key=lambda arm: (macro[arm], ARM_ORDER.index(arm)))
+    contenders = [arm for arm in no_worse if macro[arm] - macro[best] <= PRACTICAL_TIE]
+    decision["best"] = best
+    decision["contenders"] = contenders
+
+    if len(contenders) == 1:
+        selected, tie_break = contenders[0], "clear SyER difference"
+    else:
+        missed = {
+            arm: _pooled_coverage(records, arm)["utterance_count"]
+            - _pooled_coverage(records, arm)["retained_utterance_count"]
+            for arm in contenders
+        }
+        runtime = {arm: runtime_per_audio_hour(records, arm) for arm in contenders}
+        selected = min(
+            contenders,
+            key=lambda arm: (missed[arm], runtime[arm] if runtime[arm] is not None else float("inf")),
+        )
+        tie_break = "fewer missed reference utterances, then lower runtime"
+        decision["missed_utterances"] = missed
+        decision["runtime_s_per_audio_hour"] = runtime
+
+    decision.update({"selected": selected, "tie_break": tie_break})
+    return decision
+
+
+def runtime_per_audio_hour(records: Sequence[dict[str, Any]], arm: str) -> float | None:
+    """Wall-clock seconds per audio-hour for one arm, pooled over sessions."""
+    seconds = sum(float(record["arms"].get(arm, {}).get("runtime_s", 0.0)) for record in records)
+    audio_seconds = sum(float(record.get("audio_seconds", 0.0)) for record in records)
+    if audio_seconds <= 0:
+        return None
+    return seconds / (audio_seconds / 3600.0)
+
+
+def build_summary(
+    records: Sequence[dict[str, Any]], *, selection: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    """Cohort-level, redacted aggregate: counts and pooled metrics only.
+
+    No session id, participant id, path, or transcript text can enter: every value
+    here is derived from integer counts or pooled rates over the whole cohort.
+    """
+    arms = _arm_names(records)
+    gates = evaluate_gates(records)
+    syer = participant_syer(records)
+    dev_records = [record for record in records if record["split"] == "dev"]
+    decided = selection if selection is not None else select_denoiser(dev_records)
+
+    summary: dict[str, Any] = {
+        "schema": "say-transcribe-study-summary",
+        "version": 1,
+        "sessions": {
+            "total": len(records),
+            "dev": sum(1 for record in records if record["split"] == "dev"),
+            "held_out": sum(1 for record in records if record["split"] == "held_out"),
+        },
+        "participants": len({record["participant_id"] for record in records}),
+        "audio_hours": sum(float(record.get("audio_seconds", 0.0)) for record in records) / 3600.0,
+        "arms": {},
+        "selection": decided,
+    }
+
+    baseline = {name: values.get("P0") for name, values in syer.items()}
+    for arm in arms:
+        coverage = gates[arm]["coverage"]
+        features = gates[arm]["features"]
+        values = {name: arm_values[arm] for name, arm_values in syer.items() if arm in arm_values}
+        entry: dict[str, Any] = {
+            "participants": len(values),
+            "syer_macro_mean": float(macro_mean(values)),
+            "syer_bootstrap": bootstrap_mean_interval(values),
+            "gates": gates[arm]["checks"],
+            "gates_passed": gates[arm]["passed"],
+            "coverage": {
+                "duration_retention": _as_float(coverage["duration_retention"]),
+                "utterance_retention": _as_float(coverage["utterance_retention"]),
+                "reference_speech_ms": coverage["reference_speech_ms"],
+                "retained_utterance_count": coverage["retained_utterance_count"],
+                "utterance_count": coverage["utterance_count"],
+            },
+            "features": {
+                "validity": _as_float(features["validity"]),
+                "values": features["values"],
+                "finite": features["finite"],
+                "sessions": features["sessions"],
+                "failed_sessions": features["failed_sessions"],
+            },
+            "runtime_s_per_audio_hour": runtime_per_audio_hour(records, arm),
+        }
+        if arm not in ("P0",) and baseline:
+            entry["versus_p0"] = paired_difference(values, {n: v for n, v in baseline.items() if v is not None})
+        summary["arms"][arm] = entry
+    return summary
+
+
+def _as_float(value: Fraction | None) -> float | None:
+    return None if value is None else float(value)
+
+
+def write_summary(summary: dict[str, Any], out_dir: Path) -> Path:
+    """Write the redacted aggregate summary into the private output directory."""
+    target = out_dir / "summary.json"
+    try:
+        out_dir.mkdir(parents=True, exist_ok=True)
+        target.write_text(json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
+    except OSError:
+        raise StudyError("STUDY_FAILED", "study summary could not be written") from None
+    return target
+
+
 def run_study(
     manifest_path: Path,
     out_dir: Path,
     device: str = "cpu",
     asr_backend: Any = None,
 ) -> int:
-    """Run the study arms for every manifest row into a private output directory."""
+    """Run the full study over a manifest into a private output directory.
+
+    Fails before touching audio when eGeMAPS is unavailable, verifies each master
+    hash before decoding it, and writes one private session record per row plus a
+    redacted cohort-level summary.
+    """
     rows = load_manifest(manifest_path)
     denoisers = load_denoiser_specs(manifest_path)
-    if asr_backend is None:
-        asr_backend = PhoWhisperBackend(device=device)
+
+    records: list[dict[str, Any]] = []
+    backends: dict[str, Any] = {}
     for row in rows:
-        source_sha256 = verify_source(row)
-        arms = compute_arm_results(row, source_sha256, device, asr_backend, denoisers)
-        # Re-verify after the (potentially hour-long) arm chain so a master swapped
-        # mid-run cannot mix sources into one record.
-        verify_source(row)
-        write_session_record(session_record(row, arms), out_dir)
+        backend = asr_backend
+        if backend is None:
+            # SPEC: the checkpoint revision is pinned per manifest row.
+            backend = backends.setdefault(row.asr_revision, PhoWhisperBackend(device=device, revision=row.asr_revision))
+        record = compute_session(row, backend, denoisers, device)
+        write_session_record(record, out_dir)
+        records.append(record)
+    write_summary(build_summary(records), out_dir)
     return 0

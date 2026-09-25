@@ -147,9 +147,12 @@ class PhoWhisperBackend:
         self,
         model_id: str = "vinai/phowhisper-medium",
         device: str = "cpu",
+        revision: str | None = None,
     ) -> None:
         self.model_id = model_id
         self.device = device
+        # SPEC: the study pins the checkpoint by revision SHA, not by name alone.
+        self.revision = revision
         self._pipe: Any = None
 
     def load(self) -> None:
@@ -171,6 +174,7 @@ class PhoWhisperBackend:
                 model=self.model_id,
                 device=device_arg,
                 return_timestamps="word",
+                revision=self.revision,
             )
             if self.device == "cuda":
                 # ponytail: fp16 halves the word-timestamp attention cache (measured

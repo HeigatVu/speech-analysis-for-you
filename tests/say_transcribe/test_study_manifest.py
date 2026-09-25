@@ -207,10 +207,39 @@ def _fake_result(text: str, source_sha256: str) -> AsrResult:
     )
 
 
+def _verified_reference(tmp_path: Path, name: str = "ref.cha") -> Path:
+    """A reference shaped like a verified one: strict CHAT plus participant timing."""
+    path = tmp_path / name
+    path.write_text(
+        "@UTF8\n@Begin\n@Languages:\tvie\n"
+        "@Participants:\tPAR Participant, INV Investigator\n"
+        "@ID:\tvie|corpus|PAR|||||Participant|||\n"
+        "@ID:\tvie|corpus|INV|||||Investigator|||\n"
+        "@Media:\tsynthetic, audio\n"
+        "*PAR:\ttôi là sinh_viên .\t\x150_2000\x15\n"
+        "@End\n",
+        encoding="utf-8",
+    )
+    return path
+
+
+def _stub_feature_layer(monkeypatch) -> None:
+    """Keep pipeline tests offline: the eGeMAPS gate and extractors are stubbed."""
+    monkeypatch.setattr("say_transcribe.study._opensmile_available", lambda: True)
+    monkeypatch.setattr(
+        "say_transcribe.study.extract_acoustic_features",
+        lambda audio, rate, **kwargs: ({"audio_rms_dbfs": -20.0}, ()),
+    )
+    monkeypatch.setattr(
+        "say_transcribe.study.extract_egemaps_features",
+        lambda audio, rate, **kwargs: ({"egemaps_f0": 1.0}, (), {}),
+    )
+
+
 def test_native_arms_use_compare_code_paths_and_score_both(tmp_path: Path, monkeypatch):
     events: list[str] = []
-    ref = tmp_path / "ref.cha"
-    ref.write_text("@Begin\n*PAR:\ttôi là sinh_viên .\n@End\n", encoding="utf-8")
+    _verified_reference(tmp_path)
+    _stub_feature_layer(monkeypatch)
     manifest = _write_manifest(tmp_path, [_row(tmp_path)])
 
     def spy_hash(path):
@@ -266,8 +295,8 @@ def test_native_arms_use_compare_code_paths_and_score_both(tmp_path: Path, monke
 
 
 def test_denoiser_arms_run_when_configured(tmp_path: Path, monkeypatch):
-    ref = tmp_path / "ref.cha"
-    ref.write_text("@Begin\n*PAR:\ttôi là sinh_viên .\n@End\n", encoding="utf-8")
+    _verified_reference(tmp_path)
+    _stub_feature_layer(monkeypatch)
     for name in ("python", "worker", "checkpoint"):
         (tmp_path / name).write_text("stub", encoding="utf-8")
     manifest = _write_manifest(
@@ -390,8 +419,8 @@ def test_load_denoiser_specs_parses_and_validates(tmp_path: Path):
 
 
 def test_mid_run_master_swap_raises_before_writing(tmp_path: Path, monkeypatch):
-    ref = tmp_path / "ref.cha"
-    ref.write_text("@Begin\n*PAR:\ttôi là sinh_viên .\n@End\n", encoding="utf-8")
+    _verified_reference(tmp_path)
+    _stub_feature_layer(monkeypatch)
     manifest = _write_manifest(tmp_path, [_row(tmp_path)])
     hashes = iter([_ROW_SHA256, "cd" * 32])
     monkeypatch.setattr("say_transcribe.study.compute_sha256", lambda path: next(hashes))
@@ -425,8 +454,8 @@ def test_mid_run_master_swap_raises_before_writing(tmp_path: Path, monkeypatch):
 
 
 def test_broken_denoiser_raises_and_never_skips_the_arm(tmp_path: Path, monkeypatch):
-    ref = tmp_path / "ref.cha"
-    ref.write_text("@Begin\n*PAR:\ttôi là sinh_viên .\n@End\n", encoding="utf-8")
+    _verified_reference(tmp_path)
+    _stub_feature_layer(monkeypatch)
     for name in ("python", "worker", "checkpoint"):
         (tmp_path / name).write_text("stub", encoding="utf-8")
     manifest = _write_manifest(
