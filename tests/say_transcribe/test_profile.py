@@ -163,6 +163,26 @@ def test_ffmpeg_stage_timeout_raises(monkeypatch):
     assert "timed out" in excinfo.value.message
 
 
+def test_gsm_roundtrip_short_decode_raises_codec_unavailable(monkeypatch):
+    monkeypatch.setattr("say_transcribe.profile.shutil.which", lambda name: "/fake/ffmpeg")
+    # 800 samples in, but the decode stage only returns 500: under the input
+    # count, so the guard must reject it rather than silently truncate.
+    responses = iter(
+        [
+            SimpleNamespace(returncode=0, stdout=b"encoded", stderr=b""),
+            SimpleNamespace(returncode=0, stdout=b"\x00\x00" * 500, stderr=b""),
+        ]
+    )
+    monkeypatch.setattr(
+        "say_transcribe.profile.subprocess.run", lambda cmd, **kwargs: next(responses)
+    )
+
+    with pytest.raises(ProfileError) as excinfo:
+        gsm_roundtrip(np.zeros(800))
+
+    assert excinfo.value.code == "CODEC_UNAVAILABLE"
+
+
 _PASS1_JSON = """
 {
 \t"input_i" : "-23.00",
