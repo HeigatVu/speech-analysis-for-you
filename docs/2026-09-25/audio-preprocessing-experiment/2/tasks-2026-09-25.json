@@ -1,0 +1,97 @@
+{
+  "schemaVersion": 1,
+  "slug": "audio-preprocessing-experiment",
+  "date": "2026-09-25",
+  "version": 2,
+  "tasks": [
+    {
+      "id": "T0",
+      "title": "Curate references and private manifest",
+      "status": "blocked",
+      "dependsOn": [],
+      "acceptance": "Verified PAR/INV labels and real utterance timing for all five pilot .cha references; private manifest row per session; participant-disjoint split confirmed; denoiser checkpoints and openSMILE license sign-off recorded.",
+      "note": "Human task, no code. Blocks T8 only; T1-T7 can be built and tested without it."
+    },
+    {
+      "id": "T1",
+      "title": "Manifest loader, hash gate, uncapped scorer, N0/N1 wiring",
+      "status": "done",
+      "branch": "feat/audio-preprocessing-t1-manifest-scorer",
+      "dependsOn": [],
+      "acceptance": "Hash mismatch raises SOURCE_HASH_MISMATCH before any decode; uncapped SyER/CER/WER returns values above 1.0; N0/N1 reuse the existing compare baseline/vad_asr paths."
+    },
+    {
+      "id": "T2",
+      "title": "P0 profile: bandpass, GSM round trip, loudnorm",
+      "status": "done",
+      "branch": "feat/audio-preprocessing-t2-profile",
+      "dependsOn": [
+        "T1"
+      ],
+      "acceptance": "16 kHz mono output with input sample count preserved; normalization_type recorded; dynamic-mode fallback detected on a synthetic high-LRA input; CODEC_UNAVAILABLE/LOUDNORM_FAILED on failure; tests skip without ffmpeg."
+    },
+    {
+      "id": "T3",
+      "title": "DeepFilterNet3 adapter, isolated environment",
+      "status": "done",
+      "branch": "feat/audio-preprocessing-t3-deepfilternet",
+      "dependsOn": [
+        "T2"
+      ],
+      "acceptance": "Isolated-env subprocess worker preserves duration/alignment; missing checkpoint/env raises DENOISER_UNAVAILABLE with no network download; no df/torchaudio.backend import in say_transcribe's own environment."
+    },
+    {
+      "id": "T4",
+      "title": "FullSubNet adapter, isolated environment",
+      "status": "queued",
+      "branch": "feat/audio-preprocessing-t4-fullsubnet",
+      "dependsOn": [
+        "T3"
+      ],
+      "acceptance": "Same isolated-worker acceptance shape as T3, against the FullSubNet worker at 16 kHz.",
+      "note": "Depends on the private CP1 checkpoint (p001 run of N0/N1/P0/PD) completing first, per PLAN-2026-09-25.md."
+    },
+    {
+      "id": "T5",
+      "title": "Coverage metrics against frozen PAR intervals",
+      "status": "queued",
+      "branch": "feat/audio-preprocessing-t5-coverage",
+      "dependsOn": [
+        "T1",
+        "T4"
+      ],
+      "acceptance": "Coverage and retained-utterance fraction computed with the 50%-overlap definition; boundary case at exactly 50% tested; metric function is arm-agnostic."
+    },
+    {
+      "id": "T6",
+      "title": "Acoustic pack + PAR-only eGeMAPS",
+      "status": "queued",
+      "branch": "feat/audio-preprocessing-t6-features",
+      "dependsOn": [
+        "T5"
+      ],
+      "acceptance": "extract_acoustic_features called on a pre-selected mono array (stereo downmix path never invoked); openSMILE excludes INV and <1s utterances; missing opensmile raises FEATURE_EXTRACTION_FAILED instead of NaN rows."
+    },
+    {
+      "id": "T7",
+      "title": "Selection, statistics, redacted summary",
+      "status": "queued",
+      "branch": "feat/audio-preprocessing-t7-selection",
+      "dependsOn": [
+        "T6"
+      ],
+      "acceptance": "Gates, no-worse-than-P0, and 1.0-point tie-break unit-tested at boundaries; bootstrap resamples participants (seed 42, 2000); no-denoiser-selected path tested; summary contains no transcript text, absolute paths, or participant mapping."
+    },
+    {
+      "id": "T8",
+      "title": "Real dev + held-out run, RESULTS doc",
+      "status": "blocked",
+      "dependsOn": [
+        "T0",
+        "T7"
+      ],
+      "acceptance": "Held-out result reported even if worse; no candidate switch after seeing held-out data; any docs/-committed artifact is cohort-level aggregates only.",
+      "note": "Manual run, not a code task. Blocked on T0 (curated references) and the private CP2 freeze checkpoint after T7."
+    }
+  ]
+}
