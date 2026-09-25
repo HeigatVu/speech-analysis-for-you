@@ -16,6 +16,7 @@ package's interval helpers stay in float seconds because they measure speech
 frames, not a thresholded boundary.
 """
 
+from collections import Counter
 from dataclasses import dataclass
 from fractions import Fraction
 from functools import lru_cache
@@ -314,10 +315,7 @@ def _measurements(values: Mapping[str, float]) -> dict[str, float | None]:
 
 def _issue_codes(issues: Sequence[Any]) -> dict[str, int]:
     """Counts of structured issue codes; messages never reach the record."""
-    codes: dict[str, int] = {}
-    for issue in issues:
-        code = getattr(issue, "code", "UNKNOWN")
-        codes[code] = codes.get(code, 0) + 1
+    codes = Counter(getattr(issue, "code", "UNKNOWN") for issue in issues)
     return dict(sorted(codes.items()))
 
 
@@ -367,7 +365,7 @@ def extract_arm_features(
     eligible = eligible_feature_intervals(reference)
     rows: list[dict[str, Any]] = []
     pooled: dict[str, list[float]] = {}
-    issue_counts: dict[str, int] = {}
+    issue_counts: Counter[str] = Counter()
     for start_ms, end_ms in eligible:
         start = int(round(start_ms * sample_rate / 1000))
         expected_stop = int(round(end_ms * sample_rate / 1000))
@@ -383,8 +381,7 @@ def extract_arm_features(
             raise StudyError("FEATURE_EXTRACTION_FAILED", "eGeMAPS feature extraction failed") from None
         truncated = stop < expected_stop
         if not truncated:
-            for code, count in _issue_codes(issues).items():
-                issue_counts[code] = issue_counts.get(code, 0) + count
+            issue_counts.update(_issue_codes(issues))
             for key, value in features.items():
                 pooled.setdefault(key, []).append(value)
         rows.append(
@@ -910,10 +907,9 @@ def _split_block(records: Sequence[dict[str, Any]]) -> dict[str, Any]:
     baseline = {name: values.get("P0") for name, values in syer.items()}
     underpowered = len(participants) < MIN_BOOTSTRAP_PARTICIPANTS
 
-    normalization: dict[str, int] = {}
-    for record in records:
-        kind = (record.get("profile") or {}).get("normalization_type", "none")
-        normalization[kind] = normalization.get(kind, 0) + 1
+    normalization = Counter(
+        (record.get("profile") or {}).get("normalization_type", "none") for record in records
+    )
 
     block: dict[str, Any] = {
         "sessions": len(records),
