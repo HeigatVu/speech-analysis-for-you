@@ -17,7 +17,10 @@ frames, not a thresholded boundary.
 """
 
 from dataclasses import dataclass
+from functools import lru_cache
+import importlib.util
 import json
+import math
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -37,10 +40,16 @@ from say_transcribe.evaluate import extract_session_items, items_from_texts, sco
 from say_transcribe.manifest import ManifestRow, load_denoiser_specs, load_manifest
 from say_transcribe.profile import apply_p0_profile
 from say_transcribe.vad import SAMPLE_RATE, get_speech_windows, merge_asr_windows
+from speech_features.catalog import list_features
+from speech_features.features.acoustic import extract_acoustic_features
+from speech_features.features.standardized.opensmile_adapter import extract_egemaps_features
 from speech_features.formats.chat import InvalidChatError, decode_chat
 
 # Frozen per SPEC: value dev-selected in the v5 pilot; not tunable per arm.
 STUDY_VAD_THRESHOLD = 0.2
+
+# SPEC "Acoustic feature evaluation": eGeMAPS runs per PAR utterance of >= 1 s.
+FEATURE_MIN_UTTERANCE_MS = 1000
 
 # SPEC "Comparison arms" order; an arm is recorded only when its inputs exist.
 ARM_ORDER = ("N0", "N1", "P0", "PF", "PD")
@@ -227,6 +236,154 @@ def coverage_metrics(
         ),
         "zero_duration_utterances": reference.zero_duration,
     }
+
+
+def eligible_feature_intervals(reference: ReferenceIntervals) -> tuple[tuple[int, int], ...]:
+    """Participant utterances long enough for a per-utterance eGeMAPS extraction."""
+    return tuple(
+        (start, end) for start, end in reference.utterances if end - start >= FEATURE_MIN_UTTERANCE_MS
+    )
+
+
+def _opensmile_available() -> bool:
+    return importlib.util.find_spec("opensmile") is not None
+
+
+def require_egemaps_available() -> None:
+    """Fail before extracting anything when the eGeMAPS extra is absent.
+
+    The shared adapter reports a missing optional dependency as all-NaN rows; a
+    study run must not, because those NaNs would be indistinguishable from a real
+    missingness finding.
+    """
+    if not _opensmile_available():
+        raise StudyError(
+            "FEATURE_EXTRACTION_FAILED",
+            "opensmile is not installed, so this study run cannot extract eGeMAPS",
+        )
+
+
+@lru_cache(maxsize=None)
+def _feature_domains(pack: str) -> dict[str, str]:
+    """Catalog domain ("family") of every registered key of one pack."""
+    return {definition.key: definition.domain for definition in list_features(pack=pack)}
+
+
+def _is_finite(value: Any) -> bool:
+    try:
+        return bool(math.isfinite(value))
+    except (TypeError, ValueError):
+        return False
+
+
+def _family_coverage(
+    pack: str, values_by_key: dict[str, Sequence[float]]
+) -> dict[str, dict[str, Any]]:
+    """Finite-value coverage per feature family (catalog domain) for one pack."""
+    domains = _feature_domains(pack)
+    counts: dict[str, list[int]] = {}
+    for key, values in values_by_key.items():
+        entry = counts.setdefault(domains.get(key, "unregistered"), [0, 0])
+        entry[0] += len(values)
+        entry[1] += sum(1 for value in values if _is_finite(value))
+    return {
+        family: {
+            "values": values,
+            "finite": finite,
+            "coverage": finite / values if values else 0.0,
+        }
+        for family, (values, finite) in sorted(counts.items())
+    }
+
+
+def _issue_codes(issues: Sequence[Any]) -> dict[str, int]:
+    """Counts of structured issue codes; messages never reach the record."""
+    codes: dict[str, int] = {}
+    for issue in issues:
+        code = getattr(issue, "code", "UNKNOWN")
+        codes[code] = codes.get(code, 0) + 1
+    return dict(sorted(codes.items()))
+
+
+def extract_arm_features(
+    audio_16k: np.ndarray,
+    sample_rate: int,
+    document: Any,
+    reference: ReferenceIntervals,
+) -> dict[str, Any]:
+    """Acoustic pack and per-utterance eGeMAPS for one arm's 16 kHz mono signal.
+
+    The array arrives already channel-selected, so the stereo-downmixing file
+    reader is never in this path. Both extractions are scoped to the same human
+    ``PAR`` intervals in every arm; eGeMAPS additionally requires an utterance of
+    at least one second. Returns counts only: no participant identity, path, or
+    transcript text. A vector is valid when every value is finite; eGeMAPS has no
+    defined absolute range, so none is invented here.
+    """
+    require_egemaps_available()
+
+    acoustic, acoustic_issues = extract_acoustic_features(
+        audio_16k, sample_rate, document=document, target_speaker="PAR"
+    )
+    acoustic_finite = sum(1 for value in acoustic.values() if _is_finite(value))
+    record: dict[str, Any] = {
+        "sample_rate": sample_rate,
+        "samples": int(audio_16k.shape[0]),
+        "acoustic": {
+            "values": len(acoustic),
+            "finite": acoustic_finite,
+            "coverage": acoustic_finite / len(acoustic) if acoustic else 0.0,
+            "valid": acoustic_finite == len(acoustic) and bool(acoustic),
+            "families": _family_coverage("acoustic", {key: [value] for key, value in acoustic.items()}),
+            "issue_codes": _issue_codes(acoustic_issues),
+        },
+        "egemaps": {},
+    }
+
+    eligible = eligible_feature_intervals(reference)
+    rows: list[dict[str, Any]] = []
+    pooled: dict[str, list[float]] = {}
+    issue_counts: dict[str, int] = {}
+    for start_ms, end_ms in eligible:
+        start = int(round(start_ms * sample_rate / 1000))
+        stop = min(int(round(end_ms * sample_rate / 1000)), int(audio_16k.shape[0]))
+        if stop <= start:
+            rows.append({"start_ms": start_ms, "end_ms": end_ms, "valid": False, "reason": "TRUNCATED"})
+            continue
+        features, issues, _ = extract_egemaps_features(
+            audio_16k[start:stop], sample_rate, recording_id="", speaker_id="PAR"
+        )
+        for code, count in _issue_codes(issues).items():
+            issue_counts[code] = issue_counts.get(code, 0) + count
+        for key, value in features.items():
+            pooled.setdefault(key, []).append(value)
+        rows.append(
+            {
+                "start_ms": start_ms,
+                "end_ms": end_ms,
+                "valid": bool(features) and all(_is_finite(value) for value in features.values()),
+                "reason": None,
+            }
+        )
+
+    valid_rows = sum(1 for row in rows if row["valid"])
+    vector_count = len(pooled)
+    finite_values = sum(1 for values in pooled.values() for value in values if _is_finite(value))
+    total_values = sum(len(values) for values in pooled.values())
+    record["egemaps"] = {
+        "utterances": len(eligible),
+        "extracted": len(rows) - sum(1 for row in rows if row.get("reason") == "TRUNCATED"),
+        "valid_utterances": valid_rows,
+        "truncated_utterances": sum(1 for row in rows if row.get("reason") == "TRUNCATED"),
+        "keys": vector_count,
+        "values": total_values,
+        "finite": finite_values,
+        "coverage": finite_values / total_values if total_values else 0.0,
+        "families": _family_coverage("standardized_acoustic", pooled),
+        "issue_codes": dict(sorted(issue_counts.items())),
+        "utterances_detail": rows,
+    }
+    return record
 
 
 def compute_arm_results(
