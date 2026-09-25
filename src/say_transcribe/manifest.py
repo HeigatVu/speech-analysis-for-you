@@ -105,14 +105,18 @@ def _parse_row(row: Any, index: int) -> ManifestRow:
     )
 
 
-def load_manifest(path: Path) -> tuple[ManifestRow, ...]:
-    """Load and validate a study manifest; raise ManifestError on any schema problem."""
+def _read_json(path: Path) -> Any:
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        return json.loads(path.read_text(encoding="utf-8"))
     except OSError:
         raise ManifestError("manifest file could not be read") from None
     except json.JSONDecodeError:
         raise ManifestError("manifest is not valid JSON") from None
+
+
+def load_manifest(path: Path) -> tuple[ManifestRow, ...]:
+    """Load and validate a study manifest; raise ManifestError on any schema problem."""
+    data = _read_json(path)
 
     if not isinstance(data, dict) or not isinstance(data.get("rows"), list):
         raise ManifestError("manifest must be an object with a 'rows' list")
@@ -135,12 +139,7 @@ def load_denoiser_specs(path: Path) -> dict[str, DenoiserSpec]:
     Values carry the isolated environment's interpreter, worker script, and
     local checkpoint. Messages name keys and fields only, never values.
     """
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except OSError:
-        raise ManifestError("manifest file could not be read") from None
-    except json.JSONDecodeError:
-        raise ManifestError("manifest is not valid JSON") from None
+    data = _read_json(path)
 
     denoisers = data.get("denoisers", {})
     if not isinstance(denoisers, dict):
