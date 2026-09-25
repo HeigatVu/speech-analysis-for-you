@@ -44,6 +44,7 @@ from speech_features.catalog import list_features
 from speech_features.features.acoustic import extract_acoustic_features
 from speech_features.features.standardized.opensmile_adapter import extract_egemaps_features
 from speech_features.formats.chat import InvalidChatError, decode_chat
+from speech_features.schema import FeatureExtractionError
 
 # Frozen per SPEC: value dev-selected in the v5 pilot; not tunable per arm.
 STUDY_VAD_THRESHOLD = 0.2
@@ -316,15 +317,22 @@ def extract_arm_features(
     The array arrives already channel-selected, so the stereo-downmixing file
     reader is never in this path. Both extractions are scoped to the same human
     ``PAR`` intervals in every arm; eGeMAPS additionally requires an utterance of
-    at least one second. Returns counts only: no participant identity, path, or
-    transcript text. A vector is valid when every value is finite; eGeMAPS has no
-    defined absolute range, so none is invented here.
+    at least one second. The record carries pooled counts plus per-utterance
+    millisecond bounds: no participant identity, path, or transcript text. A
+    vector is valid when every value is finite and extraction raised no error;
+    eGeMAPS has no defined absolute range, so none is invented here. An utterance
+    the arm's signal cannot cover in full is reported as truncated and is neither
+    counted valid nor pooled, so a clipped slice cannot stand in for the >= 1 s
+    extraction it replaces.
     """
     require_egemaps_available()
 
-    acoustic, acoustic_issues = extract_acoustic_features(
-        audio_16k, sample_rate, document=document, target_speaker="PAR"
-    )
+    try:
+        acoustic, acoustic_issues = extract_acoustic_features(
+            audio_16k, sample_rate, document=document, target_speaker="PAR"
+        )
+    except FeatureExtractionError:
+        raise StudyError("FEATURE_EXTRACTION_FAILED", "acoustic feature extraction failed") from None
     acoustic_finite = sum(1 for value in acoustic.values() if _is_finite(value))
     record: dict[str, Any] = {
         "sample_rate": sample_rate,
@@ -346,23 +354,31 @@ def extract_arm_features(
     issue_counts: dict[str, int] = {}
     for start_ms, end_ms in eligible:
         start = int(round(start_ms * sample_rate / 1000))
-        stop = min(int(round(end_ms * sample_rate / 1000)), int(audio_16k.shape[0]))
+        expected_stop = int(round(end_ms * sample_rate / 1000))
+        stop = min(expected_stop, int(audio_16k.shape[0]))
         if stop <= start:
             rows.append({"start_ms": start_ms, "end_ms": end_ms, "valid": False, "reason": "TRUNCATED"})
             continue
-        features, issues, _ = extract_egemaps_features(
-            audio_16k[start:stop], sample_rate, recording_id="", speaker_id="PAR"
-        )
-        for code, count in _issue_codes(issues).items():
-            issue_counts[code] = issue_counts.get(code, 0) + count
-        for key, value in features.items():
-            pooled.setdefault(key, []).append(value)
+        try:
+            features, issues, _ = extract_egemaps_features(
+                audio_16k[start:stop], sample_rate, recording_id="", speaker_id="PAR"
+            )
+        except FeatureExtractionError:
+            raise StudyError("FEATURE_EXTRACTION_FAILED", "eGeMAPS feature extraction failed") from None
+        truncated = stop < expected_stop
+        if not truncated:
+            for code, count in _issue_codes(issues).items():
+                issue_counts[code] = issue_counts.get(code, 0) + count
+            for key, value in features.items():
+                pooled.setdefault(key, []).append(value)
         rows.append(
             {
                 "start_ms": start_ms,
                 "end_ms": end_ms,
-                "valid": bool(features) and all(_is_finite(value) for value in features.values()),
-                "reason": None,
+                "valid": (
+                    not truncated and bool(features) and all(_is_finite(v) for v in features.values())
+                ),
+                "reason": "TRUNCATED" if truncated else None,
             }
         )
 
