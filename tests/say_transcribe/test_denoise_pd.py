@@ -117,6 +117,7 @@ def test_worker_failure_raises_denoiser_unavailable(tmp_path: Path):
             tmp_path,
             """
             import sys
+            sys.stderr.write("/private/participant/p001/session.wav xin chào\\n")
             sys.exit(1)
             """,
         ),
@@ -126,6 +127,10 @@ def test_worker_failure_raises_denoiser_unavailable(tmp_path: Path):
         denoise_pcm(np.zeros(16, dtype=np.float32), 16000, spec)
 
     assert excinfo.value.code == "DENOISER_UNAVAILABLE"
+    # The worker's stderr may carry an absolute path or transcript text; the
+    # redacted error must not repeat it.
+    assert "/private/participant" not in str(excinfo.value)
+    assert "xin chào" not in str(excinfo.value)
 
 
 def test_worker_length_mismatch_raises_denoiser_unavailable(tmp_path: Path):
