@@ -25,6 +25,20 @@ from say_transcribe.study import StudyError, run_study
 from say_transcribe.word_grouping import GroupedWord, WordGroupingError, group_utterance_words
 from say_transcribe.vad import VADUnavailableError, get_speech_windows, merge_asr_windows
 
+# Exit 3 = environment/model unavailable; exit 4 = pipeline failure.
+_UNAVAILABLE_CODES = ("GPU_UNAVAILABLE", "MODEL_UNAVAILABLE", "PYANNOTE_TOKEN_MISSING")
+
+# A backend's own message may carry private details; report static text per code only.
+_DIARIZATION_ERROR_MESSAGES = {
+    "GPU_UNAVAILABLE": "CUDA device requested but not available",
+    "MODEL_UNAVAILABLE": "Diarization backend unavailable",
+    "PYANNOTE_TOKEN_MISSING": "pyannote requires a Hugging Face token with accepted model conditions",
+}
+
+
+def _diarization_error_message(code: str) -> str:
+    return _DIARIZATION_ERROR_MESSAGES.get(code, "Diarization failed")
+
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -52,6 +66,12 @@ def build_parser() -> argparse.ArgumentParser:
         default="phowhisper-medium",
         help="ASR model backend",
     )
+    run_parser.add_argument(
+        "--diarizer",
+        choices=["pyannote", "wavlm"],
+        default="pyannote",
+        help="Speaker diarization backend",
+    )
 
     compare_parser = subparsers.add_parser(
         "compare", help="Compare baseline, VAD, and aligned transcripts"
@@ -77,6 +97,12 @@ def build_parser() -> argparse.ArgumentParser:
         choices=list(ASR_MODEL_CHOICES),
         default="phowhisper-medium",
         help="ASR model backend",
+    )
+    compare_parser.add_argument(
+        "--diarizer",
+        choices=["pyannote", "wavlm"],
+        default="pyannote",
+        help="Speaker diarization backend",
     )
 
     # evaluate
@@ -166,6 +192,7 @@ def cmd_run(
     out_dir: Path,
     device: str = "cpu",
     asr_model: str = "phowhisper-medium",
+    diarizer: str = "pyannote",
     asr_backend: Any = None,
     diarize_backend: Any = None,
     stanza_backend: Any = None,
@@ -195,26 +222,22 @@ def cmd_run(
         )
         run_warnings: list[str] = list(asr_res.warnings)
 
-        # Step 5: Diarization
-        if diarize_backend is None:
-            diarize_backend = PyannoteBackend(device=device)
+        # Step 5: Diarization (explicit backend; a failure is an error, not a fallback)
         try:
-            turns = diarize_backend.diarize(audio_16k)
-        except Exception:
-            # ponytail: pyannote is HF-gated; fall back to ungated WavLM clustering
-            try:
-                turns = WavlmClusterBackend(device=device).diarize(
-                    audio_16k, segments=asr_res.segments
-                )
-            except Exception:
-                turns = ()
-            if turns:
-                run_warnings.append("PYANNOTE_UNAVAILABLE:USING_WAVLM_FALLBACK")
+            if diarize_backend is None:
+                if diarizer == "wavlm":
+                    turns = WavlmClusterBackend(device=device).diarize(
+                        audio_16k, segments=asr_res.segments
+                    )
+                else:
+                    turns = PyannoteBackend(device=device).diarize(audio_16k)
             else:
-                run_warnings.append("DIARIZATION_UNAVAILABLE:DEFAULTING_TO_PAR")
-        else:
-            if not turns:
-                run_warnings.append("DIARIZATION_UNAVAILABLE:DEFAULTING_TO_PAR")
+                turns = diarize_backend.diarize(audio_16k)
+        except AsrError as e:
+            sys.stderr.write(f"[{e.code}] {_diarization_error_message(e.code)}\n")
+            return 3 if e.code in _UNAVAILABLE_CODES else 4
+        if not turns:
+            run_warnings.append("DIARIZATION_UNAVAILABLE:DEFAULTING_TO_PAR")
         spk_res = assign_speakers(asr_res.segments, turns)
 
         # Step 6-8: Word grouping, morphosyntax projection, and record creation
@@ -271,7 +294,7 @@ def cmd_run(
         return 0
 
     except AsrError as e:
-        if e.code in ("GPU_UNAVAILABLE", "MODEL_UNAVAILABLE"):
+        if e.code in _UNAVAILABLE_CODES:
             sys.stderr.write(f"[{e.code}] {e.message}\n")
             return 3
         sys.stderr.write(f"[{e.code}] {e.message}\n")
@@ -353,6 +376,7 @@ def cmd_compare(
     device: str = "cpu",
     vad_threshold: float = 0.2,
     asr_model: str = "phowhisper-medium",
+    diarizer: str = "pyannote",
     *,
     asr_backend: Any = None,
     diarize_backend: Any = None,
@@ -414,23 +438,20 @@ def cmd_compare(
                 warnings=(*vad_result.warnings, "ALIGNMENT_UNAVAILABLE"),
             )
 
-        if diarize_backend is None:
-            diarize_backend = PyannoteBackend(device=device)
         try:
-            turns = diarize_backend.diarize(audio_16k)
-            diarization_warnings = [] if turns else ["DIARIZATION_UNAVAILABLE:DEFAULTING_TO_PAR"]
-        except Exception:
-            try:
-                turns = WavlmClusterBackend(device=device).diarize(
-                    audio_16k, segments=baseline.segments
-                )
-            except Exception:
-                turns = ()
-            diarization_warnings = [
-                "PYANNOTE_UNAVAILABLE:USING_WAVLM_FALLBACK"
-                if turns
-                else "DIARIZATION_UNAVAILABLE:DEFAULTING_TO_PAR"
-            ]
+            if diarize_backend is None:
+                if diarizer == "wavlm":
+                    turns = WavlmClusterBackend(device=device).diarize(
+                        audio_16k, segments=baseline.segments
+                    )
+                else:
+                    turns = PyannoteBackend(device=device).diarize(audio_16k)
+            else:
+                turns = diarize_backend.diarize(audio_16k)
+        except AsrError as error:
+            sys.stderr.write(f"[{error.code}] {_diarization_error_message(error.code)}\n")
+            return 3 if error.code in _UNAVAILABLE_CODES else 4
+        diarization_warnings = [] if turns else ["DIARIZATION_UNAVAILABLE:DEFAULTING_TO_PAR"]
 
         if stanza_backend is None:
             stanza_backend = StanzaBackend(device=device)
@@ -465,7 +486,7 @@ def cmd_compare(
         return 0
     except AsrError as error:
         sys.stderr.write(f"[{error.code}] {error.message}\n")
-        return 3 if error.code in ("GPU_UNAVAILABLE", "MODEL_UNAVAILABLE") else 4
+        return 3 if error.code in _UNAVAILABLE_CODES else 4
     except AudioPreparationError as error:
         sys.stderr.write(f"[{error.code}] {error.message}\n")
         return 4
@@ -558,6 +579,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             out_dir=args.out,
             device=args.device,
             asr_model=args.asr_model,
+            diarizer=args.diarizer,
         )
     elif args.command == "compare":
         return cmd_compare(
@@ -568,6 +590,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             device=args.device,
             vad_threshold=args.vad_threshold,
             asr_model=args.asr_model,
+            diarizer=args.diarizer,
         )
     elif args.command == "evaluate":
         return cmd_evaluate(

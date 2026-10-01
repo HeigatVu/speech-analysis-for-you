@@ -77,7 +77,7 @@ def test_pyannote_backend_error_codes(monkeypatch):
     fake_pyannote_audio.Pipeline = Pipeline
     monkeypatch.setitem(sys.modules, "pyannote", types.ModuleType("pyannote"))
     monkeypatch.setitem(sys.modules, "pyannote.audio", fake_pyannote_audio)
-    backend = PyannoteBackend(model_id="nonexistent-pyannote-model")
+    backend = PyannoteBackend(model_id="nonexistent-pyannote-model", auth_token="hf_test")
     with pytest.raises(AsrError) as exc_info:
         backend.load()
     assert exc_info.value.code == "MODEL_UNAVAILABLE"
@@ -196,3 +196,25 @@ def test_assign_speakers_defaults_untimed_segment_to_par():
     result = assign_speakers((segment,), (DiarizationTurn(0, 1000, "INV"),))
 
     assert result.utterance_speakers == ("PAR",)
+
+
+def test_pyannote_backend_token_missing(monkeypatch):
+    import types
+
+    import huggingface_hub
+
+    class Pipeline:
+        @staticmethod
+        def from_pretrained(*args, **kwargs):
+            raise AssertionError("from_pretrained must not run without a token")
+
+    fake_pyannote_audio = types.ModuleType("pyannote.audio")
+    fake_pyannote_audio.Pipeline = Pipeline
+    monkeypatch.setitem(sys.modules, "pyannote", types.ModuleType("pyannote"))
+    monkeypatch.setitem(sys.modules, "pyannote.audio", fake_pyannote_audio)
+    monkeypatch.setattr(huggingface_hub, "get_token", lambda: None)
+
+    backend = PyannoteBackend()
+    with pytest.raises(AsrError) as exc_info:
+        backend.load()
+    assert exc_info.value.code == "PYANNOTE_TOKEN_MISSING"

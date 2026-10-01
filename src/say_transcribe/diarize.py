@@ -53,6 +53,11 @@ class PyannoteBackend:
             import torch
 
             token = self.auth_token or get_token()
+            if not token:
+                raise AsrError(
+                    "PYANNOTE_TOKEN_MISSING",
+                    "pyannote requires a Hugging Face token with accepted model conditions",
+                )
             self._pipeline = Pipeline.from_pretrained(
                 self.model_id,
                 token=token,

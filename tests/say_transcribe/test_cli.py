@@ -3,7 +3,6 @@ from pathlib import Path
 import wave
 
 import numpy as np
-import pytest
 
 from say_transcribe.cli import main
 
@@ -102,6 +101,7 @@ def test_cli_run_happy_path_exit_code_zero(tmp_path: Path, monkeypatch, capsys):
         pass
 
     monkeypatch.setattr("say_transcribe.cli.transcribe", fake_transcribe)
+    monkeypatch.setattr("say_transcribe.cli.PyannoteBackend", lambda **kwargs: FakePyannote())
     monkeypatch.setattr(
         "say_transcribe.cli.group_utterance_words",
         lambda seg: tuple([
@@ -188,6 +188,10 @@ def test_cli_run_survives_word_grouping_mismatch(tmp_path: Path, monkeypatch, ca
     monkeypatch.setattr("say_transcribe.cli.transcribe", fake_transcribe)
     monkeypatch.setattr("say_transcribe.cli.group_utterance_words", raise_grouping)
     monkeypatch.setattr(
+        "say_transcribe.cli.PyannoteBackend",
+        lambda **kwargs: type("D", (), {"diarize": lambda self, _: ()})(),
+    )
+    monkeypatch.setattr(
         "say_transcribe.cli.assign_speakers",
         lambda segments, turns: type("R", (), {"utterance_speakers": ["PAR"]})(),
     )
@@ -200,7 +204,44 @@ def test_cli_run_survives_word_grouping_mismatch(tmp_path: Path, monkeypatch, ca
     assert "[WORD_GROUPING_UNALIGNED:1]" in captured.err
 
 
-def test_cli_reports_redacted_warning_when_diarization_and_fallback_fail(
+def test_cli_fails_redacted_when_diarization_backend_fails(
+    tmp_path: Path, monkeypatch, capsys
+):
+    from say_transcribe.asr import AsrError, AsrResult, AsrSegment
+
+    audio_file = _make_wav_file(tmp_path / "audio.wav")
+
+    def fake_transcribe(*args, **kwargs):
+        return AsrResult(
+            source_sha256="0" * 64,
+            segments=(AsrSegment(start_ms=0, end_ms=900, text="xin chào", words=()),),
+            warnings=(),
+        )
+
+    class FailedBackend:
+        def diarize(self, *args, **kwargs):
+            raise AsrError(
+                "MODEL_UNAVAILABLE", f"private text at {audio_file}: private transcript"
+            )
+
+    monkeypatch.setattr("say_transcribe.cli.transcribe", fake_transcribe)
+    monkeypatch.setattr("say_transcribe.cli.PyannoteBackend", lambda **kwargs: FailedBackend())
+    monkeypatch.setattr("say_transcribe.cli.group_utterance_words", lambda seg: ())
+    monkeypatch.setattr("say_transcribe.cli.project_morphosyntax", lambda *args, **kwargs: None)
+
+    ret = main(["run", str(audio_file), "--channel", "0", "--out", str(tmp_path / "out")])
+
+    assert ret == 3
+    captured = capsys.readouterr()
+    assert "[MODEL_UNAVAILABLE]" in captured.err
+    assert "USING_WAVLM_FALLBACK" not in captured.err
+    assert str(tmp_path) not in captured.err
+    assert "private text" not in captured.err
+    assert "private transcript" not in captured.err
+    assert not (tmp_path / "out" / "audio.cha").exists()
+
+
+def test_cli_warns_when_diarization_returns_no_turns(
     tmp_path: Path, monkeypatch, capsys
 ):
     from say_transcribe.asr import AsrResult, AsrSegment
@@ -214,13 +255,12 @@ def test_cli_reports_redacted_warning_when_diarization_and_fallback_fail(
             warnings=(),
         )
 
-    class FailedBackend:
+    class EmptyBackend:
         def diarize(self, *args, **kwargs):
-            raise RuntimeError(f"private text at {audio_file}: private transcript")
+            return ()
 
     monkeypatch.setattr("say_transcribe.cli.transcribe", fake_transcribe)
-    monkeypatch.setattr("say_transcribe.cli.PyannoteBackend", lambda **kwargs: FailedBackend())
-    monkeypatch.setattr("say_transcribe.cli.WavlmClusterBackend", lambda **kwargs: FailedBackend())
+    monkeypatch.setattr("say_transcribe.cli.PyannoteBackend", lambda **kwargs: EmptyBackend())
     monkeypatch.setattr("say_transcribe.cli.group_utterance_words", lambda seg: ())
     monkeypatch.setattr("say_transcribe.cli.project_morphosyntax", lambda *args, **kwargs: None)
 
@@ -229,18 +269,17 @@ def test_cli_reports_redacted_warning_when_diarization_and_fallback_fail(
     assert ret == 0
     captured = capsys.readouterr()
     assert "[DIARIZATION_UNAVAILABLE:DEFAULTING_TO_PAR]" in captured.err
-    assert str(tmp_path) not in captured.err
-    assert "private text" not in captured.err
-    assert "private transcript" not in captured.err
+    assert "USING_WAVLM_FALLBACK" not in captured.err
+    transcript = (tmp_path / "out" / "audio.cha").read_text()
+    assert "speaker labels unavailable; defaulted to PAR; review before use" in transcript
+    assert "auto-diarized" not in transcript
 
 
-@pytest.mark.parametrize("primary_fails", [False, True])
-def test_cli_warns_when_diarization_returns_no_turns(
-    tmp_path: Path, monkeypatch, capsys, primary_fails: bool
-):
+def test_cli_diarizer_wavlm_selects_wavlm_backend(tmp_path: Path, monkeypatch):
     from say_transcribe.asr import AsrResult, AsrSegment
 
     audio_file = _make_wav_file(tmp_path / "audio.wav")
+    called: dict[str, bool] = {"wavlm": False, "pyannote": False}
 
     def fake_transcribe(*args, **kwargs):
         return AsrResult(
@@ -249,34 +288,31 @@ def test_cli_warns_when_diarization_returns_no_turns(
             warnings=(),
         )
 
-    class PrimaryBackend:
-        def diarize(self, *args, **kwargs):
-            if primary_fails:
-                raise RuntimeError("private primary error")
+    class RecordingWavlm:
+        def __init__(self, **kwargs):
+            called["wavlm"] = True
+
+        def diarize(self, audio, sample_rate=16000, segments=None):
+            assert segments is not None
             return ()
 
-    class EmptyFallbackBackend:
-        def diarize(self, *args, **kwargs):
-            return ()
+    def forbid_pyannote(**kwargs):
+        called["pyannote"] = True
+        raise AssertionError("pyannote must not be constructed when --diarizer wavlm")
 
     monkeypatch.setattr("say_transcribe.cli.transcribe", fake_transcribe)
-    monkeypatch.setattr("say_transcribe.cli.PyannoteBackend", lambda **kwargs: PrimaryBackend())
-    monkeypatch.setattr(
-        "say_transcribe.cli.WavlmClusterBackend", lambda **kwargs: EmptyFallbackBackend()
-    )
+    monkeypatch.setattr("say_transcribe.cli.WavlmClusterBackend", RecordingWavlm)
+    monkeypatch.setattr("say_transcribe.cli.PyannoteBackend", forbid_pyannote)
     monkeypatch.setattr("say_transcribe.cli.group_utterance_words", lambda seg: ())
     monkeypatch.setattr("say_transcribe.cli.project_morphosyntax", lambda *args, **kwargs: None)
 
-    ret = main(["run", str(audio_file), "--channel", "0", "--out", str(tmp_path / "out")])
+    ret = main(
+        ["run", str(audio_file), "--channel", "0", "--out", str(tmp_path / "out"),
+         "--diarizer", "wavlm"]
+    )
 
     assert ret == 0
-    captured = capsys.readouterr()
-    assert "[DIARIZATION_UNAVAILABLE:DEFAULTING_TO_PAR]" in captured.err
-    assert "[PYANNOTE_UNAVAILABLE:USING_WAVLM_FALLBACK]" not in captured.err
-    assert "private primary error" not in captured.err
-    transcript = (tmp_path / "out" / "audio.cha").read_text()
-    assert "speaker labels unavailable; defaulted to PAR; review before use" in transcript
-    assert "auto-diarized" not in transcript
+    assert called == {"wavlm": True, "pyannote": False}
 
 
 def test_cli_asr_model_flag_on_run_compare_and_study():
