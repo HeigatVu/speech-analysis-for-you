@@ -427,10 +427,12 @@ class Qwen3AsrBackend:
 
 ASR_MODEL_CHOICES = ("phowhisper-medium", "phowhisper-large", "qwen3-asr")
 
+AsrBackend = PhoWhisperBackend | Qwen3AsrBackend
+
 
 def make_asr_backend(
     model: str, device: str = "cpu", revision: str | None = None
-) -> PhoWhisperBackend | Qwen3AsrBackend:
+) -> AsrBackend:
     """Map a CLI model name to its ASR backend."""
     if model == "qwen3-asr":
         return Qwen3AsrBackend(device=device, revision=revision)
@@ -449,7 +451,7 @@ def transcribe(
     audio_path: Path,
     channel_index: int = 0,
     device: str = "cpu",
-    backend: PhoWhisperBackend | None = None,
+    backend: AsrBackend | None = None,
 ) -> AsrResult:
     """Transcribe a master WAV file on the declared channel.
 
@@ -513,7 +515,7 @@ WindowResults = tuple[tuple[int, int, tuple[dict[str, Any], ...]], ...]
 def transcribe_windows(
     audio_16k: np.ndarray,
     windows: Sequence[tuple[int, int]],
-    backend: PhoWhisperBackend,
+    backend: AsrBackend,
 ) -> WindowResults:
     """Run ASR once per VAD window, retaining sample offsets for both variants."""
     results: list[tuple[int, int, tuple[dict[str, Any], ...]]] = []

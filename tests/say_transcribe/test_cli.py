@@ -97,9 +97,6 @@ def test_cli_run_happy_path_exit_code_zero(tmp_path: Path, monkeypatch, capsys):
         def diarize(self, *args, **kwargs):
             return ()
 
-    class FakeStanza:
-        pass
-
     monkeypatch.setattr("say_transcribe.cli.transcribe", fake_transcribe)
     monkeypatch.setattr("say_transcribe.cli.PyannoteBackend", lambda **kwargs: FakePyannote())
     monkeypatch.setattr(
