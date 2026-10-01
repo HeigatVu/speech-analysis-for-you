@@ -404,3 +404,57 @@ class TestChatInvalid:
             self._load(tmp_path, text)
         assert isinstance(excinfo.value, InvalidDocumentError)
         assert excinfo.value.code == "INVALID_CHAT"
+
+
+REAL_FILE_FIXTURE = (
+    "@UTF8\r\n"
+    "@Window:\t0_0_0_0_8540_1_9273_0_9273_0\r\n"
+    "@Begin\r\n"
+    "@Languages:\tvie\r\n"
+    "@Participants:\tPAR Nguyễn Thị An, INV Nguyễn Văn Hùng\r\n"
+    "@ID:\tvie|PAR|Nguyễn Thị An|participant|||||\r\n"
+    "@ID:\tvie|INV|Nguyễn Văn Hùng|examiner|||||\r\n"
+    "@Media:\tp001_master.wav | audio\r\n"
+    "@Comment:\tThis comment wraps across\r\n"
+    "\ttwo indented continuation lines\r\n"
+    "*INV:\tXin chào bạn .\x1569334_71625\x15\r\n"
+    "*PAR:\tMột câu dài bị ngắt xuống dòng theo\r\n"
+    "\tchuẩn CHAT và mang dấu thời gian\r\n"
+    "\tở dòng cuối cùng\x1574178_77522\x15\r\n"
+    "*:\tbắt đầu .\x15892813_894689\x15\r\n"
+    "@End\r\n"
+)
+
+
+class TestRealFileShapes:
+    """Shapes observed in the pilot corpus (audio/p001/p001.cha)."""
+
+    def _load(self, tmp_path, text=REAL_FILE_FIXTURE):
+        return load_document(_write(tmp_path, text=text, name="p001.cha"))
+
+    def test_preamble_headers_before_begin_are_skipped(self, tmp_path):
+        doc = self._load(tmp_path)
+        assert [u.speaker_id for u in doc.utterances] == ["INV", "PAR", ""]
+
+    def test_wrapped_utterance_unwraps_with_bullet_on_last_line(self, tmp_path):
+        doc = self._load(tmp_path)
+        wrapped = doc.utterances[1]
+        assert (wrapped.start_s, wrapped.end_s) == (74.178, 77.522)
+        texts = [t.text for t in wrapped.tokens]
+        assert texts[:8] == ["Một", "câu", "dài", "bị", "ngắt", "xuống", "dòng", "theo"]
+        assert texts[-3:] == ["dòng", "cuối", "cùng"]
+
+    def test_unlabeled_speaker_tier_warns_and_keeps_times(self, tmp_path):
+        doc = self._load(tmp_path)
+        tail = doc.utterances[2]
+        assert tail.speaker_id == ""
+        assert (tail.start_s, tail.end_s) == (892.813, 894.689)
+        assert [t.text for t in tail.tokens] == ["bắt", "đầu", "."]
+        assert ChatTierWarning(tier="*", line="unlabeled speaker tier") in doc.warnings
+
+    def test_wrapped_header_continuation_joins_with_space(self, tmp_path):
+        doc = self._load(tmp_path)
+        assert (
+            doc.raw_tiers["@Comment"]
+            == "@Comment:\tThis comment wraps across two indented continuation lines"
+        )

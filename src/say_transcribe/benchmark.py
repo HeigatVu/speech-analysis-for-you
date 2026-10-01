@@ -45,6 +45,18 @@ def _default_asr_factory(model: str, device: str) -> Any:
     return make_asr_backend(model, device=device)
 
 
+def _release_device_memory(device: str) -> None:
+    """Return freed accelerator memory to the allocator between pinned models."""
+    if not device.startswith("cuda"):
+        return
+    try:
+        import torch
+    except ImportError:
+        return
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+
 def _default_diarizer_factory(name: str, device: str) -> Any:
     return WavlmClusterBackend(device=device) if name == "wavlm" else PyannoteBackend(device=device)
 
@@ -85,12 +97,14 @@ def run_asr_benchmark(
 
         for model in ASR_BENCHMARK_MODELS:
             entry: dict[str, Any] = {"session_id": row.session_id, "model": model}
+            backend: Any = None
             try:
+                backend = factory(model, device)
                 result = transcribe(
                     audio_path=row.audio_path,
                     channel_index=row.channel_index,
                     device=device,
-                    backend=factory(model, device),
+                    backend=backend,
                 )
                 scores = score_uncapped(
                     gold, items_from_texts([segment.text for segment in result.segments])
@@ -103,6 +117,11 @@ def run_asr_benchmark(
                 )
             except (AsrError, AudioPreparationError) as error:
                 entry.update(status="error", code=error.code)
+            finally:
+                # Free one pinned model before the next loads; two coexisting
+                # backends OOM the shared GPU (measured crash at 6.6 GiB).
+                backend = None
+                _release_device_memory(device)
             report_rows.append(entry)
 
     return {"task": "asr", "rows": report_rows, "aggregate": _asr_aggregate(report_rows)}
@@ -145,12 +164,14 @@ def run_diarization_benchmark(
             )
             continue
 
+        asr_backend: Any = None
         try:
+            asr_backend = make_asr(DIARIZATION_ASR_MODEL, device)
             result = transcribe(
                 audio_path=row.audio_path,
                 channel_index=row.channel_index,
                 device=device,
-                backend=make_asr(DIARIZATION_ASR_MODEL, device),
+                backend=asr_backend,
             )
             audio = read_wav(row.audio_path)
             channel_samples = extract_channel(audio, row.channel_index)
@@ -163,9 +184,13 @@ def run_diarization_benchmark(
                     _error_row(row.session_id, name, "diarizer", error.code)
                 )
             continue
+        finally:
+            asr_backend = None
+            _release_device_memory(device)
 
         for name in DIARIZATION_BENCHMARK_BACKENDS:
             entry: dict[str, Any] = {"session_id": row.session_id, "diarizer": name}
+            backend = None
             try:
                 backend = make_diarizer(name, device)
                 if name == "wavlm":
@@ -189,6 +214,9 @@ def run_diarization_benchmark(
                 )
             except (AsrError, AudioPreparationError) as error:
                 entry.update(status="error", code=error.code)
+            finally:
+                backend = None
+                _release_device_memory(device)
             report_rows.append(entry)
 
     return {

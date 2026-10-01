@@ -412,8 +412,18 @@ class Qwen3AsrBackend:
                     language=self.language,
                     prompt=self.prompt,
                 )
-                output_ids = self._model.generate(**inputs, max_new_tokens=max_tokens)
-                generated = output_ids[:, inputs["input_ids"].shape[1] :]
+                # The CUDA half() model rejects host float32 feature tensors:
+                # move every tensor onto the model device and cast floats to
+                # the model dtype so audio-tower convs see matching types.
+                prepared: dict[str, Any] = {}
+                for key, value in inputs.items():
+                    if hasattr(value, "to"):
+                        value = value.to(self._model.device)
+                        if value.is_floating_point():
+                            value = value.to(self._model.dtype)
+                    prepared[key] = value
+                output_ids = self._model.generate(**prepared, max_new_tokens=max_tokens)
+                generated = output_ids[:, prepared["input_ids"].shape[1] :]
                 text = self._processor.decode(generated[0], return_format="transcription_only")
                 text = str(text).strip()
                 if text:

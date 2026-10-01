@@ -93,7 +93,9 @@ def decode_chat(text: str, *, source: str = "", sha256: str | None = None) -> Sp
         text = text[1:]
     lines = [line.rstrip("\r\n") for line in text.splitlines() if line.strip()]
 
-    if lines and lines[0] == "@UTF8":
+    # CLAN writes preamble headers (@UTF8, @Window, @TimeDuration, ...)
+    # before @Begin; accept and ignore them.
+    while lines and lines[0].startswith("@") and lines[0] != "@Begin":
         lines = lines[1:]
 
     if not lines or lines[0] != "@Begin":
@@ -163,6 +165,8 @@ def decode_chat(text: str, *, source: str = "", sha256: str | None = None) -> Sp
         current = None
         current_bullets.clear()
 
+    last_raw_name: str | None = None
+
     for line in lines[:-1]:
         if line.startswith("@"):
             name, rest = _split_header(line)
@@ -220,6 +224,7 @@ def decode_chat(text: str, *, source: str = "", sha256: str | None = None) -> Sp
             finish_utterance()
             raw_tiers.setdefault(name, []).append(line)
             warnings.append(ChatTierWarning(tier=name, line=line))
+            last_raw_name = name
             continue
         if line.startswith("%"):
             name, rest = _split_header(line)
@@ -243,6 +248,7 @@ def decode_chat(text: str, *, source: str = "", sha256: str | None = None) -> Sp
                 continue
             raw_tiers.setdefault(name, []).append(line)
             warnings.append(ChatTierWarning(tier=name, line=line))
+            last_raw_name = name
             continue
         if line.startswith("*"):
             finish_utterance()
@@ -250,8 +256,12 @@ def decode_chat(text: str, *, source: str = "", sha256: str | None = None) -> Sp
                 raise _invalid(f"malformed speaker tier {line!r}")
             tier, _, content = line.partition(":")
             code = tier[1:]
-            if code not in {c for c, _ in participants}:
+            if code and code not in {c for c, _ in participants}:
                 raise _invalid(f"speaker tier references unknown speaker {code!r}")
+            if not code:
+                # Recoverable source slip: an unlabeled "*:" tier keeps its
+                # text and times but carries no speaker attribution.
+                warnings.append(ChatTierWarning(tier="*", line="unlabeled speaker tier"))
 
             # Extract optional inline media bullet: \x15start_end\x15 or •start_end•
             inline_start_s = None
@@ -282,6 +292,29 @@ def decode_chat(text: str, *, source: str = "", sha256: str | None = None) -> Sp
                 "start_s": inline_start_s,
                 "end_s": inline_end_s,
             }
+            continue
+        if line[0].isspace() and current is not None:
+            # Wrapped utterance: indented lines continue the open speaker tier
+            # and may carry its timing bullet (CHAT wraps long utterances).
+            bullet_match = re.search(r"[\x15•](\d+)_(\d+)[\x15•]", line)
+            content = line
+            if bullet_match:
+                current["start_s"] = int(bullet_match.group(1)) / 1000.0
+                current["end_s"] = int(bullet_match.group(2)) / 1000.0
+                content = line[: bullet_match.start()] + line[bullet_match.end() :]
+            for item in content.strip().split():
+                token = DocumentToken(
+                    id=f"u{len(utterances) + 1:04d}_t{len(current['tokens']) + 1:04d}",
+                    text=nfc(item),
+                    kind=_item_kind(item),
+                )
+                current["tokens"].append(token)
+                if token.kind in _CONTENT_KINDS:
+                    current["content"].append(token)
+            continue
+        if line[0].isspace() and last_raw_name is not None:
+            # Header continuation lines (e.g. a wrapped @Comment) are indented.
+            raw_tiers[last_raw_name][-1] += " " + line.strip()
             continue
         raise _invalid(f"unexpected line {line!r}")
 
