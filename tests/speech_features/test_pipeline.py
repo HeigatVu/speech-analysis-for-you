@@ -663,7 +663,20 @@ class TestLabelFreeExtraction:
         assert "task_picture_concept_coverage" in bundle.recordings
         assert "diagnosis" not in bundle.provenance
 
-    def test_standardized_acoustic_uses_audio_and_records_adapter_provenance(self, tmp_path):
+    def test_standardized_acoustic_uses_audio_and_records_adapter_provenance(
+        self, tmp_path, monkeypatch
+    ):
+        import builtins
+
+        real_import = builtins.__import__
+
+        def import_without_opensmile(name, *args, **kwargs):
+            if name == "opensmile":
+                raise ModuleNotFoundError("No module named 'opensmile'", name="opensmile")
+            return real_import(name, *args, **kwargs)
+
+        # Simulate the optional dependency being absent regardless of the local env.
+        monkeypatch.setattr(builtins, "__import__", import_without_opensmile)
         bundle = speech_features.extract(
             _write_wav(tmp_path / "a.wav", _tone(145, 1.0)),
             _document(tmp_path),
