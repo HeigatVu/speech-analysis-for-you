@@ -15,10 +15,11 @@ from say_transcribe.asr import (
     transcribe_windows,
 )
 from say_transcribe.audio import AudioPreparationError, extract_channel, read_wav, resample_to_16kHz
+from say_transcribe.benchmark import run_asr_benchmark, run_diarization_benchmark, write_report
 from say_transcribe.chat_writer import UtteranceRecord, write_chat_file
 from say_transcribe.denoise import DenoiseError
 from say_transcribe.diarize import PyannoteBackend, WavlmClusterBackend, assign_speakers
-from say_transcribe.manifest import ManifestError
+from say_transcribe.manifest import ManifestError, load_manifest
 from say_transcribe.morphosyntax import StanzaBackend, project_morphosyntax
 from say_transcribe.profile import ProfileError
 from say_transcribe.study import StudyError, run_study
@@ -133,6 +134,21 @@ def build_parser() -> argparse.ArgumentParser:
         choices=list(ASR_MODEL_CHOICES),
         default="phowhisper-medium",
         help="ASR model backend",
+    )
+
+    # benchmark
+    benchmark_parser = subparsers.add_parser(
+        "benchmark", help="Benchmark ASR models or diarization backends against references"
+    )
+    benchmark_parser.add_argument(
+        "--task", choices=["asr", "diarization"], required=True, help="Benchmark task"
+    )
+    benchmark_parser.add_argument(
+        "--manifest", type=Path, required=True, help="Manifest JSON with session rows"
+    )
+    benchmark_parser.add_argument("--out", type=Path, required=True, help="Output directory")
+    benchmark_parser.add_argument(
+        "--device", choices=["cpu", "cuda"], default="cpu", help="Compute device"
     )
 
     return parser
@@ -563,6 +579,26 @@ def cmd_preprocess_study(
         return 4
 
 
+def cmd_benchmark(task: str, manifest: Path, out_dir: Path, device: str = "cpu") -> int:
+    try:
+        rows = load_manifest(manifest)
+        if task == "asr":
+            report = run_asr_benchmark(rows, device=device)
+        else:
+            report = run_diarization_benchmark(rows, device=device)
+        write_report(report, out_dir)
+        return 0
+    except ManifestError as error:
+        sys.stderr.write(f"[{error.code}] {error.message}\n")
+        return 2
+    except AsrError as error:
+        sys.stderr.write(f"[{error.code}] {error.message}\n")
+        return 3 if error.code in _UNAVAILABLE_CODES else 4
+    except Exception:
+        sys.stderr.write("[BENCHMARK_FAILED] Benchmark execution failed\n")
+        return 4
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     try:
@@ -604,6 +640,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             out_dir=args.out,
             device=args.device,
             asr_model=args.asr_model,
+        )
+    elif args.command == "benchmark":
+        return cmd_benchmark(
+            task=args.task,
+            manifest=args.manifest,
+            out_dir=args.out,
+            device=args.device,
         )
     return 2
 
