@@ -177,7 +177,7 @@ def run_diarization_benchmark(
                     (
                         turn.start_ms,
                         turn.end_ms,
-                        (speakers.cluster_to_role or {}).get(turn.cluster_id, "PAR"),
+                        (speakers.cluster_to_role or {}).get(turn.cluster_id, "UNKNOWN"),
                     )
                     for turn in turns
                 ]

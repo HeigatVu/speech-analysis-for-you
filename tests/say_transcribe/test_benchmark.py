@@ -195,3 +195,31 @@ def test_cli_benchmark_dispatch_and_invalid_manifest(tmp_path, monkeypatch):
     bad.write_text("{}", encoding="utf-8")
     ret = main(["benchmark", "--task", "asr", "--manifest", str(bad), "--out", str(out_dir)])
     assert ret == 2
+
+def test_diarization_unmapped_cluster_scores_unknown_not_par(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from say_transcribe.manifest import load_manifest
+
+    manifest = _make_manifest(tmp_path, [_manifest_row(tmp_path)])
+    rows = load_manifest(manifest)
+
+    class FakePyannote:
+        def diarize(self, audio_16k_mono, sample_rate=16000, **kwargs):
+            return (DiarizationTurn(start_ms=0, end_ms=1000, cluster_id="Z"),)
+
+    # No role assignment survives: the turn's cluster is unmapped.
+    monkeypatch.setattr(
+        "say_transcribe.benchmark.assign_speakers",
+        lambda *args, **kwargs: SimpleNamespace(cluster_to_role=None),
+    )
+    report = run_diarization_benchmark(
+        rows,
+        asr_factory=lambda model, device: FakeAsrBackend(("xin chào", "tạm biệt")),
+        diarizer_factory=lambda name, device: FakePyannote(),
+    )
+
+    row = next(r for r in report["rows"] if r["diarizer"] == "pyannote")
+    assert row["status"] == "ok"
+    # An unmapped cluster must not earn PAR credit against the gold PAR turn.
+    assert row["der"] > 0.0
