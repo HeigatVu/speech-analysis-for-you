@@ -22,3 +22,54 @@ spec:
       command: .venv/bin/python
       args: [-m, ruff, check, src/say_transcribe, tests/say_transcribe]
       timeoutSeconds: 120
+    tasks_remaining:
+      description: A person decides on /goal; the auto path resolves remaining tasks from the task list.
+      verifier: human
+      auto:
+        verifier: tasks
+    experiment_done:
+      description: experiment/STATUS.md reached a terminal state.
+      verifier: experiment
+    results_acceptable:
+      description: experiment/METRICS.json meets the thresholds the plan named.
+      verifier: results
+    expectation_ok:
+      description: Auto-path expectation review gate.
+      verifier: expectation
+    bug_hunt_ok:
+      description: Auto-path bug hunt gate.
+      verifier: bughunt
+    release_ok:
+      description: Auto-path release review gate.
+      verifier: release
+    review_ok:
+      description: Auto-path review gate; presence check on the review record.
+      verifier: review
+    pr_open:
+      description: Task branch is pushed and a PR is open, read from the GitHub API.
+      command: .venv/bin/python
+      args: [tools/ci_api_check.py, pr-open]
+      timeoutSeconds: 60
+    ci:
+      description: Required PR checks reported success, read from the CI API, not logs.
+      command: .venv/bin/python
+      args: [tools/ci_api_check.py, ci]
+      timeoutSeconds: 60
+    reviews:
+      description: A person reads review comments on /goal; auto resolves review-bot buckets.
+      verifier: human
+      auto:
+        verifier: reviewbots
+        command: .venv/bin/python
+        args: [tools/ci_api_check.py, buckets]
+        timeoutSeconds: 60
+    ship:
+      description: A person decides GO on /goal; auto reads ship/DECISION.md written by /ship.
+      verifier: human
+      auto:
+        verifier: shipdecision
+    main_ci:
+      description: Default-branch CI is green after the merge landed, read from the CI API.
+      command: .venv/bin/python
+      args: [tools/ci_api_check.py, main-ci]
+      timeoutSeconds: 60

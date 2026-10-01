@@ -32,7 +32,7 @@ log/
 .mimosa/
 .codegraph/
 .codex/
-.agent-state/
+/.agent-state/
 .claude/
 .agents/
 sound/
@@ -132,6 +132,19 @@ docs/2026-09-25/audio-preprocessing-experiment/2/*
 !docs/2026-09-25/audio-preprocessing-experiment/2/TASKS-2026-09-25.md
 !docs/2026-09-25/audio-preprocessing-experiment/2/tasks-2026-09-25.json
 !docs/2026-09-25/audio-preprocessing-experiment/2/RESULTS-*.md
+
+!docs/2026-10-01/
+docs/2026-10-01/*
+!docs/2026-10-01/add-qwen3-asr-github/
+docs/2026-10-01/add-qwen3-asr-github/*
+!docs/2026-10-01/add-qwen3-asr-github/1/
+docs/2026-10-01/add-qwen3-asr-github/1/*
+!docs/2026-10-01/add-qwen3-asr-github/1/SPEC-2026-10-01.md
+!docs/2026-10-01/add-qwen3-asr-github/1/RESEARCH-2026-10-01.md
+!docs/2026-10-01/add-qwen3-asr-github/1/PLAN-2026-10-01.md
+!docs/2026-10-01/add-qwen3-asr-github/1/TASKS-2026-10-01.md
+!docs/2026-10-01/add-qwen3-asr-github/1/tasks-2026-10-01.json
+!docs/2026-10-01/add-qwen3-asr-github/1/USAGE-*.md
 
 # secrets (never commit)
 .env
