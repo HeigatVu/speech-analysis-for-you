@@ -6,9 +6,10 @@ from typing import Any, Sequence
 
 from say_transcribe.alignment import AlignmentError, align_words
 from say_transcribe.asr import (
+    ASR_MODEL_CHOICES,
     AsrError,
-    PhoWhisperBackend,
     compute_sha256,
+    make_asr_backend,
     result_from_windows,
     transcribe,
     transcribe_windows,
@@ -45,6 +46,12 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument(
         "--device", choices=["cpu", "cuda"], default="cpu", help="Compute device"
     )
+    run_parser.add_argument(
+        "--asr-model",
+        choices=list(ASR_MODEL_CHOICES),
+        default="phowhisper-medium",
+        help="ASR model backend",
+    )
 
     compare_parser = subparsers.add_parser(
         "compare", help="Compare baseline, VAD, and aligned transcripts"
@@ -64,6 +71,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     compare_parser.add_argument(
         "--device", choices=["cpu", "cuda"], default="cpu", help="Compute device"
+    )
+    compare_parser.add_argument(
+        "--asr-model",
+        choices=list(ASR_MODEL_CHOICES),
+        default="phowhisper-medium",
+        help="ASR model backend",
     )
 
     # evaluate
@@ -88,6 +101,12 @@ def build_parser() -> argparse.ArgumentParser:
     study_parser.add_argument("--out", type=Path, required=True, help="Private output directory")
     study_parser.add_argument(
         "--device", choices=["cpu", "cuda"], default="cpu", help="Compute device"
+    )
+    study_parser.add_argument(
+        "--asr-model",
+        choices=list(ASR_MODEL_CHOICES),
+        default="phowhisper-medium",
+        help="ASR model backend",
     )
 
     return parser
@@ -146,6 +165,7 @@ def cmd_run(
     channel: int,
     out_dir: Path,
     device: str = "cpu",
+    asr_model: str = "phowhisper-medium",
     asr_backend: Any = None,
     diarize_backend: Any = None,
     stanza_backend: Any = None,
@@ -165,6 +185,8 @@ def cmd_run(
         audio_16k = resample_to_16kHz(channel_samples, audio.sample_rate, audio.sample_width)
 
         # Step 4: ASR
+        if asr_backend is None:
+            asr_backend = make_asr_backend(asr_model, device=device)
         asr_res = transcribe(
             audio_path=audio_path,
             channel_index=channel,
@@ -330,6 +352,7 @@ def cmd_compare(
     expected_sha256: str,
     device: str = "cpu",
     vad_threshold: float = 0.2,
+    asr_model: str = "phowhisper-medium",
     *,
     asr_backend: Any = None,
     diarize_backend: Any = None,
@@ -360,7 +383,7 @@ def cmd_compare(
             return 2
 
         if asr_backend is None:
-            asr_backend = PhoWhisperBackend(device=device)
+            asr_backend = make_asr_backend(asr_model, device=device)
         baseline = transcribe(
             audio_path=audio_path,
             channel_index=channel,
@@ -486,9 +509,14 @@ def cmd_evaluate(gold_dir: Path, pred_dir: Path, out_file: Path) -> int:
         return 4
 
 
-def cmd_preprocess_study(manifest: Path, out_dir: Path, device: str = "cpu") -> int:
+def cmd_preprocess_study(
+    manifest: Path,
+    out_dir: Path,
+    device: str = "cpu",
+    asr_model: str = "phowhisper-medium",
+) -> int:
     try:
-        run_study(manifest_path=manifest, out_dir=out_dir, device=device)
+        run_study(manifest_path=manifest, out_dir=out_dir, device=device, asr_model=asr_model)
         sys.stdout.write("Study run complete\n")
         return 0
     except ManifestError as error:
@@ -529,6 +557,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             channel=args.channel,
             out_dir=args.out,
             device=args.device,
+            asr_model=args.asr_model,
         )
     elif args.command == "compare":
         return cmd_compare(
@@ -538,6 +567,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             expected_sha256=args.expected_sha256,
             device=args.device,
             vad_threshold=args.vad_threshold,
+            asr_model=args.asr_model,
         )
     elif args.command == "evaluate":
         return cmd_evaluate(
@@ -550,6 +580,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             manifest=args.manifest,
             out_dir=args.out,
             device=args.device,
+            asr_model=args.asr_model,
         )
     return 2
 

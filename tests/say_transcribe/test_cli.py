@@ -277,3 +277,22 @@ def test_cli_warns_when_diarization_returns_no_turns(
     transcript = (tmp_path / "out" / "audio.cha").read_text()
     assert "speaker labels unavailable; defaulted to PAR; review before use" in transcript
     assert "auto-diarized" not in transcript
+
+
+def test_cli_asr_model_flag_on_run_compare_and_study():
+    from say_transcribe.cli import build_parser
+
+    parser = build_parser()
+    assert parser.parse_args(
+        ["run", "a.wav", "--channel", "0", "--out", "o"]
+    ).asr_model == "phowhisper-medium"
+    assert parser.parse_args(
+        ["run", "a.wav", "--channel", "0", "--out", "o", "--asr-model", "qwen3-asr"]
+    ).asr_model == "qwen3-asr"
+    assert parser.parse_args(
+        ["compare", "a.wav", "--channel", "0", "--out", "o", "--expected-sha256", "0" * 64,
+         "--asr-model", "phowhisper-large"]
+    ).asr_model == "phowhisper-large"
+    assert parser.parse_args(
+        ["preprocess-study", "m.json", "--out", "o", "--asr-model", "qwen3-asr"]
+    ).asr_model == "qwen3-asr"

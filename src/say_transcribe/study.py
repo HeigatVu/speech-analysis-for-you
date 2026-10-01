@@ -32,8 +32,8 @@ import numpy as np
 
 from say_transcribe.asr import (
     AsrResult,
-    PhoWhisperBackend,
     compute_sha256,
+    make_asr_backend,
     result_from_windows,
     transcribe,
     transcribe_windows,
@@ -1046,17 +1046,21 @@ def write_summary(summary: dict[str, Any], out_dir: Path) -> Path:
     return target
 
 
-def _backend_for_revision(revision: str, device: str, cache: dict[str, Any]) -> Any:
-    """One lazily-loaded backend per pinned revision; a model load is expensive."""
-    if revision not in cache:
-        cache[revision] = PhoWhisperBackend(device=device, revision=revision)
-    return cache[revision]
+def _backend_for_revision(
+    model: str, revision: str, device: str, cache: dict[str, Any]
+) -> Any:
+    """One lazily-loaded backend per (model, revision); a model load is expensive."""
+    key = (model, revision)
+    if key not in cache:
+        cache[key] = make_asr_backend(model, device=device, revision=revision)
+    return cache[key]
 
 
 def run_study(
     manifest_path: Path,
     out_dir: Path,
     device: str = "cpu",
+    asr_model: str = "phowhisper-medium",
     asr_backend: Any = None,
 ) -> int:
     """Run the full study over a manifest into a private output directory.
@@ -1074,7 +1078,7 @@ def run_study(
         backend = (
             asr_backend
             if asr_backend is not None
-            else _backend_for_revision(row.asr_revision, device, backends)
+            else _backend_for_revision(asr_model, row.asr_revision, device, backends)
         )
         record = compute_session(row, backend, denoisers, device)
         write_session_record(record, out_dir)

@@ -343,6 +343,108 @@ class PhoWhisperBackend:
         return segments
 
 
+class Qwen3AsrBackend:
+    """Lazy Qwen3-ASR backend using transformers-native checkpoints.
+
+    Qwen3-ASR has no Vietnamese forced aligner, so segments carry text with
+    null word timings; scoring is text-based and unaffected."""
+
+    def __init__(
+        self,
+        model_id: str = "Qwen/Qwen3-ASR-1.7B-hf",
+        device: str = "cpu",
+        revision: str | None = None,
+        language: str = "Vietnamese",
+        prompt: str | None = None,
+    ) -> None:
+        self.model_id = model_id
+        self.device = device
+        self.revision = revision
+        self.language = language
+        self.prompt = prompt
+        self._processor: Any = None
+        self._model: Any = None
+
+    @staticmethod
+    def _build(model_id: str, revision: str | None, device: str) -> tuple[Any, Any]:
+        from transformers import AutoModelForMultimodalLM, AutoProcessor
+
+        processor = AutoProcessor.from_pretrained(model_id, revision=revision)
+        model = AutoModelForMultimodalLM.from_pretrained(model_id, revision=revision)
+        if device == "cuda":
+            model = model.to("cuda").half()
+        return processor, model
+
+    def load(self) -> None:
+        if self.device == "cuda":
+            try:
+                import torch
+
+                if not torch.cuda.is_available():
+                    raise AsrError("GPU_UNAVAILABLE", "CUDA device requested but not available")
+            except ImportError:
+                raise AsrError("GPU_UNAVAILABLE", "PyTorch with CUDA not available") from None
+        try:
+            self._processor, self._model = self._build(self.model_id, self.revision, self.device)
+        except AsrError:
+            raise
+        except Exception:
+            raise AsrError("MODEL_UNAVAILABLE", "Failed to load Qwen3-ASR model") from None
+
+    def transcribe_audio(self, audio_16k_mono: np.ndarray) -> Sequence[dict[str, Any]]:
+        """Run Qwen3-ASR on 16kHz float32 mono audio array.
+
+        Returns one segment dict per decode with null timings and no words.
+        """
+        if self._processor is None or self._model is None:
+            self.load()
+
+        chunk_len = int(20.0 * 16000)
+        results: list[dict[str, Any]] = []
+        try:
+            for start in range(0, max(len(audio_16k_mono), 1), chunk_len):
+                chunk = audio_16k_mono[start : start + chunk_len]
+                if not len(chunk):
+                    break
+                max_tokens = min(400, max(32, math.ceil(len(chunk) / 16000 * 20)))
+                inputs = self._processor.apply_transcription_request(
+                    audio=np.asarray(chunk, dtype=np.float32),
+                    language=self.language,
+                    prompt=self.prompt,
+                )
+                output_ids = self._model.generate(**inputs, max_new_tokens=max_tokens)
+                generated = output_ids[:, inputs["input_ids"].shape[1] :]
+                text = self._processor.decode(generated[0], return_format="transcription_only")
+                text = str(text).strip()
+                if text:
+                    results.append(
+                        {"start_ms": None, "end_ms": None, "text": text, "words": []}
+                    )
+            return results
+        except Exception:
+            raise AsrError("MODEL_UNAVAILABLE", "ASR inference execution failed") from None
+
+
+ASR_MODEL_CHOICES = ("phowhisper-medium", "phowhisper-large", "qwen3-asr")
+
+
+def make_asr_backend(
+    model: str, device: str = "cpu", revision: str | None = None
+) -> PhoWhisperBackend | Qwen3AsrBackend:
+    """Map a CLI model name to its ASR backend."""
+    if model == "qwen3-asr":
+        return Qwen3AsrBackend(device=device, revision=revision)
+    if model == "phowhisper-medium":
+        return PhoWhisperBackend(
+            model_id="vinai/phowhisper-medium", device=device, revision=revision
+        )
+    if model == "phowhisper-large":
+        return PhoWhisperBackend(
+            model_id="vinai/phowhisper-large", device=device, revision=revision
+        )
+    raise AsrError("MODEL_UNKNOWN", f"Unknown ASR model: {model}")
+
+
 def transcribe(
     audio_path: Path,
     channel_index: int = 0,

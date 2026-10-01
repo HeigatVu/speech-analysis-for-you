@@ -455,3 +455,87 @@ def test_chunk_words_with_missing_lexical_boundary_do_not_create_segment_span():
     assert segments[0]["text"] == "xin chào"
     assert segments[0]["start_ms"] is None
     assert segments[0]["end_ms"] is None
+
+
+class FakeQwen3Processor:
+    def __init__(self, text: str) -> None:
+        self._text = text
+        self.calls: list[dict[str, Any]] = []
+
+    def apply_transcription_request(self, audio, language=None, prompt=None, **kwargs):
+        self.calls.append({"audio": audio, "language": language, "prompt": prompt})
+        return {"input_ids": np.zeros((1, 7), dtype=np.int64)}
+
+    def decode(self, ids, return_format="raw"):
+        assert return_format == "transcription_only"
+        return self._text
+
+
+class FakeQwen3Model:
+    def __init__(self, failure: bool = False) -> None:
+        self._failure = failure
+
+    def generate(self, **inputs):
+        if self._failure:
+            raise RuntimeError("boom")
+        return np.zeros((1, 12), dtype=np.int64)
+
+
+def _fake_qwen3(text: str = "chào thế giới", failure: bool = False) -> Any:
+    from say_transcribe.asr import Qwen3AsrBackend
+
+    backend = Qwen3AsrBackend()
+    backend._processor = FakeQwen3Processor(text)
+    backend._model = FakeQwen3Model(failure=failure)
+    return backend
+
+
+def test_qwen3_segment_shape_and_forced_language():
+    backend = _fake_qwen3()
+    segments = backend.transcribe_audio(np.zeros(16000, dtype=np.float32))
+    assert segments == [
+        {"start_ms": None, "end_ms": None, "text": "chào thế giới", "words": []}
+    ]
+    assert backend._processor.calls[0]["language"] == "Vietnamese"
+
+
+def test_qwen3_empty_decode_yields_no_segments():
+    backend = _fake_qwen3(text="   ")
+    assert backend.transcribe_audio(np.zeros(16000, dtype=np.float32)) == []
+
+
+def test_qwen3_chunks_long_audio_like_phowhisper():
+    backend = _fake_qwen3(text="mot")
+    backend.transcribe_audio(np.zeros(45 * 16000, dtype=np.float32))
+    assert len(backend._processor.calls) == 3
+
+
+def test_qwen3_load_failure_maps_to_model_unavailable(monkeypatch):
+    from say_transcribe.asr import Qwen3AsrBackend
+
+    def boom(model_id, revision, device):
+        raise RuntimeError("no network")
+
+    monkeypatch.setattr(Qwen3AsrBackend, "_build", boom)
+    with pytest.raises(AsrError) as excinfo:
+        Qwen3AsrBackend().load()
+    assert excinfo.value.code == "MODEL_UNAVAILABLE"
+
+
+def test_qwen3_inference_failure_maps_to_model_unavailable():
+    backend = _fake_qwen3(failure=True)
+    with pytest.raises(AsrError) as excinfo:
+        backend.transcribe_audio(np.zeros(16000, dtype=np.float32))
+    assert excinfo.value.code == "MODEL_UNAVAILABLE"
+
+
+def test_make_asr_backend_maps_names():
+    from say_transcribe.asr import Qwen3AsrBackend, make_asr_backend
+
+    assert isinstance(make_asr_backend("qwen3-asr"), Qwen3AsrBackend)
+    pho = make_asr_backend("phowhisper-large")
+    assert pho.model_id == "vinai/phowhisper-large"
+    assert make_asr_backend("phowhisper-medium").model_id == "vinai/phowhisper-medium"
+    with pytest.raises(AsrError) as excinfo:
+        make_asr_backend("unknown-model")
+    assert excinfo.value.code == "MODEL_UNKNOWN"

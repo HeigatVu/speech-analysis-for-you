@@ -54,7 +54,7 @@ def test_compare_writes_three_variants_and_reuses_vad_asr_cache(tmp_path, monkey
     vad_result = AsrResult(expected_hash, (), ())
 
     monkeypatch.setattr(cli, "compute_sha256", lambda _: expected_hash)
-    monkeypatch.setattr(cli, "PhoWhisperBackend", lambda **kwargs: backend)
+    monkeypatch.setattr(cli, "make_asr_backend", lambda *args, **kwargs: backend)
 
     def fake_transcribe(**kwargs):
         calls["baseline_backend"] = kwargs["backend"]
@@ -166,7 +166,7 @@ def test_compare_refuses_to_overwrite_an_earlier_variant(tmp_path, monkeypatch, 
     baseline = AsrResult(expected_hash, (), ())
 
     monkeypatch.setattr(cli, "compute_sha256", lambda _: expected_hash)
-    monkeypatch.setattr(cli, "PhoWhisperBackend", lambda **kwargs: backend)
+    monkeypatch.setattr(cli, "make_asr_backend", lambda *args, **kwargs: backend)
     monkeypatch.setattr(cli, "transcribe", lambda **kwargs: baseline)
     monkeypatch.setattr(
         cli, "read_wav", lambda _: SimpleNamespace(sample_rate=16_000, sample_width=2)
@@ -214,7 +214,7 @@ def test_compare_refuses_to_overwrite_when_later_variant_exists(tmp_path, monkey
     baseline = AsrResult(expected_hash, (), ())
 
     monkeypatch.setattr(cli, "compute_sha256", lambda _: expected_hash)
-    monkeypatch.setattr(cli, "PhoWhisperBackend", lambda **kwargs: backend)
+    monkeypatch.setattr(cli, "make_asr_backend", lambda *args, **kwargs: backend)
     monkeypatch.setattr(cli, "transcribe", lambda **kwargs: baseline)
     monkeypatch.setattr(
         cli, "read_wav", lambda _: SimpleNamespace(sample_rate=16_000, sample_width=2)

@@ -568,22 +568,22 @@ def test_backend_forwards_the_pinned_revision(monkeypatch):
 
 
 def test_backend_for_revision_reuses_one_backend_per_revision(monkeypatch):
-    built: list[str] = []
+    built: list[tuple[str, str]] = []
 
-    def fake_backend(*, device, revision):
-        built.append(revision)
+    def fake_backend(model, *, device, revision):
+        built.append((model, revision))
         return SimpleNamespace(device=device, revision=revision)
 
-    monkeypatch.setattr("say_transcribe.study.PhoWhisperBackend", fake_backend)
+    monkeypatch.setattr("say_transcribe.study.make_asr_backend", fake_backend)
     cache: dict = {}
 
-    first = _backend_for_revision("rev-a", "cpu", cache)
-    second = _backend_for_revision("rev-a", "cpu", cache)
-    third = _backend_for_revision("rev-b", "cpu", cache)
+    first = _backend_for_revision("qwen3-asr", "rev-a", "cpu", cache)
+    second = _backend_for_revision("qwen3-asr", "rev-a", "cpu", cache)
+    third = _backend_for_revision("qwen3-asr", "rev-b", "cpu", cache)
 
     assert first is second
     assert third is not first
-    assert built == ["rev-a", "rev-b"]
+    assert built == [("qwen3-asr", "rev-a"), ("qwen3-asr", "rev-b")]
 
 
 def _one_row_manifest(tmp_path: Path, reference_text: str) -> Path:
@@ -617,7 +617,7 @@ def _one_row_manifest(tmp_path: Path, reference_text: str) -> Path:
 def test_study_uses_the_revision_pinned_by_each_manifest_row(tmp_path, monkeypatch):
     collected: list[str] = []
 
-    def fake_backend(*, device, revision):
+    def fake_backend(model, *, device, revision):
         collected.append(revision)
         return SimpleNamespace(model_id="vinai/phowhisper-medium")
 
@@ -630,7 +630,7 @@ def test_study_uses_the_revision_pinned_by_each_manifest_row(tmp_path, monkeypat
             "asr_revision": row.asr_revision,
         }
 
-    monkeypatch.setattr("say_transcribe.study.PhoWhisperBackend", fake_backend)
+    monkeypatch.setattr("say_transcribe.study.make_asr_backend", fake_backend)
     monkeypatch.setattr("say_transcribe.study.compute_session", fake_session)
     monkeypatch.setattr("say_transcribe.study.write_session_record", lambda record, out_dir: None)
     monkeypatch.setattr("say_transcribe.study.write_summary", lambda summary, out_dir: None)
