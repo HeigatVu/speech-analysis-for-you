@@ -1,8 +1,11 @@
 import argparse
 from dataclasses import replace
 from pathlib import Path
+import re
 import sys
 from typing import Any, Sequence
+
+from speech_features.formats.chat import InvalidChatError, decode_chat
 
 from say_transcribe.alignment import AlignmentError, align_words
 from say_transcribe.asr import (
@@ -16,7 +19,7 @@ from say_transcribe.asr import (
 )
 from say_transcribe.audio import AudioPreparationError, extract_channel, read_wav, resample_to_16kHz
 from say_transcribe.benchmark import run_asr_benchmark, run_diarization_benchmark, write_report
-from say_transcribe.chat_writer import UtteranceRecord, write_chat_file
+from say_transcribe.chat_writer import PARTICIPANTS, UtteranceRecord, write_chat_file
 from say_transcribe.denoise import DenoiseError
 from say_transcribe.diarize import PyannoteBackend, WavlmClusterBackend, assign_speakers
 from say_transcribe.manifest import ManifestError, load_manifest
@@ -73,6 +76,11 @@ def build_parser() -> argparse.ArgumentParser:
         default="pyannote",
         help="Speaker diarization backend",
     )
+    run_parser.add_argument(
+        "--no-morphosyntax",
+        action="store_true",
+        help="Phase 1 output: write main tiers and %%wor only, deferring %%mor/%%gra to tag",
+    )
 
     compare_parser = subparsers.add_parser(
         "compare", help="Compare baseline, VAD, and aligned transcripts"
@@ -104,6 +112,21 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["pyannote", "wavlm"],
         default="pyannote",
         help="Speaker diarization backend",
+    )
+    compare_parser.add_argument(
+        "--no-morphosyntax",
+        action="store_true",
+        help="Phase 1 output: write main tiers and %%wor only, deferring %%mor/%%gra to tag",
+    )
+
+    # tag (phase 2: add %mor/%gra to a hand-reviewed transcript)
+    tag_parser = subparsers.add_parser(
+        "tag", help="Add %mor/%gra tiers to a reviewed CHAT transcript"
+    )
+    tag_parser.add_argument("transcript", type=Path, help="Reviewed .cha transcript to tag")
+    tag_parser.add_argument("--out", type=Path, required=True, help="Output .cha path (new file)")
+    tag_parser.add_argument(
+        "--device", choices=["cpu", "cuda"], default="cpu", help="Compute device"
     )
 
     # evaluate
@@ -212,6 +235,7 @@ def cmd_run(
     asr_backend: Any = None,
     diarize_backend: Any = None,
     stanza_backend: Any = None,
+    skip_morphosyntax: bool = False,
 ) -> int:
     if not audio_path.is_file():
         sys.stderr.write("[INVALID_ARGUMENT] Audio file not found\n")
@@ -258,7 +282,9 @@ def cmd_run(
 
         # Step 6-8: Word grouping, morphosyntax projection, and record creation
         utterance_records: list[UtteranceRecord] = []
-        if stanza_backend is None:
+        # Phase 1 (--no-morphosyntax) skips Stanza entirely: %mor/%gra are added
+        # later from the reviewed transcript by the `tag` subcommand.
+        if stanza_backend is None and not skip_morphosyntax:
             stanza_backend = StanzaBackend(device=device)
 
         for i, seg in enumerate(asr_res.segments):
@@ -282,7 +308,11 @@ def cmd_run(
                     for w in seg.words
                     if w.word.strip()
                 )
-            mor_gra = project_morphosyntax(words, backend=stanza_backend) if words else None
+            mor_gra = (
+                project_morphosyntax(words, backend=stanza_backend)
+                if words and not skip_morphosyntax
+                else None
+            )
             utterance_records.append(
                 UtteranceRecord(
                     speaker=speaker,
@@ -329,6 +359,133 @@ def cmd_run(
         return 4
 
 
+_SOURCE_SHA256_COMMENT = re.compile(r"@Comment:\s*source_sha256\s+(\S+)")
+# Our %wor tier carries word timings inline ("token \x15start_end\x15"); the CHAT
+# reader keeps them in the "wor" annotation layer instead of the token spans.
+_WOR_BULLET = re.compile(r"[\x15•](\d+)_(\d+)[\x15•]")
+# The writer declares exactly these participants; any other label in a reviewed
+# transcript would produce a file its own reader rejects.
+_REVIEWED_SPEAKERS = tuple(code for code, _role in PARTICIPANTS)
+
+
+def _wor_timings(document: Any) -> dict[str, tuple[int, int]]:
+    """Collect inline %wor word timings, keyed by token id."""
+    timings: dict[str, tuple[int, int]] = {}
+    for layer in document.annotations:
+        if layer.layer != "wor":
+            continue
+        for token_id, value in layer.values.items():
+            match = _WOR_BULLET.search(value)
+            if match:
+                timings[token_id] = (int(match.group(1)), int(match.group(2)))
+    return timings
+
+
+def _token_ms(
+    token: Any,
+    timings: dict[str, tuple[int, int]],
+) -> tuple[int | None, int | None]:
+    """Word span in milliseconds: the token's own span, else its inline %wor bullet."""
+    if token.start_s is not None and token.end_s is not None:
+        return round(token.start_s * 1000), round(token.end_s * 1000)
+    return timings.get(token.id, (None, None))
+
+
+def _document_source_sha256(document: Any) -> str:
+    """Recover the audio digest recorded in the reviewed transcript's @Comment."""
+    # The reader keeps each unknown header's lines joined into one string.
+    for value in document.raw_tiers.values():
+        match = _SOURCE_SHA256_COMMENT.search(value)
+        if match:
+            return match.group(1)
+    return document.source_sha256 or ""
+
+
+def _reviewed_records(
+    document: Any,
+    stanza_backend: Any,
+) -> tuple[str, str, list[UtteranceRecord]]:
+    """Rebuild run records from a hand-reviewed CHAT document (phase 2 input)."""
+    timings = _wor_timings(document)
+    utterances: list[UtteranceRecord] = []
+    for utterance in document.utterances:
+        if utterance.speaker_id not in _REVIEWED_SPEAKERS:
+            raise ValueError(
+                f"unsupported speaker code {utterance.speaker_id!r} in reviewed transcript"
+            )
+        words_list: list[GroupedWord] = []
+        for token in utterance.tokens:
+            start_ms, end_ms = _token_ms(token, timings)
+            words_list.append(
+                GroupedWord(word=token.text, start_ms=start_ms, end_ms=end_ms, syllables=())
+            )
+        words = tuple(words_list)
+        utterances.append(
+            UtteranceRecord(
+                speaker=utterance.speaker_id,
+                start_ms=None if utterance.start_s is None else round(utterance.start_s * 1000),
+                end_ms=None if utterance.end_s is None else round(utterance.end_s * 1000),
+                text=" ".join(word.word for word in words),
+                words=words,
+                morphosyntax=project_morphosyntax(words, backend=stanza_backend) if words else None,
+            )
+        )
+    return document.document_id, _document_source_sha256(document), utterances
+
+
+def cmd_tag(
+    transcript_path: Path,
+    out_file: Path,
+    device: str = "cpu",
+    stanza_backend: Any = None,
+) -> int:
+    """Add %mor/%gra to a reviewed transcript, writing a new file (phase 2)."""
+    if not transcript_path.is_file():
+        sys.stderr.write("[INVALID_ARGUMENT] Transcript file not found\n")
+        return 2
+
+    try:
+        document = decode_chat(
+            transcript_path.read_text(encoding="utf-8"),
+            source=str(transcript_path),
+        )
+    except (InvalidChatError, OSError, UnicodeDecodeError) as error:
+        sys.stderr.write(f"[CHAT_VALIDATION_FAILED] {error}\n")
+        return 4
+
+    try:
+        if stanza_backend is None:
+            stanza_backend = StanzaBackend(device=device)
+        session_id, source_sha256, utterances = _reviewed_records(document, stanza_backend)
+        # project_morphosyntax degrades to None on any backend failure; an untagged
+        # "tagged" file must not be reported as success.
+        if any(utterance.words for utterance in utterances) and not any(
+            utterance.morphosyntax is not None for utterance in utterances
+        ):
+            sys.stderr.write("[MODEL_UNAVAILABLE] Morphosyntax projection produced no tiers\n")
+            return 3
+        write_chat_file(
+            output_path=out_file,
+            session_id=session_id,
+            source_sha256=source_sha256,
+            utterances=utterances,
+        )
+        sys.stdout.write(f"Wrote morphotagged transcript for session: {session_id}\n")
+        return 0
+    except FileExistsError:
+        sys.stderr.write("[OUTPUT_EXISTS] Refusing to overwrite an existing transcript\n")
+        return 2
+    except ValueError as error:
+        sys.stderr.write(f"[CHAT_VALIDATION_FAILED] {error}\n")
+        return 4
+    except AsrError as error:
+        sys.stderr.write(f"[{error.code}] {error.message}\n")
+        return 3 if error.code in _UNAVAILABLE_CODES else 4
+    except Exception:
+        sys.stderr.write("[CHAT_VALIDATION_FAILED] Pipeline execution failed\n")
+        return 4
+
+
 def _write_comparison_result(
     asr_result: Any,
     output_path: Path,
@@ -337,6 +494,8 @@ def _write_comparison_result(
     device: str,
     stanza_backend: Any,
     run_warnings: list[str],
+    *,
+    skip_morphosyntax: bool = False,
 ) -> None:
     speaker_result = assign_speakers(asr_result.segments, turns)
     utterances: list[UtteranceRecord] = []
@@ -362,7 +521,11 @@ def _write_comparison_result(
                 for word in segment.words
                 if word.word.strip()
             )
-        morphosyntax = project_morphosyntax(words, backend=stanza_backend) if words else None
+        morphosyntax = (
+            project_morphosyntax(words, backend=stanza_backend)
+            if words and not skip_morphosyntax
+            else None
+        )
         utterances.append(
             UtteranceRecord(
                 speaker=speaker,
@@ -397,6 +560,7 @@ def cmd_compare(
     asr_backend: Any = None,
     diarize_backend: Any = None,
     stanza_backend: Any = None,
+    skip_morphosyntax: bool = False,
 ) -> int:
     if not audio_path.is_file():
         sys.stderr.write("[INVALID_ARGUMENT] Audio file not found\n")
@@ -469,7 +633,7 @@ def cmd_compare(
             return 3 if error.code in _UNAVAILABLE_CODES else 4
         diarization_warnings = [] if turns else ["DIARIZATION_UNAVAILABLE:DEFAULTING_TO_PAR"]
 
-        if stanza_backend is None:
+        if stanza_backend is None and not skip_morphosyntax:
             stanza_backend = StanzaBackend(device=device)
         session_id = audio_path.stem.replace("_master", "")
         variants = (
@@ -497,6 +661,7 @@ def cmd_compare(
                 device,
                 stanza_backend,
                 run_warnings,
+                skip_morphosyntax=skip_morphosyntax,
             )
             sys.stdout.write(f"Wrote {variant} transcript for session: {session_id}\n")
         return 0
@@ -616,6 +781,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             device=args.device,
             asr_model=args.asr_model,
             diarizer=args.diarizer,
+            skip_morphosyntax=args.no_morphosyntax,
         )
     elif args.command == "compare":
         return cmd_compare(
@@ -627,6 +793,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             vad_threshold=args.vad_threshold,
             asr_model=args.asr_model,
             diarizer=args.diarizer,
+            skip_morphosyntax=args.no_morphosyntax,
+        )
+    elif args.command == "tag":
+        return cmd_tag(
+            transcript_path=args.transcript,
+            out_file=args.out,
+            device=args.device,
         )
     elif args.command == "evaluate":
         return cmd_evaluate(

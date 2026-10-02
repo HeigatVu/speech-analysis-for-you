@@ -329,3 +329,193 @@ def test_cli_asr_model_flag_on_run_compare_and_study():
     assert parser.parse_args(
         ["preprocess-study", "m.json", "--out", "o", "--asr-model", "qwen3-asr"]
     ).asr_model == "qwen3-asr"
+
+
+class _FakeStanzaWord:
+    def __init__(self, index: int, text: str) -> None:
+        self.id = index
+        self.text = text
+        self.lemma = text
+        self.upos = "noun"
+        self.feats = None
+        self.head = 0 if index == 1 else 1
+        self.deprel = "root" if index == 1 else "nsubj"
+
+
+class _FakeStanzaDoc:
+    def __init__(self, tokens) -> None:
+        words = [_FakeStanzaWord(i, t) for i, t in enumerate(tokens, start=1)]
+        self.sentences = [type("S", (), {"words": words})()]
+
+
+class _FakeStanzaBackend:
+    def __init__(self, **kwargs) -> None:
+        pass
+
+    def parse_pretokenized(self, tokens):
+        return _FakeStanzaDoc(list(tokens))
+
+
+def _phase1_utterance():
+    from say_transcribe.chat_writer import UtteranceRecord
+    from say_transcribe.word_grouping import GroupedWord
+
+    words = (
+        GroupedWord("tôi", 0, 300, ()),
+        GroupedWord("là_sinh_viên", 300, 900, ()),
+        GroupedWord(".", None, None, ()),
+    )
+    return UtteranceRecord("PAR", 0, 900, "tôi là sinh viên .", words, None)
+
+
+def _write_phase1(path: Path, session_id: str) -> Path:
+    from say_transcribe.chat_writer import write_chat_file
+
+    return write_chat_file(path, session_id, "c" * 64, (_phase1_utterance(),))
+
+
+def test_cli_run_no_morphosyntax_defers_mor_gra(tmp_path: Path, monkeypatch, capsys):
+    audio_file = _make_wav_file(tmp_path / "session_02_master.wav")
+    out_dir = tmp_path / "out"
+
+    from say_transcribe.asr import AsrResult, AsrSegment, WordTiming
+    from say_transcribe.word_grouping import GroupedWord
+
+    def fake_transcribe(*args, **kwargs):
+        return AsrResult(
+            source_sha256="b" * 64,
+            segments=(
+                AsrSegment(
+                    start_ms=0,
+                    end_ms=900,
+                    text="tôi là sinh viên .",
+                    words=(
+                        WordTiming(word="tôi", start_ms=0, end_ms=300),
+                        WordTiming(word="là", start_ms=300, end_ms=500),
+                        WordTiming(word="sinh", start_ms=500, end_ms=700),
+                        WordTiming(word="viên", start_ms=700, end_ms=900),
+                        WordTiming(word=".", start_ms=None, end_ms=None),
+                    ),
+                ),
+            ),
+            warnings=(),
+        )
+
+    def forbid_stanza(*args, **kwargs):
+        raise AssertionError("phase 1 must not load Stanza")
+
+    monkeypatch.setattr("say_transcribe.cli.transcribe", fake_transcribe)
+    monkeypatch.setattr(
+        "say_transcribe.cli.PyannoteBackend",
+        lambda **kwargs: type("D", (), {"diarize": lambda self, _: ()})(),
+    )
+    monkeypatch.setattr(
+        "say_transcribe.cli.group_utterance_words",
+        lambda seg: (
+            GroupedWord("tôi", 0, 300, ()),
+            GroupedWord("là_sinh_viên", 300, 900, ()),
+            GroupedWord(".", None, None, ()),
+        ),
+    )
+    monkeypatch.setattr("say_transcribe.cli.StanzaBackend", forbid_stanza)
+    monkeypatch.setattr(
+        "say_transcribe.cli.project_morphosyntax",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("deferred tier projected")),
+    )
+
+    ret = main(
+        [
+            "run",
+            str(audio_file),
+            "--channel",
+            "0",
+            "--out",
+            str(out_dir),
+            "--no-morphosyntax",
+        ]
+    )
+
+    assert ret == 0
+    text = (out_dir / "session_02.cha").read_text(encoding="utf-8")
+    assert "*PAR:" in text
+    assert "%wor:" in text
+    assert "%mor" not in text
+    assert "%gra" not in text
+
+
+def test_cli_tag_adds_morphosyntax_to_reviewed_transcript(
+    tmp_path: Path, monkeypatch, capsys
+):
+    from speech_features.formats.chat import decode_chat
+
+    phase1 = _write_phase1(tmp_path / "review" / "p002.cha", "p002")
+    # The reviewer corrects the speaker label; the timings and text stay as produced.
+    reviewed = phase1.read_text(encoding="utf-8").replace("*PAR:", "*INV:")
+    phase1.write_text(reviewed, encoding="utf-8")
+
+    monkeypatch.setattr("say_transcribe.cli.StanzaBackend", _FakeStanzaBackend)
+    out_file = tmp_path / "final" / "p002.cha"
+    ret = main(["tag", str(phase1), "--out", str(out_file)])
+
+    assert ret == 0
+    tagged = out_file.read_text(encoding="utf-8")
+    assert "*INV:" in tagged
+    assert "*PAR:" not in tagged
+    assert "%wor:" in tagged and "%mor:" in tagged and "%gra:" in tagged
+    assert "\x150_300\x15" in tagged
+    assert f"@Comment:\tsource_sha256 {'c' * 64}" in tagged
+
+    document = decode_chat(tagged)
+    assert document.utterances[0].speaker_id == "INV"
+    assert [token.text for token in document.utterances[0].tokens] == [
+        "tôi",
+        "là_sinh_viên",
+        ".",
+    ]
+    # The reviewed file itself is never modified (SPEC §8).
+    assert phase1.read_text(encoding="utf-8") == reviewed
+
+    ret = main(["tag", str(phase1), "--out", str(out_file)])
+    assert ret == 2
+    assert "[OUTPUT_EXISTS]" in capsys.readouterr().err
+
+
+def test_cli_tag_rejects_speaker_code_outside_the_writer_contract(
+    tmp_path: Path, monkeypatch, capsys
+):
+    phase1 = _write_phase1(tmp_path / "p003.cha", "p003")
+    text = phase1.read_text(encoding="utf-8")
+    text = text.replace(
+        "@Participants:\tPAR Participant, INV Investigator",
+        "@Participants:\tPAR Participant, INV Investigator, MED Media",
+    ).replace("*PAR:", "*MED:")
+    phase1.write_text(text, encoding="utf-8")
+
+    monkeypatch.setattr("say_transcribe.cli.StanzaBackend", _FakeStanzaBackend)
+    out_file = tmp_path / "final" / "p003.cha"
+    ret = main(["tag", str(phase1), "--out", str(out_file)])
+
+    assert ret == 4
+    assert "[CHAT_VALIDATION_FAILED]" in capsys.readouterr().err
+    assert not out_file.exists()
+
+
+def test_cli_tag_reports_model_unavailable_instead_of_writing_untagged(
+    tmp_path: Path, monkeypatch, capsys
+):
+    phase1 = _write_phase1(tmp_path / "p005.cha", "p005")
+
+    class _FailingStanza:
+        def __init__(self, **kwargs) -> None:
+            pass
+
+        def parse_pretokenized(self, tokens):
+            raise RuntimeError("no Vietnamese Stanza resources")
+
+    monkeypatch.setattr("say_transcribe.cli.StanzaBackend", _FailingStanza)
+    out_file = tmp_path / "final" / "p005.cha"
+    ret = main(["tag", str(phase1), "--out", str(out_file)])
+
+    assert ret == 3
+    assert "[MODEL_UNAVAILABLE]" in capsys.readouterr().err
+    assert not out_file.exists()

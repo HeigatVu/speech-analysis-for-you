@@ -16,6 +16,13 @@ class UtteranceRecord:
     morphosyntax: UtteranceMorphosyntax | None
 
 
+# (speaker code, role) declared in every generated transcript's header.
+PARTICIPANTS: tuple[tuple[str, str], ...] = (
+    ("PAR", "Participant"),
+    ("INV", "Investigator"),
+)
+
+
 def format_chat_session(
     session_id: str,
     source_sha256: str,
@@ -28,9 +35,8 @@ def format_chat_session(
         "@UTF8",
         "@Begin",
         "@Languages:\tvie",
-        "@Participants:\tPAR Participant, INV Investigator",
-        "@ID:\tvie|corpus|PAR|||||Participant|||",
-        "@ID:\tvie|corpus|INV|||||Investigator|||",
+        "@Participants:\t" + ", ".join(f"{code} {role}" for code, role in PARTICIPANTS),
+        *(f"@ID:\tvie|corpus|{code}|||||{role}|||" for code, role in PARTICIPANTS),
         f"@Media:\t{session_id}, audio",
         f"@Comment:\tsource_sha256 {source_sha256}",
         (

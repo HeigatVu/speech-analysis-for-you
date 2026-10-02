@@ -62,7 +62,7 @@ flowchart TD
 | [`morphosyntax.py`](file:///home/ducvu/Heigat-home/project/speech-analysis-for-you/src/say_transcribe/morphosyntax.py) | Stanza UD-VTB projection into `%mor` and `%gra` format strings | `project_morphosyntax()`, `StanzaBackend`, `UtteranceMorphosyntax` |
 | [`chat_writer.py`](file:///home/ducvu/Heigat-home/project/speech-analysis-for-you/src/say_transcribe/chat_writer.py) | Serialization of Chatter-valid Delaware-style CHAT format | `format_chat_session()`, `write_chat_file()` |
 | [`evaluate.py`](file:///home/ducvu/Heigat-home/project/speech-analysis-for-you/src/say_transcribe/evaluate.py) | Evaluation metrics: CER, WER, SyER, and DER with bootstrap resampling | `run_evaluation()`, `evaluate_pair()`, `levenshtein()` |
-| [`cli.py`](file:///home/ducvu/Heigat-home/project/speech-analysis-for-you/src/say_transcribe/cli.py) | Command-line interface with stable error codes | `main()`, `cmd_run()`, `cmd_compare()`, `cmd_evaluate()` |
+| [`cli.py`](file:///home/ducvu/Heigat-home/project/speech-analysis-for-you/src/say_transcribe/cli.py) | Command-line interface with stable error codes | `main()`, `cmd_run()`, `cmd_compare()`, `cmd_tag()`, `cmd_evaluate()` |
 
 ---
 
@@ -82,3 +82,22 @@ say-transcribe compare session_001.wav --channel 0 --out comparison/ \
 # 4. Evaluate generated transcripts against gold annotations
 say-transcribe evaluate gold_transcripts/ predicted_transcripts/ --out eval_report.json
 ```
+
+### Two-phase transcription
+
+`%mor`/`%gra` describe the *reviewed* text, so they can be deferred until after
+hand-correction: transcribe without them, review the main tiers, then tag.
+
+```bash
+# Phase 1: main tiers + %wor only (Stanza never loads)
+say-transcribe run session_001.wav --channel 0 --out draft/ --no-morphosyntax
+
+# ... hand-correct speakers and text in draft/session_001.cha ...
+
+# Phase 2: add %mor/%gra to the corrected transcript (writes a new file)
+say-transcribe tag draft/session_001.cha --out final/session_001.cha
+```
+
+`compare` accepts `--no-morphosyntax` too, and `tag` refuses to overwrite an
+existing file. `%wor` word timings carried by the draft survive into the tagged
+transcript.

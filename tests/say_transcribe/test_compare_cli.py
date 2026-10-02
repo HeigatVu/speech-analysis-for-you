@@ -247,3 +247,74 @@ def test_compare_refuses_to_overwrite_when_later_variant_exists(tmp_path, monkey
     assert "[OUTPUT_EXISTS]" in captured.err
     # Baseline must NOT have been written
     assert not (output_dir / "baseline" / "p001.cha").exists()
+
+
+def test_compare_no_morphosyntax_writes_phase1_variants(tmp_path, monkeypatch):
+    """--no-morphosyntax defers %mor/%gra for every compare variant, without Stanza."""
+    from say_transcribe.asr import AsrSegment, WordTiming
+    from say_transcribe.word_grouping import GroupedWord
+
+    audio_path = tmp_path / "p004_master.wav"
+    audio_path.write_bytes(b"synthetic master")
+    expected_hash = "a" * 64
+    output_dir = tmp_path / "comparison"
+    segment = AsrSegment(
+        start_ms=0,
+        end_ms=300,
+        text="tôi .",
+        words=(WordTiming(word="tôi", start_ms=0, end_ms=300), WordTiming(word=".", start_ms=None, end_ms=None)),
+    )
+    result = AsrResult(expected_hash, (segment,), ())
+
+    monkeypatch.setattr(cli, "compute_sha256", lambda _: expected_hash)
+    monkeypatch.setattr(cli, "make_asr_backend", lambda *args, **kwargs: object())
+    monkeypatch.setattr(cli, "transcribe", lambda **kwargs: result)
+    monkeypatch.setattr(
+        cli, "read_wav", lambda _: SimpleNamespace(sample_rate=16_000, sample_width=2)
+    )
+    monkeypatch.setattr(cli, "extract_channel", lambda audio, channel: np.zeros(10))
+    monkeypatch.setattr(
+        cli, "resample_to_16kHz", lambda *args: np.zeros(16_000, dtype=np.float32)
+    )
+    monkeypatch.setattr(cli, "get_speech_windows", lambda audio, *, threshold: [(0, 16_000)])
+    monkeypatch.setattr(cli, "transcribe_windows", lambda *args: object())
+    monkeypatch.setattr(cli, "result_from_windows", lambda *args, **kwargs: result)
+    monkeypatch.setattr(
+        cli, "PyannoteBackend", lambda **kwargs: type("D", (), {"diarize": lambda self, _: ()})()
+    )
+    monkeypatch.setattr(
+        cli,
+        "group_utterance_words",
+        lambda seg: (GroupedWord("tôi", 0, 300, ()), GroupedWord(".", None, None, ())),
+    )
+
+    def forbid_stanza(*args, **kwargs):
+        raise AssertionError("phase 1 must not load Stanza")
+
+    monkeypatch.setattr(cli, "StanzaBackend", forbid_stanza)
+    monkeypatch.setattr(
+        cli,
+        "project_morphosyntax",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("deferred tier projected")),
+    )
+
+    code = cli.main(
+        [
+            "compare",
+            str(audio_path),
+            "--channel",
+            "0",
+            "--out",
+            str(output_dir),
+            "--expected-sha256",
+            expected_hash,
+            "--no-morphosyntax",
+        ]
+    )
+
+    assert code == 0
+    for variant in ("baseline", "vad_asr", "vad_asr_aligned"):
+        text = (output_dir / variant / "p004.cha").read_text(encoding="utf-8")
+        assert "%wor:" in text
+        assert "%mor" not in text
+        assert "%gra" not in text
