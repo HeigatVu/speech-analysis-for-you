@@ -411,17 +411,17 @@ REAL_FILE_FIXTURE = (
     "@Window:\t0_0_0_0_8540_1_9273_0_9273_0\r\n"
     "@Begin\r\n"
     "@Languages:\tvie\r\n"
-    "@Participants:\tPAR Nguyễn Thị An, INV Nguyễn Văn Hùng\r\n"
-    "@ID:\tvie|PAR|Nguyễn Thị An|participant|||||\r\n"
-    "@ID:\tvie|INV|Nguyễn Văn Hùng|examiner|||||\r\n"
+    "@Participants:\tPAR Nguyễn Văn A, INV Trần Thị B\r\n"
+    "@ID:\tvie|PAR|Nguyễn Văn A|participant|||||\r\n"
+    "@ID:\tvie|INV|Trần Thị B|examiner|||||\r\n"
     "@Media:\tp001_master.wav | audio\r\n"
     "@Comment:\tThis comment wraps across\r\n"
     "\ttwo indented continuation lines\r\n"
-    "*INV:\tXin chào bạn .\x1569334_71625\x15\r\n"
+    "*INV:\tMột hai ba bốn .\x151234_3500\x15\r\n"
     "*PAR:\tMột câu dài bị ngắt xuống dòng theo\r\n"
     "\tchuẩn CHAT và mang dấu thời gian\r\n"
-    "\tở dòng cuối cùng\x1574178_77522\x15\r\n"
-    "*:\tbắt đầu .\x15892813_894689\x15\r\n"
+    "\tở dòng cuối cùng\x1547178_50522\x15\r\n"
+    "*:\tthử nghiệm .\x15852813_854689\x15\r\n"
     "@End\r\n"
 )
 
@@ -439,7 +439,7 @@ class TestRealFileShapes:
     def test_wrapped_utterance_unwraps_with_bullet_on_last_line(self, tmp_path):
         doc = self._load(tmp_path)
         wrapped = doc.utterances[1]
-        assert (wrapped.start_s, wrapped.end_s) == (74.178, 77.522)
+        assert (wrapped.start_s, wrapped.end_s) == (47.178, 50.522)
         texts = [t.text for t in wrapped.tokens]
         assert texts[:8] == ["Một", "câu", "dài", "bị", "ngắt", "xuống", "dòng", "theo"]
         assert texts[-3:] == ["dòng", "cuối", "cùng"]
@@ -448,8 +448,8 @@ class TestRealFileShapes:
         doc = self._load(tmp_path)
         tail = doc.utterances[2]
         assert tail.speaker_id == ""
-        assert (tail.start_s, tail.end_s) == (892.813, 894.689)
-        assert [t.text for t in tail.tokens] == ["bắt", "đầu", "."]
+        assert (tail.start_s, tail.end_s) == (852.813, 854.689)
+        assert [t.text for t in tail.tokens] == ["thử", "nghiệm", "."]
         assert ChatTierWarning(tier="*", line="unlabeled speaker tier") in doc.warnings
 
     def test_wrapped_header_continuation_joins_with_space(self, tmp_path):
