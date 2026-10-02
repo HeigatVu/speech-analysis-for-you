@@ -2,7 +2,7 @@
 
 The **`standardized_acoustic`** pack provides **88 registered features** implementing the Geneva Minimalistic Acoustic Parameter Set version 02 (**eGeMAPSv02**) functional feature set via openSMILE.
 
-All features are registered in [`definitions.py`](file:///home/ducvu/Heigat-home/project/speech-analysis-for-you/src/speech_features/features/standardized/definitions.py) under pack name `"standardized_acoustic"`.
+All features are registered in [`definitions.py`](definitions.py) under pack name `"standardized_acoustic"`.
 
 ---
 
@@ -10,8 +10,9 @@ All features are registered in [`definitions.py`](file:///home/ducvu/Heigat-home
 
 | Module | Features | Description | Key Indicators |
 |---|---|---|---|
-| [`definitions.py`](file:///home/ducvu/Heigat-home/project/speech-analysis-for-you/src/speech_features/features/standardized/definitions.py) | — | Frozen eGeMAPSv02 feature names and catalog metadata | Registration for all 88 eGeMAPSv02 functionals |
-| [`opensmile_adapter.py`](file:///home/ducvu/Heigat-home/project/speech-analysis-for-you/src/speech_features/features/standardized/opensmile_adapter.py) | 88 | Lazy openSMILE wrapper extracting eGeMAPSv02 functionals over target speech segments | Pitch dynamics, energy functionals, spectral balance, and MFCCs 1–4 |
+| [`__init__.py`](__init__.py) | — | Registers the eGeMAPS keys on import and re-exports the adapter surface | `extract_egemaps_features()`, `EGEMAPS_KEYS`, `RAW_EGEMAPS_COLUMNS` |
+| [`definitions.py`](definitions.py) | — | Frozen eGeMAPSv02 feature names and catalog metadata | Registration for all 88 eGeMAPSv02 functionals |
+| [`opensmile_adapter.py`](opensmile_adapter.py) | 88 | Lazy openSMILE wrapper extracting eGeMAPSv02 functionals over target speech segments | Pitch dynamics, energy functionals, spectral balance, and MFCCs 1–4 |
 
 ---
 

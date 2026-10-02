@@ -3,7 +3,7 @@
 SAY is a **research/descriptive, Python-first library** for speech and sound
 analysis of **reviewed Vietnamese speech data**. It pairs two complementary, baseline-aligned pipelines:
 
-1. **Automated Clinical Transcription (`say_transcribe`):** Transforms master clinical audio into TalkBank Batchalign and DementiaBank Delaware-compliant CHAT (`.cha`) transcripts featuring utterance bullets, word timing (`%wor`), morphological tagging (`%mor`), and grammatical dependency relations (`%gra`).
+1. **Automated Clinical Transcription (`say_transcribe`):** Transforms master clinical audio into TalkBank Batchalign and DementiaBank Delaware-compliant CHAT (`.cha`) transcripts featuring utterance bullets, word timing (`%wor`), morphological tagging (`%mor`), and grammatical dependency relations (`%gra`). The ASR model (`--asr-model`) and the diarizer (`--diarizer`) are **explicit selections, never silent fallbacks**, and a `benchmark` subcommand scores either one against reference transcripts.
 2. **Label-Free Speech Feature Extraction (`speech_features`):** Version 0.2.0 ships a versioned speech document model (JSON v2), a CLAN-compatible CHAT subset (it is **not** a CLAN clone and does not claim full CHAT compatibility), a label-free extraction pipeline, four built-in feature packs (`acoustic`, `adult_neuro`, `motor_neuro`, `standardized_acoustic`) with a generated 485-feature catalog, and the `say-features` command-line interface.
 
 > **Research-only.** SAY is for cohort characterisation and hypothesis
@@ -27,8 +27,8 @@ flowchart TD
         SHA --> CH["Declared Channel Extraction\n(No Downmixing)"]
         CH --> MEM["In-Memory 16 kHz Mono View"]
         
-        MEM --> ASR["PhoWhisper-Medium ASR\n(20s Windows + Repetition Guard)"]
-        MEM --> DIAR["Pyannote Diarization 3.1\n(Fallback: WavLM Clustering)"]
+        MEM --> ASR["ASR Backend (--asr-model)\nPhoWhisper / Qwen3-ASR, 20s Windows"]
+        MEM --> DIAR["Diarizer (--diarizer, Explicit)\nPyannote 3.1 or WavLM Clustering"]
         
         ASR --> WORD_TS["Word Tokens & Timestamps"]
         WORD_TS --> GROUP["Underthesea Vietnamese Word Grouping\n(NFC, Tones, d/đ, _-joined)"]
@@ -65,9 +65,11 @@ The `say_transcribe` module automates the generation of Delaware-compliant CHAT 
 
 | Pipeline Stage | Model / Toolkit | Authority / Repository | Function & Design Decisions |
 |---|---|---|---|
-| **ASR & Word Timings** | **PhoWhisper-medium** | [`vinai/phowhisper-medium`](https://huggingface.co/vinai/phowhisper-medium) | 20s-windowed ASR bounded to 400 tokens per chunk. Implements Whisper temperature fallback and a repetition heuristic detector that maps degenerate acoustic loops to `xxx` rather than hallucinated text. Emits word timestamps. |
-| **Speaker Diarization** | **Pyannote Audio 3.1** | [`pyannote/speaker-diarization-3.1`](https://huggingface.co/pyannote/speaker-diarization-3.1) | Identifies multi-speaker turns; assigns the speaker cluster with the dominant talk-time to `*PAR` (Participant) and the other to `*INV` (Investigator). |
-| **Diarization Fallback** | **WavLM Embedding Clustering** | [`microsoft/wavlm-base-plus-sv`](https://huggingface.co/microsoft/wavlm-base-plus-sv) | Ungated fallback using segment-clipped WavLM embeddings when Pyannote Hugging Face credentials or segmentation permissions are unavailable. |
+| **ASR & Word Timings** (default) | **PhoWhisper-medium** | [`vinai/phowhisper-medium`](https://huggingface.co/vinai/phowhisper-medium) | 20s-windowed ASR bounded to 400 tokens per chunk. Implements Whisper temperature fallback and a repetition heuristic detector that maps degenerate acoustic loops to `xxx` rather than hallucinated text. Emits word timestamps. |
+| **ASR (alternative)** | **PhoWhisper-large** | [`vinai/phowhisper-large`](https://huggingface.co/vinai/phowhisper-large) | Larger PhoWhisper checkpoint; the pinned ASR arm in **both** benchmark tasks so model comparisons hold the rest of the pipeline constant. |
+| **ASR (alternative)** | **Qwen3-ASR** | [`Qwen/Qwen3-ASR-1.7B-hf`](https://huggingface.co/Qwen/Qwen3-ASR-1.7B-hf) | Transformers-native multimodal checkpoint selected with `--asr-model qwen3-asr`. Qwen3-ASR has **no Vietnamese forced aligner**, so its segments carry text with *null* word timings — scoring is text-based and unaffected, but `%wor` timing is absent. |
+| **Speaker Diarization** (default) | **Pyannote Audio 3.1** | [`pyannote/speaker-diarization-3.1`](https://huggingface.co/pyannote/speaker-diarization-3.1) | Identifies multi-speaker turns; assigns the speaker cluster with the dominant talk-time to `*PAR` (Participant) and the other to `*INV` (Investigator). Requires a Hugging Face token with accepted model conditions. |
+| **Diarization (alternative)** | **WavLM Embedding Clustering** | [`microsoft/wavlm-base-plus-sv`](https://huggingface.co/microsoft/wavlm-base-plus-sv) | Gated-free segment-clipped WavLM embedding clustering, selected explicitly with `--diarizer wavlm`. |
 | **Vietnamese Word Grouping** | **Underthesea** | `underthesea>=6.8.0` | Vietnamese compound word tokenization (`_`-joined words, e.g., `bệnh_nhân`). Strict preservation of NFC normalization, tone marks, and $d/đ$. Never groups across utterance boundaries. |
 | **Morphosyntax & Dependencies** | **Stanza Vietnamese** | `stanza` (`UD-VTB` treebank) | Pretokenized UPOS tagging, lemma extraction (`%mor`), and dependency parsing (`%gra`) with Multi-Word Token (MWT) expansion disabled to preserve Vietnamese compound words. |
 | **Speech Activity Detection** | **Silero VAD** | `silero-vad[onnx-cpu]==6.2.3` | ONNX CPU runtime speech detection used in `say-transcribe compare` to create speech-bounded ASR windows ($\le 20$s). |
@@ -78,14 +80,17 @@ The `say_transcribe` module automates the generation of Delaware-compliant CHAT 
 1. **Master Audio Verification:** Computes the master WAV's SHA-256 checksum to ensure provenance tracking.
 2. **Channel Selection (Anti-Downmixing):** Extracts the declared channel (`--channel N`) directly. Audio is **never** mean-downmixed ($[L+R]/2$) because silent channels would attenuate speech signals.
 3. **In-Memory Resampling:** Maps PCM to an in-memory 16 kHz `float32` mono array without writing resampled audio to disk.
-4. **PhoWhisper ASR Inference:** Transcribes non-overlapping 20-second audio windows. Splits utterances on terminal punctuation or silence pauses $> 700$ ms.
-5. **Diarization & Role Mapping:** Clusters speaker turns. Allocates primary cluster to `*PAR` and secondary to `*INV`. If diarization is unavailable, labels default to `*PAR` with an explicit CHAT header warning.
+4. **ASR Inference (`--asr-model`):** Transcribes non-overlapping 20-second audio windows with the selected backend. Splits utterances on terminal punctuation or silence pauses $> 700$ ms.
+5. **Diarization & Role Mapping (`--diarizer`):** Clusters speaker turns with the selected backend. Allocates the dominant talk-time cluster to `*PAR` and the other to `*INV`. The backend is explicit — **a diarization failure is an error, not a silent fallback**; if pyannote cannot run (`PYANNOTE_TOKEN_MISSING`), the CLI exits `3` and tells you to either provide a token or select `--diarizer wavlm`.
 6. **Compound Word Grouping:** Underthesea joins Vietnamese syllables into `_`-compounds. Aggregates word start/end timestamps from the first syllable's start to the last syllable's end. Punctuation carries no timestamp.
 7. **Universal Dependencies Projection:** Stanza UD-VTB maps words to `%mor` (`pos|lemma[-Feat]`, commas as `cm|cm`) and `%gra` (`index|head|REL`, root as `i|0|ROOT`, final punct attached to root).
 8. **CHAT Serialization:** Emits standard headers (`@UTF8`, `@Languages: vie`, `@Participants`, `@ID`, `@Media`, `@Comment`), main tier lines with bullets (`•start_ms_end_ms•`), `%wor`, `%mor`, and `%gra`.
-9. **Comparison & Evaluation:**
+   - **Two-phase mode:** `%mor`/`%gra` describe the *reviewed* text, so `--no-morphosyntax` writes main tiers and `%wor` only (Stanza never loads); after hand-correction, `say-transcribe tag` adds `%mor`/`%gra` to a **new** file. It never overwrites, and `%wor` timings survive the round trip.
+9. **Comparison, Benchmarking & Evaluation:**
    - `say-transcribe compare`: Generates baseline, VAD-guided, and CTC-aligned transcripts side-by-side for methodological comparison.
    - `say-transcribe evaluate`: Computes Character Error Rate (CER), Word Error Rate (WER), Syllable Error Rate (SyER), and Diarization Error Rate (DER) with seeded bootstrap confidence intervals.
+   - `say-transcribe benchmark --task {asr,diarization}`: Scores ASR models (`phowhisper-large`, `qwen3-asr`) or diarizers (`pyannote`, `wavlm`) against reference transcripts over a study manifest, writing `benchmark-<task>.json` and `benchmark-<task>.md`. Both diarizers run over one fixed `phowhisper-large` front-end so the numbers isolate the diarization variable. Every row checks the source SHA-256 first, unmapped diarization clusters score as `UNKNOWN` rather than being attributed to `PAR`, and each failure is a stable error code.
+   - `say-transcribe preprocess-study`: Runs the opt-in preprocessing A/B study over a private manifest (arms N0 baseline, N1 `vad_asr`, P0 profile, PF/PD denoise) without re-implementing any ASR, VAD, or DSP stage.
 
 ---
 
@@ -121,6 +126,21 @@ For detailed module layouts, formulas, and feature definitions, consult the maps
 
 ---
 
+## Source layout
+
+Each package and subpackage carries its own description:
+
+- [`src/say_transcribe/`](src/say_transcribe/README.md) — the automated transcription pipeline (CLI, ASR/diarization backend selection, benchmarks, two-phase tagging).
+  - [`src/say_transcribe/workers/`](src/say_transcribe/workers/README.md) — isolated-environment denoise worker scripts and their PCM contract.
+- [`src/speech_features/`](src/speech_features/README.md) — the label-free feature extraction library (document model, catalog, extraction pipeline, CLI).
+  - [`src/speech_features/features/`](src/speech_features/features/README.md) — [acoustic](src/speech_features/features/acoustic/README.md), [linguistic](src/speech_features/features/linguistic/README.md), [motor](src/speech_features/features/motor/README.md), [standardized](src/speech_features/features/standardized/README.md) packs.
+  - [`src/speech_features/formats/`](src/speech_features/formats/README.md) — the JSON v1/v2 and CHAT-subset codecs.
+  - [`src/speech_features/legacy/`](src/speech_features/legacy/README.md) — the supported 0.2.x legacy AD namespace (removed in 0.3.0).
+
+(`src/features` is a symlink to `src/speech_features/features`.)
+
+---
+
 ## Documentation
 
 - [Documentation index](docs/README.md) — current phase, active pipeline records,
@@ -139,6 +159,12 @@ For detailed module layouts, formulas, and feature definitions, consult the maps
   Vietnamese validation limits.
 - [Migrating to 0.2](docs/2026-08-06/say-vietnamese-speech-library/1/migration-0.2.md) — 0.1-to-0.2 API changes, legacy
   AD imports, the deprecation window, and notebook retirement.
+- [Qwen3-ASR & benchmark run](docs/2026-10-01/add-qwen3-asr-github/1/SPEC-2026-10-01.md) — the
+  [research](docs/2026-10-01/add-qwen3-asr-github/1/RESEARCH-2026-10-01.md),
+  [specification](docs/2026-10-01/add-qwen3-asr-github/1/SPEC-2026-10-01.md),
+  [plan](docs/2026-10-01/add-qwen3-asr-github/1/PLAN-2026-10-01.md), and
+  [tasks](docs/2026-10-01/add-qwen3-asr-github/1/TASKS-2026-10-01.md) behind the Qwen3-ASR
+  backend, the explicit `--diarizer` policy, two-phase tagging, and the benchmark subcommand.
 
 ---
 
@@ -271,13 +297,27 @@ say-transcribe diagnose
 # 2. Transcribe master WAV on declared channel
 say-transcribe run recording.wav --channel 0 --out output/ --device cuda
 
-# 3. Compare baseline vs VAD-guided vs CTC-aligned variants
+# 3. Choose the ASR model and diarizer explicitly (defaults: phowhisper-medium, pyannote)
+say-transcribe run recording.wav --channel 0 --out output/ --asr-model qwen3-asr
+say-transcribe run recording.wav --channel 0 --out output/ --diarizer wavlm
+
+# 4. Phase 1 without morphosyntax (Stanza never loads), then tag the reviewed draft
+say-transcribe run recording.wav --channel 0 --out draft/ --no-morphosyntax
+say-transcribe tag draft/recording.cha --out final/recording.cha
+
+# 5. Compare baseline vs VAD-guided vs CTC-aligned variants
 say-transcribe compare recording.wav --channel 0 --out comparison/ \
   --expected-sha256 <64-hex-digest> --device cuda
 
-# 4. Evaluate generated transcripts against gold annotations
+# 6. Evaluate generated transcripts against gold annotations
 say-transcribe evaluate gold_transcripts/ pred_transcripts/ --out eval_report.json
+
+# 7. Benchmark ASR models or diarization backends over a study manifest
+say-transcribe benchmark --task asr --manifest manifest.json --out reports/
 ```
+
+`say-transcribe` exit codes: `0` success, `2` usage error, `3` environment/model
+unavailable (for example `PYANNOTE_TOKEN_MISSING`), `4` pipeline failure.
 
 ---
 
@@ -333,6 +373,16 @@ uv run pytest tests/say_transcribe
 uv run ruff check src tests
 uv run ruff format --check src/speech_features tests/speech_features
 ```
+
+`vibe-checks.yaml` declares the same checks as a plan: an offline `unit` run
+(`HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 pytest tests`), an offline `e2e` run
+over the CLI and CHAT serialization tests, and the `lint` run. The pull-request
+gates `pr_open`, `ci`, `reviews`, and `main_ci` are read from the GitHub REST
+API by [`tools/ci_api_check.py`](tools/ci_api_check.py) — not from logs — and
+report facts as exit codes (`0` established, `1` not established, `2` stable
+error code).
+
+Tests run **offline**: no model downloads, no GPU, and no network.
 
 ---
 

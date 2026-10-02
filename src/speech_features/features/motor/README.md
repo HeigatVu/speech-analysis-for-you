@@ -2,7 +2,7 @@
 
 The **`motor_neuro`** pack provides **47 registered features** specifically designed for motor speech evaluation, dysarthria profiling, and motor-neuron diseases (Amyotrophic Lateral Sclerosis / ALS, Parkinson's Disease / PD, Cerebellar Ataxia, Huntington's Disease / HD).
 
-All features are registered in [`definitions.py`](file:///home/ducvu/Heigat-home/project/speech-analysis-for-you/src/speech_features/features/motor/definitions.py) under pack name `"motor_neuro"`.
+All features are registered in [`definitions.py`](definitions.py) under pack name `"motor_neuro"`.
 
 ---
 
@@ -10,8 +10,9 @@ All features are registered in [`definitions.py`](file:///home/ducvu/Heigat-home
 
 | Module | Features | Description | Key Indicators |
 |---|---|---|---|
-| [`definitions.py`](file:///home/ducvu/Heigat-home/project/speech-analysis-for-you/src/speech_features/features/motor/definitions.py) | — | Registration schema, units, levels, prerequisites, and formula versions | Metadata definitions for all 47 features |
-| [`intervals.py`](file:///home/ducvu/Heigat-home/project/speech-analysis-for-you/src/speech_features/features/motor/intervals.py) | 47 | Fine-grained acoustic interval measurements across articulation, rhythm, DDK, and respiration | VSA, VAI, FCR, DDK regularity, breath group intervals |
+| [`__init__.py`](__init__.py) | — | Pack entry point; annotation-driven extraction over a `SpeechDocument` | `extract_motor_features()`, `ALL_KEYS` |
+| [`definitions.py`](definitions.py) | — | Registration schema, units, levels, prerequisites, and formula versions | Metadata definitions for all 47 features |
+| [`intervals.py`](intervals.py) | 47 | Fine-grained acoustic interval measurements across articulation, rhythm, DDK, and respiration | VSA, VAI, FCR, DDK regularity, breath group intervals |
 
 ---
 
