@@ -128,11 +128,11 @@ class StanzaBackend:
 
 def mor_members(words: Sequence[GroupedWord]) -> tuple[GroupedWord, ...]:
     """Words `%mor` and `%gra` align to: not retraced, filler, `xxx`, pause or annotation."""
+    projection = mor_projection([w.word for w in words])
     return tuple(
         replace(words[index], word=surface,
-                start_ms=words[index].start_ms if surface == words[index].word else None,
-                end_ms=words[index].end_ms if surface == words[index].word else None)
-        for index, surface in mor_projection([w.word for w in words])
+                start_ms=None, end_ms=None)
+        for index, surface in projection
     )
 
 

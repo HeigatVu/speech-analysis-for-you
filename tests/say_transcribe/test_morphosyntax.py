@@ -288,3 +288,14 @@ def test_mor_projection_multiple_replacement_words():
     from say_transcribe.morphosyntax import mor_members
     words = [GroupedWord(t, None, None, ()) for t in ["tôi", "[:", "chúng", "tôi]", "đi", "."]]
     assert [w.word for w in mor_members(words)] == ["chúng", "tôi", "đi", "."]
+
+
+def test_corrected_words_do_not_inherit_original_physical_timing():
+    from say_transcribe.morphosyntax import mor_members
+    original = GroupedWord("tôi", 100, 500, ())
+    words = [original, *[GroupedWord(t, None, None, ()) for t in ["[:", "chúng", "tôi]", "."]]]
+    corrected = mor_members(words)
+    assert [word.word for word in corrected] == ["chúng", "tôi", "."]
+    assert all(word.start_ms is None and word.end_ms is None for word in corrected)
+    assert words[0] == original
+    assert (original.start_ms, original.end_ms) == (100, 500)

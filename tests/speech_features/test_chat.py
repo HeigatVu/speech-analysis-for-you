@@ -494,6 +494,19 @@ def test_mismatched_wor_count_preserves_raw_without_alignment():
     assert "%wor:\ttôi \x150_500\x15 ." in encode_chat(doc)
 
 
+@pytest.mark.parametrize("second", ["400_800", "100_300"])
+def test_invalid_second_wor_span_quarantines_entire_tier(second):
+    wor = f"tôi \x150_500\x15 đi \x15{second}\x15 ."
+    text = f"@Begin\n@Languages:\tvie\n@Participants:\tPAR Participant\n@Media:\ttest, audio\n*PAR:\ttôi đi . \x150_1000\x15\n%wor:\t{wor}\n@End\n"
+    doc = decode_chat(text)
+    assert all(token.start_s is None and token.end_s is None for token in doc.utterances[0].tokens)
+    assert not any(layer.layer == "wor" for layer in doc.annotations)
+    warning = next(w for w in doc.warnings if w.code == "UNTRUSTED_CHAT_WOR")
+    assert warning.line == ""
+    assert doc.raw_tiers["__wor_u0001"] == f"%wor:\t{wor}"
+    assert f"%wor:\t{wor}" in encode_chat(doc)
+
+
 @pytest.mark.parametrize(
     ("items", "roles"),
     [
