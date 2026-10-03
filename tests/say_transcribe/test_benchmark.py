@@ -25,6 +25,29 @@ CHA_TWO_TURN = """@UTF8
 """
 
 
+def test_the_default_factory_asks_for_segment_timestamps(monkeypatch):
+    """A text-only benchmark must not pay 4.4GB for word timings.
+
+    Word and segment timestamps decode identical text (measured 2026-10-03);
+    word mode only adds the cross-attention alignment that costs the extra VRAM,
+    and nothing the benchmark scores reads it.
+    """
+    from say_transcribe import benchmark as benchmark_module
+
+    seen: dict[str, object] = {}
+
+    def fake_make_asr_backend(model, device="cpu", revision=None, **kwargs):
+        seen.update(model=model, device=device, **kwargs)
+        return object()
+
+    monkeypatch.setattr(benchmark_module, "make_asr_backend", fake_make_asr_backend)
+
+    benchmark_module._default_asr_factory("phowhisper-large", "cuda")
+
+    assert seen["device"] == "cuda"
+    assert seen["timestamps"] == "segment"
+
+
 def _make_wav(path, seconds=0.5, rate=16000):
     n = int(rate * seconds)
     with wave.open(str(path), "wb") as handle:

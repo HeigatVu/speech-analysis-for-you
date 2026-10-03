@@ -267,6 +267,9 @@ def _normalize_segment(
     }
 
 
+_TIMESTAMP_MODES = ("word", "segment")
+
+
 class PhoWhisperBackend:
     """Lazy-loaded PhoWhisper backend using HuggingFace transformers."""
 
@@ -275,11 +278,19 @@ class PhoWhisperBackend:
         model_id: str = "vinai/phowhisper-medium",
         device: str = "cpu",
         revision: str | None = None,
+        timestamps: str = "word",
     ) -> None:
+        if timestamps not in _TIMESTAMP_MODES:
+            raise ValueError(f"timestamps must be one of {_TIMESTAMP_MODES}")
         self.model_id = model_id
         self.device = device
         # SPEC: the study pins the checkpoint by revision SHA, not by name alone.
         self.revision = revision
+        # ponytail: word timestamps align via cross-attention and cost ~4.4GB more per
+        # window than segment ones (9.06GB vs 4.63GB peak, measured 2026-10-03) while
+        # decoding byte-identical text, so text-only callers ask for "segment". The
+        # default stays "word" because the chat pipeline prints %wor tiers.
+        self.timestamps = timestamps
         self._pipe: Any = None
 
     def load(self) -> None:
@@ -296,18 +307,20 @@ class PhoWhisperBackend:
             from transformers import pipeline
 
             device_arg = 0 if self.device == "cuda" else -1
+            # ponytail: ask for fp16 at load time on CUDA. Loading fp32 and calling
+            # model.half() afterwards copies the 6.2GB fp32 checkpoint onto the card
+            # first and leaves the allocator holding ~6.6GB before any token is
+            # generated; phowhisper-large then needs ~9.1GB for a word-timestamp
+            # window (word timestamps cost ~4.4GB more than segment ones) and OOMs a
+            # 12GB card that the fp16 load fits (3.1GB held) -- measured 2026-10-03.
             self._pipe = pipeline(
                 "automatic-speech-recognition",
                 model=self.model_id,
                 device=device_arg,
-                return_timestamps="word",
+                return_timestamps="word" if self.timestamps == "word" else True,
                 revision=self.revision,
+                **({"dtype": torch.float16} if self.device == "cuda" else {}),
             )
-            if self.device == "cuda":
-                # ponytail: fp16 halves the word-timestamp attention cache (measured
-                # 10.9GB -> 1.45GB per 30s window); model.half() is unambiguous, unlike
-                # the deprecated torch_dtype kwarg which silently stayed fp32
-                self._pipe.model.half()
         except AsrError:
             raise
         except Exception:
@@ -565,18 +578,28 @@ AsrBackend = PhoWhisperBackend | Qwen3AsrBackend
 
 
 def make_asr_backend(
-    model: str, device: str = "cpu", revision: str | None = None
+    model: str,
+    device: str = "cpu",
+    revision: str | None = None,
+    *,
+    timestamps: str = "word",
 ) -> AsrBackend:
     """Map a CLI model name to its ASR backend."""
     if model == "qwen3-asr":
         return Qwen3AsrBackend(device=device, revision=revision)
     if model == "phowhisper-medium":
         return PhoWhisperBackend(
-            model_id="vinai/phowhisper-medium", device=device, revision=revision
+            model_id="vinai/phowhisper-medium",
+            device=device,
+            revision=revision,
+            timestamps=timestamps,
         )
     if model == "phowhisper-large":
         return PhoWhisperBackend(
-            model_id="vinai/phowhisper-large", device=device, revision=revision
+            model_id="vinai/phowhisper-large",
+            device=device,
+            revision=revision,
+            timestamps=timestamps,
         )
     raise AsrError("MODEL_UNKNOWN", f"Unknown ASR model: {model}")
 

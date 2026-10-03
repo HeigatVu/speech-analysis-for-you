@@ -43,7 +43,10 @@ BenchmarkBackendFactory = Callable[[str, str], Any]
 
 
 def _default_asr_factory(model: str, device: str) -> Any:
-    return make_asr_backend(model, device=device)
+    # The benchmark scores text only: word timestamps decode identical text but cost
+    # ~4.4GB more VRAM per window (measured 2026-10-03), which a 12GB card cannot hold
+    # for phowhisper-large. Ask for segment timestamps.
+    return make_asr_backend(model, device=device, timestamps="segment")
 
 
 def _release_device_memory(device: str) -> None:

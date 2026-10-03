@@ -163,6 +163,76 @@ def test_gpu_unavailable_raises_distinct_code():
     assert "cuda" in exc_info.value.message.lower()
 
 
+def _capture_cuda_load(monkeypatch, **backend_kwargs):
+    """Load a PhoWhisperBackend on a faked CUDA device; report what it asked for."""
+    import sys
+    import types
+
+    import torch
+
+    captured: dict[str, object] = {}
+
+    class _HalfSpy:
+        halved = False
+
+        def half(self):
+            _HalfSpy.halved = True
+            return self
+
+    class _FakePipe:
+        model = _HalfSpy()
+
+    def fake_pipeline(task, **kwargs):
+        captured.update(kwargs)
+        return _FakePipe()
+
+    fake_transformers = types.ModuleType("transformers")
+    fake_transformers.pipeline = fake_pipeline
+
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    # transformers is a lazy module whose `from transformers import pipeline` binding
+    # survives monkeypatch.setattr, so swap the module itself, as the cuda test above does.
+    monkeypatch.setitem(sys.modules, "transformers", fake_transformers)
+
+    PhoWhisperBackend(model_id="fake", device="cuda", **backend_kwargs).load()
+    return captured, _HalfSpy
+
+
+def test_cuda_loads_the_checkpoint_in_fp16_instead_of_halving_afterwards(monkeypatch):
+    """Half the weights at load time, not after the fp32 copy already owns the card.
+
+    Loading fp32 and calling model.half() afterwards puts the full-precision
+    checkpoint on the GPU first and leaves the caching allocator holding ~6.6GB
+    before a single token is generated; a word-timestamp window for
+    phowhisper-large then needs ~9.1GB and OOMs a 12GB card.
+    """
+    import torch
+
+    captured, half_spy = _capture_cuda_load(monkeypatch)
+
+    assert captured["dtype"] is torch.float16
+    assert half_spy.halved is False
+    assert captured["return_timestamps"] == "word"
+
+
+def test_segment_timestamps_are_selectable_without_changing_the_text(monkeypatch):
+    """Text-only callers must not pay 4.4GB for timings they never read.
+
+    Word timestamps cost ~4.4GB more per window than segment ones (9.06GB vs 4.63GB
+    peak, measured 2026-10-03) because they capture cross-attention for the
+    alignment; the decoded text is byte-identical, so a text-only caller asks for
+    segment timestamps and fits a 12GB card.
+    """
+    captured, _ = _capture_cuda_load(monkeypatch, timestamps="segment")
+
+    assert captured["return_timestamps"] is True
+
+
+def test_unknown_timestamp_mode_is_rejected():
+    with pytest.raises(ValueError):
+        PhoWhisperBackend(model_id="fake", device="cpu", timestamps="phoneme")
+
+
 def test_model_unavailable_raises_distinct_code():
     backend = PhoWhisperBackend(model_id="nonexistent-model-12345", device="cpu")
     with pytest.raises(AsrError) as exc_info:
