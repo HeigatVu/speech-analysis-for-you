@@ -67,11 +67,17 @@ VAD_THRESHOLD = 0.2
 
 @dataclass(frozen=True)
 class ArmRun:
-    """What one arm produced: its windows, its ASR result and its wall-clock cost."""
+    """What one arm produced: its windows, its ASR result and its wall-clock cost.
+
+    `reused_from` names the arm whose decode this one reuses when both arms select the
+    same windows; the two decodes would be byte-identical, so running the second one
+    would spend the same minutes again for the same answer.
+    """
 
     windows: tuple[tuple[int, int], ...]
     result: AsrResult
     seconds: float
+    reused_from: str | None = None
 
 
 def arm_windows(
@@ -99,10 +105,12 @@ def run_arm(
     *,
     detector: Detector | None = None,
     threshold: float = VAD_THRESHOLD,
+    windows: Sequence[tuple[int, int]] | None = None,
 ) -> ArmRun:
     """Transcribe the master through one arm's windows on the master timeline."""
     started = time.perf_counter()
-    windows = arm_windows(audio_16k, arm, detector=detector, threshold=threshold)
+    if windows is None:
+        windows = arm_windows(audio_16k, arm, detector=detector, threshold=threshold)
     clips = merge_asr_windows(windows)
     results = transcribe_windows(audio_16k, clips, backend)
     result = result_from_windows(audio_16k, source_sha256, results)
@@ -141,6 +149,7 @@ def session_extras(run: ArmRun, reference: ReferenceIntervals) -> dict[str, Any]
         "counts": result_counts(run.result),
         "content": content_counts(run.result.segments),
         "runtime_s": run.seconds,
+        "reused_from": run.reused_from,
     }
 
 
@@ -221,6 +230,7 @@ def _arm_summary(record: dict[str, Any]) -> dict[str, Any]:
             "counts": entry.get("counts"),
             "content": entry.get("content"),
             "runtime_s": entry.get("runtime_s"),
+            "reused_from": entry.get("reused_from"),
         }
         for name, entry in record["arms"].items()
     }
@@ -270,6 +280,19 @@ def render_markdown(report: dict[str, Any]) -> str:
             "| utterances w/o timing | repetition flags | syllables | runtime s |",
             "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
         ]
+        reused = {
+            name: arm["reused_from"]
+            for name, arm in session["arms"].items()
+            if arm.get("reused_from")
+        }
+        if reused:
+            lines += [
+                "Arms whose VAD windows are identical to an earlier arm's reuse that arm's "
+                "decode, so their runtime is not a separate measurement: "
+                + ", ".join(f"`{name}` from `{source}`" for name, source in reused.items())
+                + ".",
+                "",
+            ]
         for name, arm in session["arms"].items():
             scores = arm["scores"]
             coverage = (arm["coverage"] or {}).get("coverage")
@@ -337,10 +360,30 @@ def run_ablation(
         source_sha256 = verify_source(row)
         views = prepare_views(row)
         reference = reference_intervals(load_reference_document(read_reference(row)))
-        runs = {
-            arm.name: run_arm(views.audio_16k, source_sha256, backend, arm, detector=detector)
-            for arm in ARMS
-        }
+        runs, decodes = {}, {}
+        for arm in ARMS:
+            windows = tuple(arm_windows(views.audio_16k, arm, detector=detector))
+            source = decodes.get(windows)
+            if source is None:
+                decodes[windows] = arm.name
+                runs[arm.name] = run_arm(
+                    views.audio_16k,
+                    source_sha256,
+                    backend,
+                    arm,
+                    detector=detector,
+                    windows=windows,
+                )
+            else:
+                base = runs[source]
+                runs[arm.name] = ArmRun(base.windows, base.result, 0.0, source)
+            run = runs[arm.name]
+            note = f", reused {run.reused_from}" if run.reused_from else ""
+            print(
+                f"{row.session_id} {arm.name}: {len(run.windows)} windows, "
+                f"{run.seconds:.1f}s{note}",
+                flush=True,
+            )
         extras = {name: session_extras(run, reference) for name, run in runs.items()}
         record = session_record(
             row,

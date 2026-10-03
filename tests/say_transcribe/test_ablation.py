@@ -292,6 +292,14 @@ def test_ablation_runs_every_arm_and_writes_a_redacted_report(tmp_path, monkeypa
     assert (out_dir / "records" / "p001.json").exists()
     assert str(tmp_path) not in report_text
     assert "/shared-data" not in report_text
+    # Identical windows mean identical decodes, so the runner decodes once and says so
+    # rather than spending the same minutes five more times for the same answer.
+    assert len(backend.slices) == 1
+    arms = report["sessions"]["p001"]["arms"]
+    assert arms["main"]["reused_from"] is None
+    assert {name: arm["reused_from"] for name, arm in arms.items() if name != "main"} == {
+        name: "main" for name in ABLATION_ARM_ORDER[1:]
+    }
     markdown = (out_dir / "ABLATION.md").read_text(encoding="utf-8")
     for name in ABLATION_ARM_ORDER:
         assert name in markdown
@@ -302,6 +310,7 @@ def test_ablation_runs_every_arm_and_writes_a_redacted_report(tmp_path, monkeypa
     assert "utterances w/o timing" in header
     assert "repetition flags" in header
     assert "Device `cpu`, GPU memory not applicable." in markdown
+    assert "`compatibility` from `main`" in markdown
 
 
 def test_the_cli_exposes_the_ablation_with_a_pinned_revision(tmp_path, monkeypatch) -> None:
