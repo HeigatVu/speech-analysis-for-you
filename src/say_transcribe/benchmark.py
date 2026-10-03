@@ -82,6 +82,7 @@ def run_asr_benchmark(
     rows: Sequence[ManifestRow],
     device: str = "cpu",
     backend_factory: BenchmarkBackendFactory | None = None,
+    models: Sequence[str] = ASR_BENCHMARK_MODELS,
 ) -> dict[str, Any]:
     """Score each pinned ASR model against each session's reference transcript."""
     factory = backend_factory or _default_asr_factory
@@ -99,7 +100,7 @@ def run_asr_benchmark(
             report_rows.append(_error_row(row.session_id, None, "model", "REFERENCE_UNREADABLE"))
             continue
 
-        for model in ASR_BENCHMARK_MODELS:
+        for model in models:
             entry: dict[str, Any] = {"session_id": row.session_id, "model": model}
             backend: Any = None
             try:
@@ -117,6 +118,8 @@ def run_asr_benchmark(
                 )
                 entry.update(
                     status="ok",
+                    device=device,
+                    revision=getattr(backend, "revision", None),
                     wer=scores["wer"]["rate"],
                     cer=scores["cer"]["rate"],
                     syer=scores["syer"]["rate"],
@@ -130,12 +133,14 @@ def run_asr_benchmark(
                 _release_device_memory(device)
             report_rows.append(entry)
 
-    return {"task": "asr", "rows": report_rows, "aggregate": _asr_aggregate(report_rows)}
+    return {"task": "asr", "rows": report_rows, "aggregate": _asr_aggregate(report_rows, models)}
 
 
-def _asr_aggregate(report_rows: Sequence[dict[str, Any]]) -> dict[str, Any]:
+def _asr_aggregate(
+    report_rows: Sequence[dict[str, Any]], models: Sequence[str] = ASR_BENCHMARK_MODELS
+) -> dict[str, Any]:
     aggregate: dict[str, Any] = {}
-    for model in ASR_BENCHMARK_MODELS:
+    for model in models:
         ok = [r for r in report_rows if r.get("model") == model and r["status"] == "ok"]
         aggregate[model] = {
             "wer_mean": _mean([r["wer"] for r in ok]),
@@ -250,16 +255,20 @@ def render_markdown(report: dict[str, Any]) -> str:
     task = report["task"]
     lines = [f"# Benchmark report: {task}", ""]
     if task == "asr":
-        lines += ["| Session | Model | WER | CER | SyER | Status |", "| --- | --- | --- | --- | --- | --- |"]
+        lines += [
+            "| Session | Model | WER | CER | SyER | Device | Revision | Status |",
+            "| --- | --- | --- | --- | --- | --- | --- | --- |",
+        ]
         for row in report["rows"]:
             if row["status"] == "ok":
                 lines.append(
                     f"| {row['session_id']} | {row['model']} | {row['wer']:.4f} "
-                    f"| {row['cer']:.4f} | {row['syer']:.4f} | ok |"
+                    f"| {row['cer']:.4f} | {row['syer']:.4f} | {row['device']} "
+                    f"| {(row.get('revision') or '-')[:12]} | ok |"
                 )
             else:
                 lines.append(
-                    f"| {row['session_id']} | {row.get('model') or '-'} | - | - | - "
+                    f"| {row['session_id']} | {row.get('model') or '-'} | - | - | - | - | - "
                     f"| {row['code']} |"
                 )
         lines += ["", "## Aggregate", "", "| Model | Mean WER | Mean CER | Cells scored |", "| --- | --- | --- | --- |"]

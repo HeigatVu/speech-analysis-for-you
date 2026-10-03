@@ -204,6 +204,10 @@ def build_parser() -> argparse.ArgumentParser:
     benchmark_parser.add_argument(
         "--device", choices=["cpu", "cuda"], default="cpu", help="Compute device"
     )
+    benchmark_parser.add_argument(
+        "--asr-models",
+        help="Comma-separated ASR models for --task asr (default: phowhisper-large,qwen3-asr)",
+    )
 
     return parser
 
@@ -821,11 +825,21 @@ def cmd_ablate(
         return 4
 
 
-def cmd_benchmark(task: str, manifest: Path, out_dir: Path, device: str = "cpu") -> int:
+def cmd_benchmark(
+    task: str,
+    manifest: Path,
+    out_dir: Path,
+    device: str = "cpu",
+    asr_models: str | None = None,
+) -> int:
+    models = [m for m in (asr_models or "").split(",") if m]
+    if any(m not in ASR_MODEL_CHOICES for m in models):
+        sys.stderr.write("[INVALID_ARGUMENT] Unknown ASR model in --asr-models\n")
+        return 2
     try:
         rows = load_manifest(manifest)
         if task == "asr":
-            report = run_asr_benchmark(rows, device=device)
+            report = run_asr_benchmark(rows, device=device, **({"models": models} if models else {}))
         else:
             report = run_diarization_benchmark(rows, device=device)
         write_report(report, out_dir)
@@ -907,6 +921,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             manifest=args.manifest,
             out_dir=args.out,
             device=args.device,
+            asr_models=args.asr_models,
         )
     return 2
 

@@ -658,3 +658,12 @@ def test_cli_run_align_failure_degrades_to_untimed_words(tmp_path: Path, monkeyp
     err = capsys.readouterr().err
     assert "ALIGNMENT_UNAVAILABLE" in err
     assert "CHAT_WORD_TIMING_UNAVAILABLE:1" in err  # still untimed, still reported
+
+
+def test_cli_benchmark_rejects_an_unknown_asr_model(tmp_path: Path, capsys):
+    ret = main(
+        ["benchmark", "--task", "asr", "--manifest", str(tmp_path / "m.json"),
+         "--out", str(tmp_path / "o"), "--asr-models", "phowhisper-large,nope"]
+    )
+    assert ret == 2
+    assert "[INVALID_ARGUMENT]" in capsys.readouterr().err

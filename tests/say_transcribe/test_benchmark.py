@@ -246,3 +246,24 @@ def test_diarization_unmapped_cluster_scores_unknown_not_par(tmp_path, monkeypat
     assert row["status"] == "ok"
     # An unmapped cluster must not earn PAR credit against the gold PAR turn.
     assert row["der"] > 0.0
+
+
+def test_asr_benchmark_records_revision_and_device_and_honours_the_model_list(tmp_path):
+    from say_transcribe.manifest import load_manifest
+
+    class Pinned(FakeAsrBackend):
+        revision = "rev-123"
+
+    manifest = _make_manifest(tmp_path, [_manifest_row(tmp_path)])
+    rows = load_manifest(manifest)
+    report = run_asr_benchmark(
+        rows,
+        device="cpu",
+        backend_factory=lambda model, device: Pinned(("xin chào", "tạm biệt")),
+        models=("zipformer-vi", "whisper-large-v3"),
+    )
+
+    assert [r["model"] for r in report["rows"]] == ["zipformer-vi", "whisper-large-v3"]
+    assert all(r["revision"] == "rev-123" and r["device"] == "cpu" for r in report["rows"])
+    assert set(report["aggregate"]) == {"zipformer-vi", "whisper-large-v3"}
+    assert "rev-123" in render_markdown(report)
