@@ -228,6 +228,47 @@ def test_segment_timestamps_are_selectable_without_changing_the_text(monkeypatch
     assert captured["return_timestamps"] is True
 
 
+def test_qwen3_cuda_loads_the_checkpoint_in_fp16_instead_of_halving_afterwards(monkeypatch):
+    """Same transient-fp32 cost as phowhisper: measured 4.70GB peak at load vs 4.08GB
+    when fp16 is requested at load time (2026-10-03); window peaks are identical."""
+    import sys
+    import types
+
+    import torch
+
+    from say_transcribe.asr import Qwen3AsrBackend
+
+    captured: dict[str, object] = {}
+
+    class _Model:
+        halved = False
+
+        def to(self, device):
+            return self
+
+        def half(self):
+            _Model.halved = True
+            return self
+
+    def fake_from_pretrained(model_id, **kwargs):
+        captured.update(kwargs)
+        return _Model()
+
+    fake_transformers = types.ModuleType("transformers")
+    fake_transformers.AutoProcessor = types.SimpleNamespace(
+        from_pretrained=lambda *a, **k: object()
+    )
+    fake_transformers.AutoModelForMultimodalLM = types.SimpleNamespace(
+        from_pretrained=fake_from_pretrained
+    )
+    monkeypatch.setitem(sys.modules, "transformers", fake_transformers)
+
+    Qwen3AsrBackend._build("fake", None, "cuda")
+
+    assert captured["dtype"] is torch.float16
+    assert _Model.halved is False
+
+
 def test_unknown_timestamp_mode_is_rejected():
     with pytest.raises(ValueError):
         PhoWhisperBackend(model_id="fake", device="cpu", timestamps="phoneme")

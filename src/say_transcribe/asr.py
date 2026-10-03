@@ -507,12 +507,16 @@ class Qwen3AsrBackend:
 
     @staticmethod
     def _build(model_id: str, revision: str | None, device: str) -> tuple[Any, Any]:
+        import torch
         from transformers import AutoModelForMultimodalLM, AutoProcessor
 
         processor = AutoProcessor.from_pretrained(model_id, revision=revision)
-        model = AutoModelForMultimodalLM.from_pretrained(model_id, revision=revision)
+        # fp16 at load time: loading fp32 then .half() peaks 0.6GB higher (4.70 vs 4.08GB).
+        model = AutoModelForMultimodalLM.from_pretrained(
+            model_id, revision=revision, **({"dtype": torch.float16} if device == "cuda" else {})
+        )
         if device == "cuda":
-            model = model.to("cuda").half()
+            model = model.to("cuda")
         return processor, model
 
     def load(self) -> None:
