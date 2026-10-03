@@ -31,6 +31,8 @@ def _retraced(words: Sequence[GroupedWord]) -> set[int]:
 
     Punctuation and `xxx` end a stretch (a repeat across a comma is not marked);
     fillers are transparent, so `tôi ờ tôi` still repeats `tôi`."""
+    # ponytail: `một một bảy` (117) is marked as a retrace; the reviewer fixes it in
+    # phase 1. Add a numeral stop-list if that turns out to be noisy.
     retraced: set[int] = set()
     stretch: list[int] = []
 
