@@ -3,7 +3,7 @@ from types import SimpleNamespace
 import numpy as np
 
 from say_transcribe import cli
-from say_transcribe.asr import AsrResult
+from say_transcribe.asr import AsrResult, compute_sha256
 
 
 def test_compare_hash_mismatch_stops_before_audio_decode(tmp_path, monkeypatch, capsys):
@@ -40,7 +40,7 @@ def test_compare_hash_mismatch_stops_before_audio_decode(tmp_path, monkeypatch, 
 def test_compare_writes_three_variants_and_reuses_vad_asr_cache(tmp_path, monkeypatch, capsys):
     audio_path = tmp_path / "p001_master.wav"
     audio_path.write_bytes(b"synthetic master")
-    expected_hash = "a" * 64
+    expected_hash = compute_sha256(audio_path)
     output_dir = tmp_path / "comparison"
     audio_16k = np.zeros(16_000, dtype=np.float32)
     calls = {
@@ -125,7 +125,7 @@ def test_compare_writes_three_variants_and_reuses_vad_asr_cache(tmp_path, monkey
 def test_compare_rejects_out_of_range_threshold_before_any_asr(tmp_path, monkeypatch, capsys):
     audio_path = tmp_path / "p001_master.wav"
     audio_path.write_bytes(b"synthetic master")
-    expected_hash = "a" * 64
+    expected_hash = compute_sha256(audio_path)
     monkeypatch.setattr(cli, "compute_sha256", lambda _: expected_hash)
 
     def unexpected_transcribe(*args, **kwargs):
@@ -157,7 +157,7 @@ def test_compare_rejects_out_of_range_threshold_before_any_asr(tmp_path, monkeyp
 def test_compare_refuses_to_overwrite_an_earlier_variant(tmp_path, monkeypatch, capsys):
     audio_path = tmp_path / "p001_master.wav"
     audio_path.write_bytes(b"synthetic master")
-    expected_hash = "a" * 64
+    expected_hash = compute_sha256(audio_path)
     output_dir = tmp_path / "comparison"
     (output_dir / "baseline").mkdir(parents=True)
     (output_dir / "baseline" / "p001.cha").write_text("earlier automatic version", encoding="utf-8")
@@ -205,7 +205,7 @@ def test_compare_refuses_to_overwrite_an_earlier_variant(tmp_path, monkeypatch, 
 def test_compare_refuses_to_overwrite_when_later_variant_exists(tmp_path, monkeypatch, capsys):
     audio_path = tmp_path / "p001_master.wav"
     audio_path.write_bytes(b"synthetic master")
-    expected_hash = "a" * 64
+    expected_hash = compute_sha256(audio_path)
     output_dir = tmp_path / "comparison"
     (output_dir / "vad_asr_aligned").mkdir(parents=True)
     (output_dir / "vad_asr_aligned" / "p001.cha").write_text("existing aligned", encoding="utf-8")
@@ -256,7 +256,7 @@ def test_compare_no_morphosyntax_writes_phase1_variants(tmp_path, monkeypatch):
 
     audio_path = tmp_path / "p004_master.wav"
     audio_path.write_bytes(b"synthetic master")
-    expected_hash = "a" * 64
+    expected_hash = compute_sha256(audio_path)
     output_dir = tmp_path / "comparison"
     segment = AsrSegment(
         start_ms=0,
@@ -321,7 +321,7 @@ def test_compare_no_morphosyntax_writes_phase1_variants(tmp_path, monkeypatch):
 
 
 def test_comparison_variant_cleans_words_and_tags_only_real_words(tmp_path, monkeypatch):
-    from say_transcribe.asr import AsrResult, AsrSegment
+    from say_transcribe.asr import AsrResult, compute_sha256, AsrSegment
     from say_transcribe.cli import _write_comparison_result
     from say_transcribe.word_grouping import GroupedWord
 
