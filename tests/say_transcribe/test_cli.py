@@ -586,3 +586,72 @@ def test_cli_run_marks_retraces_and_fillers_and_tags_only_real_words(
     assert seen == [["tôi", "đi", "."]]
     assert text.count("%mor:") == 1
     assert "%wor:\t&-ờ \x150_140\x15 tôi \x15150_290\x15 tôi \x15300_440\x15 đi " in text
+
+
+def _bounded_qwen_result():
+    from say_transcribe.asr import AsrResult, AsrSegment
+
+    return AsrResult(
+        source_sha256="a" * 64,
+        segments=(AsrSegment(start_ms=0, end_ms=1000, text="tôi là", words=()),),
+        warnings=(),
+    )
+
+
+def _run_with_align(tmp_path: Path, monkeypatch, fake_align_words):
+    audio_file = _make_wav_file(tmp_path / "session_01_master.wav")
+    out_dir = tmp_path / "output"
+    monkeypatch.setattr(
+        "say_transcribe.cli.transcribe", lambda *args, **kwargs: _bounded_qwen_result()
+    )
+    monkeypatch.setattr("say_transcribe.cli.align_words", fake_align_words)
+    monkeypatch.setattr(
+        "say_transcribe.cli.PyannoteBackend",
+        lambda **kwargs: type("D", (), {"diarize": lambda self, _: ()})(),
+    )
+    monkeypatch.setattr(
+        "say_transcribe.cli.group_utterance_words",
+        lambda seg: tuple(
+            __import__("say_transcribe.word_grouping", fromlist=["GroupedWord"]).GroupedWord(
+                w.word, w.start_ms, w.end_ms, ()
+            )
+            for w in seg.words
+        )
+        or (
+            __import__("say_transcribe.word_grouping", fromlist=["GroupedWord"]).GroupedWord(
+                "tôi", None, None, ()
+            ),
+        ),
+    )
+    ret = main(
+        [
+            "run", str(audio_file), "--channel", "0", "--out", str(out_dir),
+            "--expected-sha256", compute_sha256(Path(str(audio_file))),
+            "--no-morphosyntax", "--align", "wav2vec2-vi",
+        ]
+    )
+    return ret, out_dir / "session_01.cha"
+
+
+def test_cli_run_align_times_a_wordless_qwen_segment(tmp_path: Path, monkeypatch):
+    ret, cha = _run_with_align(
+        tmp_path, monkeypatch, lambda audio, words: ((100, 400), (500, 900))
+    )
+    text = cha.read_text(encoding="utf-8")
+
+    assert ret == 0
+    assert "\x15100_900\x15" in text  # utterance bullet tightened to the aligned words
+    assert "%wor:" in text
+
+
+def test_cli_run_align_failure_degrades_to_untimed_words(tmp_path: Path, monkeypatch, capsys):
+    from say_transcribe.alignment import AlignmentError
+
+    def boom(audio, words):
+        raise AlignmentError()
+
+    ret, cha = _run_with_align(tmp_path, monkeypatch, boom)
+
+    assert ret == 0
+    assert "%wor:" not in cha.read_text(encoding="utf-8")
+    assert "ALIGNMENT_UNAVAILABLE" in capsys.readouterr().err

@@ -7,7 +7,7 @@ from typing import Any, Sequence
 from speech_features.formats.chat import InvalidChatError, decode_chat
 
 from say_transcribe.ablation import run_ablation
-from say_transcribe.alignment import AlignmentError, align_words
+from say_transcribe.alignment import AlignmentError, align_segments, align_words
 from say_transcribe.asr import (
     ASR_MODEL_CHOICES,
     AsrError,
@@ -78,6 +78,12 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["pyannote", "wavlm"],
         default="pyannote",
         help="Speaker diarization backend",
+    )
+    run_parser.add_argument(
+        "--align",
+        choices=["none", "wav2vec2-vi"],
+        default="none",
+        help="Time the words of word-less segments (qwen3-asr) with Vietnamese CTC alignment",
     )
     run_parser.add_argument(
         "--no-morphosyntax",
@@ -261,6 +267,7 @@ def cmd_run(
     diarize_backend: Any = None,
     stanza_backend: Any = None,
     skip_morphosyntax: bool = False,
+    align: str = "none",
 ) -> int:
     if not audio_path.is_file():
         sys.stderr.write("[INVALID_ARGUMENT] Audio file not found\n")
@@ -288,6 +295,14 @@ def cmd_run(
             expected_sha256=expected_sha256,
         )
         run_warnings: list[str] = list(asr_res.warnings)
+        if align == "wav2vec2-vi":
+            try:
+                asr_res = replace(
+                    asr_res,
+                    segments=align_segments(audio_16k, asr_res.segments, aligner=align_words),
+                )
+            except AlignmentError:
+                run_warnings.append("ALIGNMENT_UNAVAILABLE")
 
         # Step 5: Diarization (explicit backend; a failure is an error, not a fallback)
         try:
@@ -833,6 +848,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             asr_model=args.asr_model,
             diarizer=args.diarizer,
             skip_morphosyntax=args.no_morphosyntax,
+            align=args.align,
         )
     elif args.command == "compare":
         return cmd_compare(

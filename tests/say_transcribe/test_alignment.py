@@ -87,3 +87,69 @@ def test_align_words_redacts_backend_failures_with_stable_code():
 
     assert error.value.code == "ALIGNMENT_UNAVAILABLE"
     assert "/data/person.wav" not in str(error.value)
+
+
+def _segment(text, start_ms, end_ms, words=()):
+    from say_transcribe.asr import AsrSegment
+
+    return AsrSegment(start_ms, end_ms, text, tuple(words))
+
+
+def test_align_segments_times_words_on_the_master_timeline_and_tightens_the_span():
+    from say_transcribe.alignment import align_segments
+
+    calls = []
+
+    def fake_aligner(audio, words):
+        calls.append((len(audio), list(words)))
+        return ((100, 400), (500, 900))
+
+    audio = np.zeros(16000 * 10, dtype=np.float32)
+    [segment] = align_segments(audio, [_segment("chào bạn", 2000, 6000)], aligner=fake_aligner)
+
+    assert calls == [(16000 * 4, ["chào", "bạn"])]  # only the segment's own samples
+    assert [(w.word, w.start_ms, w.end_ms) for w in segment.words] == [
+        ("chào", 2100, 2400),
+        ("bạn", 2500, 2900),
+    ]
+    assert (segment.start_ms, segment.end_ms) == (2100, 2900)
+    assert segment.text == "chào bạn"
+
+
+def test_align_segments_keeps_the_window_span_when_any_word_stays_untimed():
+    from say_transcribe.alignment import align_segments
+
+    def fake_aligner(audio, words):
+        return ((100, 400), (None, None))
+
+    audio = np.zeros(16000 * 10, dtype=np.float32)
+    [segment] = align_segments(audio, [_segment("chào bạn", 2000, 6000)], aligner=fake_aligner)
+
+    assert [(w.start_ms, w.end_ms) for w in segment.words] == [(2100, 2400), (None, None)]
+    assert (segment.start_ms, segment.end_ms) == (2000, 6000)
+
+
+def test_align_segments_leaves_timed_or_unbounded_segments_alone():
+    from say_transcribe.alignment import align_segments
+    from say_transcribe.asr import WordTiming
+
+    def boom(audio, words):
+        raise AssertionError("must not align")
+
+    timed = _segment("chào", 0, 1000, [WordTiming("chào", 0, 900)])
+    unbounded = _segment("chào", None, None)
+    audio = np.zeros(16000 * 2, dtype=np.float32)
+
+    assert align_segments(audio, [timed, unbounded], aligner=boom) == (timed, unbounded)
+
+
+def test_align_segments_rejects_a_span_count_mismatch_without_fabricating_times():
+    from say_transcribe.alignment import align_segments
+
+    audio = np.zeros(16000 * 4, dtype=np.float32)
+    [segment] = align_segments(
+        audio, [_segment("a b", 0, 3000)], aligner=lambda a, w: ((0, 100),)
+    )
+
+    assert segment.words == ()
+    assert (segment.start_ms, segment.end_ms) == (0, 3000)

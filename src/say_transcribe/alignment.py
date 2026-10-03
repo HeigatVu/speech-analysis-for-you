@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from functools import lru_cache
 import unicodedata
-from typing import Protocol, Sequence
+from typing import Callable, Protocol, Sequence
 
 import numpy as np
+
+from say_transcribe.asr import AsrSegment, WordTiming, _is_lexical_word
 
 _MODEL_ID = "nguyenvulebinh/wav2vec2-base-vi-vlsp2020"
 _MODEL_REVISION = "50a30dadb3ec98a0d4cdb1eb1ea315aff538f7c2"
@@ -240,3 +243,52 @@ def align_words(
             return _none_spans(words)
         previous_end = end_ms
     return tuple(output)
+
+
+def align_segments(
+    audio_16k: np.ndarray,
+    segments: Sequence[AsrSegment],
+    *,
+    aligner: Callable[
+        [np.ndarray, Sequence[str]], Sequence[tuple[int | None, int | None]]
+    ] = align_words,
+) -> tuple[AsrSegment, ...]:
+    """Time the words of bounded, word-less segments (Qwen3-ASR) inside their own span.
+
+    Spans are relative to the segment, so they are shifted onto the master timeline.
+    A segment is tightened to its first and last word only when every lexical word
+    was timed; otherwise it keeps its window span and the missing words stay untimed.
+    Segments that already carry words, or have no bounds, pass through unchanged.
+    """
+    out: list[AsrSegment] = []
+    for segment in segments:
+        if segment.words or segment.start_ms is None or segment.end_ms is None:
+            out.append(segment)
+            continue
+        tokens = segment.text.split()
+        samples = audio_16k[segment.start_ms * 16 : segment.end_ms * 16]
+        spans = aligner(samples, tokens) if tokens and len(samples) else ()
+        if len(spans) != len(tokens) or not tokens:
+            out.append(segment)
+            continue
+        words = tuple(
+            WordTiming(
+                token,
+                None if start is None else segment.start_ms + start,
+                None if end is None else segment.start_ms + end,
+            )
+            for token, (start, end) in zip(tokens, spans)
+        )
+        timed = [w for w in words if w.start_ms is not None and w.end_ms is not None]
+        complete = timed and all(
+            w.start_ms is not None for w in words if _is_lexical_word(w.word)
+        )
+        out.append(
+            replace(
+                segment,
+                words=words,
+                start_ms=timed[0].start_ms if complete else segment.start_ms,
+                end_ms=timed[-1].end_ms if complete else segment.end_ms,
+            )
+        )
+    return tuple(out)
