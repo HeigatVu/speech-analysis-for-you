@@ -318,3 +318,38 @@ def test_compare_no_morphosyntax_writes_phase1_variants(tmp_path, monkeypatch):
         assert "%wor:" in text
         assert "%mor" not in text
         assert "%gra" not in text
+
+
+def test_comparison_variant_cleans_words_and_tags_only_real_words(tmp_path, monkeypatch):
+    from say_transcribe.asr import AsrResult, AsrSegment
+    from say_transcribe.cli import _write_comparison_result
+    from say_transcribe.word_grouping import GroupedWord
+
+    seen = []
+
+    class RecordingStanza:
+        def parse_pretokenized(self, tokens):
+            seen.append(list(tokens))
+            words = [
+                type("W", (), dict(id=i, text=t, lemma=t, upos="noun", feats=None,
+                                   head=0 if i == 1 else 1, deprel="root" if i == 1 else "dep"))()
+                for i, t in enumerate(tokens, start=1)
+            ]
+            return type("D", (), {"sentences": [type("S", (), {"words": words})()]})()
+
+    spoken = [",", "ờ", "tôi", "tôi", "xxx", "đi", "."]
+    monkeypatch.setattr(
+        "say_transcribe.cli.group_utterance_words",
+        lambda segment: tuple(
+            GroupedWord(w, None if w in {",", "xxx", "."} else i * 100, None if w in {",", "xxx", "."} else i * 100 + 90, ())
+            for i, w in enumerate(spoken)
+        ),
+    )
+    result = AsrResult("a" * 64, (AsrSegment(0, 700, " ".join(spoken), ()),), ())
+    out = tmp_path / "s1.cha"
+
+    _write_comparison_result(result, out, "s1", (), "cpu", RecordingStanza(), [])
+
+    text = out.read_text(encoding="utf-8")
+    assert "*PAR:\t&-ờ tôi [/] tôi xxx đi . " in text
+    assert seen == [["tôi", "đi", "."]]

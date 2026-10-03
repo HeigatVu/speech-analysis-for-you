@@ -527,8 +527,9 @@ def _write_comparison_result(
                 for word in segment.words
                 if word.word.strip()
             )
+        words = mark_disfluencies(drop_invalid_commas(words))
         morphosyntax = (
-            project_morphosyntax(words, backend=stanza_backend)
+            project_morphosyntax(mor_members(words), backend=stanza_backend)
             if words and not skip_morphosyntax
             else None
         )
