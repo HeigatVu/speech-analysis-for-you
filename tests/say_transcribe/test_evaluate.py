@@ -214,3 +214,64 @@ def test_timed_document_without_markup_has_an_empty_uncertainty_queue():
     items = extract_session_items(_spoken_document("tôi đi học ."))
 
     assert items["uncertainty"] == []
+
+
+_TWO_SPEAKER_HEADER = _SPOKEN_HEADER.replace(
+    "PAR Participant", "PAR Participant, INV Investigator"
+).replace("@Media", "@ID:\tvie|corpus|INV|||||Investigator|||\n@Media")
+
+
+def test_a_mostly_timed_prediction_stays_strictly_parsed_and_markup_is_not_scored():
+    """One untimed utterance must not push the whole file onto the text-only path,
+    where `[/]`, `<` and `&-` would be scored as words and DER would be lost."""
+    text = (
+        f"{_TWO_SPEAKER_HEADER}"
+        "*PAR:\ttôi đi <tôi đi> [/] tôi đi .\t\x150_4000\x15\n"
+        "*INV:\tvâng .\n"
+        "@End\n"
+    )
+    items = extract_session_items(text)
+
+    assert "[/]" not in items["words"] and "<tôi" not in items["words"]
+    assert items["words"].count("tôi") == 3 and "vâng" in items["words"]
+    assert items["intervals"] == [(0, 4000, "PAR")]  # the untimed utterance has no interval
+
+
+def _write_pair(tmp_path: Path, hyp_text: str):
+    gold_dir, pred_dir = tmp_path / "gold", tmp_path / "pred"
+    gold_dir.mkdir()
+    pred_dir.mkdir()
+    (gold_dir / "s01.cha").write_text(
+        f"{_TWO_SPEAKER_HEADER}*PAR:\ttôi đi học .\t\x150_4000\x15\n"
+        "*INV:\tvâng .\t\x154000_6000\x15\n@End\n",
+        encoding="utf-8",
+    )
+    (pred_dir / "s01.cha").write_text(hyp_text, encoding="utf-8")
+    return gold_dir, pred_dir
+
+
+def test_der_is_scored_when_part_of_the_prediction_is_untimed(tmp_path: Path):
+    gold_dir, pred_dir = _write_pair(
+        tmp_path,
+        f"{_TWO_SPEAKER_HEADER}*PAR:\ttôi đi học .\t\x150_4000\x15\n*INV:\tvâng .\n@End\n",
+    )
+    report = tmp_path / "r.json"
+    run_evaluation(gold_dir, pred_dir, report)
+    metrics = json.loads(report.read_text())
+
+    assert metrics["metrics"]["syer"]["mean"] == 0.0  # markup-free, strictly parsed
+    assert metrics["der_sessions_scored"] == 1
+    assert 0.0 < metrics["metrics"]["der"]["mean"] < 1.0  # INV's 2 s is missed, PAR is right
+
+
+def test_der_is_reported_absent_not_one_when_the_prediction_has_no_timing(tmp_path: Path):
+    gold_dir, pred_dir = _write_pair(
+        tmp_path,
+        f"{_TWO_SPEAKER_HEADER}*PAR:\ttôi đi học .\n*INV:\tvâng .\n@End\n",
+    )
+    report = tmp_path / "r.json"
+    run_evaluation(gold_dir, pred_dir, report)
+    metrics = json.loads(report.read_text())
+
+    assert metrics["der_sessions_scored"] == 0
+    assert metrics["metrics"]["der"]["mean"] is None

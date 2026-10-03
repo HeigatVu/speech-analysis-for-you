@@ -100,7 +100,9 @@ def extract_session_items(cha_text: str) -> dict[str, Any]:
     strict CHAT parser rejects the file; see `_extract_lenient_text_items`.
     """
     try:
-        doc = decode_chat(cha_text)
+        # Untimed utterances are legitimate in a prediction (repetition-guard `xxx`, words
+        # the aligner could not place); they simply contribute no interval.
+        doc = decode_chat(cha_text, require_timing=False)
     except InvalidChatError:
         return _extract_lenient_text_items(cha_text)
 
@@ -118,13 +120,13 @@ def extract_session_items(cha_text: str) -> dict[str, Any]:
     gra_dict = layers.get("gra", {})
 
     for index, u in enumerate(doc.utterances):
-        start_ms = int(round(u.start_s * 1000.0))
-        end_ms = int(round(u.end_s * 1000.0))
-        speaker_intervals.append((start_ms, end_ms, u.speaker_id))
-
         codes: set[str] = set()
-        if end_ms <= start_ms:
-            codes.add("ZERO_DURATION_UTTERANCE")
+        if u.start_s is not None and u.end_s is not None:
+            start_ms = int(round(u.start_s * 1000.0))
+            end_ms = int(round(u.end_s * 1000.0))
+            speaker_intervals.append((start_ms, end_ms, u.speaker_id))
+            if end_ms <= start_ms:
+                codes.add("ZERO_DURATION_UTTERANCE")
 
         roles = tier_roles([t.text for t in u.tokens])
         for role, t in zip(roles, u.tokens):
@@ -319,8 +321,10 @@ def run_evaluation(
         session_wer.append(min(1.0, wer))
 
         # DER
-        der = compute_der(g_data["intervals"], p_data["intervals"])
-        session_der.append(der)
+        # A prediction with no timed utterance has nothing to score: report DER absent
+        # instead of the 1.0 that compute_der would return for an empty hypothesis.
+        if p_data["intervals"] or not g_data["intervals"]:
+            session_der.append(compute_der(g_data["intervals"], p_data["intervals"]))
 
         # Morphosyntax tier agreement
         n_pos = min(len(g_data["pos"]), len(p_data["pos"]))
@@ -346,7 +350,7 @@ def run_evaluation(
 
     def bootstrap_ci(values: list[float]) -> dict[str, Any]:
         if not values:
-            return {"mean": 0.0, "ci_95": [0.0, 0.0]}
+            return {"mean": None, "ci_95": None}
         arr = np.array(values, dtype=np.float64)
         mean_val = float(np.mean(arr))
         if len(arr) == 1:
@@ -367,6 +371,7 @@ def run_evaluation(
     report = {
         "sessions_evaluated": valid_sessions,
         "format_pass_rate": round(pass_rate, 4),
+        "der_sessions_scored": len(session_der),
         "uncertainty": dict(sorted(uncertainty_counts.items())),
         "metrics": {
             "syer": bootstrap_ci(session_syer),
