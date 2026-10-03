@@ -89,7 +89,65 @@ def _is_suspected_repetition(words: Sequence[dict[str, Any]]) -> bool:
     # (e.g. "unk."), so match after stripping it rather than requiring an exact hit.
     if any(t.strip(".,!?…") in ("unk", "<unk>") for t in texts):
         return True
+    if _longest_run(_loop_tokens(words)) >= _LOOP_RUN:
+        return True
     return len(texts) >= 20 and len(set(texts)) / len(texts) < 0.3
+
+
+# One syllable repeated this many times in a row is a decoder loop; shorter repeats
+# ("một một bảy", "ừ ừ") are real Vietnamese, so nothing shorter is touched.
+_LOOP_RUN = 8
+
+
+def _loop_tokens(words: Sequence[dict[str, Any]]) -> list[str]:
+    tokens = (str(w.get("word", "")).strip().lower().strip(".,!?…") for w in words)
+    return [t for t in tokens if t]
+
+
+def _longest_run(tokens: Sequence[str]) -> int:
+    longest = run = 0
+    previous = None
+    for token in tokens:
+        run = run + 1 if token == previous else 1
+        previous = token
+        longest = max(longest, run)
+    return longest
+
+
+def _collapse_loop_segments(segments: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Merge consecutive one-word segments that repeat the same token into one `xxx`.
+
+    Whisper attaches "." to each looped word, so a loop is flushed as one segment per
+    word and no single segment looks repetitive enough for the per-segment guard."""
+    out: list[dict[str, Any]] = []
+    group: list[dict[str, Any]] = []
+    group_token: str | None = None
+
+    def flush() -> None:
+        count = sum(len(_loop_tokens(s.get("words", []))) for s in group)
+        if count >= _LOOP_RUN:
+            out.append(
+                {
+                    "start_ms": None,
+                    "end_ms": None,
+                    "text": "xxx",
+                    "words": [{"word": "xxx", "start_ms": None, "end_ms": None}],
+                    "repetition_suspected": True,
+                }
+            )
+        else:
+            out.extend(group)
+        group.clear()
+
+    for segment in segments:
+        tokens = _loop_tokens(segment.get("words", []))
+        token = tokens[0] if tokens and len(set(tokens)) == 1 else None
+        if token is None or token != group_token:
+            flush()
+        group_token = token
+        (group if token is not None else out).append(segment)
+    flush()
+    return out
 
 
 def _has_complete_lexical_timing(words: Sequence[dict[str, Any]]) -> bool:
@@ -222,8 +280,11 @@ class PhoWhisperBackend:
                 )
                 offset_ms = int(round(start / 16000 * 1000))
                 chunk_duration_ms = round(len(chunk) * 1000 / 16000)
-                for seg in self._parse_pipeline_output(result):
-                    seg = _normalize_segment(seg, chunk_duration_ms)
+                segments = [
+                    _normalize_segment(seg, chunk_duration_ms)
+                    for seg in self._parse_pipeline_output(result)
+                ]
+                for seg in _collapse_loop_segments(segments):
                     results.append(self._offset_segment(seg, offset_ms))
                 if self.device == "cuda":
                     import torch

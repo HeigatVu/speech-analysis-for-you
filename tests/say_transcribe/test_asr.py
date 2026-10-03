@@ -539,3 +539,43 @@ def test_make_asr_backend_maps_names():
     with pytest.raises(AsrError) as excinfo:
         make_asr_backend("unknown-model")
     assert excinfo.value.code == "MODEL_UNKNOWN"
+
+
+def _fake_chunks(tokens, step=0.3):
+    return {
+        "chunks": [
+            {"text": t, "timestamp": (i * step, i * step + 0.2)} for i, t in enumerate(tokens)
+        ]
+    }
+
+
+def test_loop_split_into_one_word_segments_by_punctuation_becomes_one_marker():
+    # Whisper attaches "." to each looped word, so the loop is flushed as 55
+    # one-word segments that the per-segment guard never sees as a loop.
+    backend = PhoWhisperBackend(model_id="fake", device="cpu")
+    backend._pipe = lambda _input, **kwargs: _fake_chunks(["hai."] * 55)
+
+    segs = backend.transcribe_audio(np.zeros(20 * 16000, dtype=np.float32))
+
+    assert [s["text"] for s in segs] == ["xxx"]
+    assert segs[0]["repetition_suspected"] is True
+
+
+def test_eight_identical_words_in_one_segment_are_a_loop():
+    backend = PhoWhisperBackend(model_id="fake", device="cpu")
+    backend._pipe = lambda _input, **kwargs: _fake_chunks(["hai"] * 8 + ["."])
+
+    segs = backend.transcribe_audio(np.zeros(16000 * 5, dtype=np.float32))
+
+    assert [s["text"] for s in segs] == ["xxx"]
+
+
+def test_short_valid_vietnamese_repeats_are_kept():
+    backend = PhoWhisperBackend(model_id="fake", device="cpu")
+    backend._pipe = lambda _input, **kwargs: _fake_chunks(
+        ["một", "một", "bảy.", "ừ", "ừ."]
+    )
+
+    segs = backend.transcribe_audio(np.zeros(16000 * 5, dtype=np.float32))
+
+    assert [s["text"] for s in segs] == ["một một bảy.", "ừ ừ."]
