@@ -519,3 +519,29 @@ def test_cli_tag_reports_model_unavailable_instead_of_writing_untagged(
     assert ret == 3
     assert "[MODEL_UNAVAILABLE]" in capsys.readouterr().err
     assert not out_file.exists()
+
+
+def test_cli_tag_sends_only_real_words_to_stanza(tmp_path: Path, monkeypatch):
+    seen: list[list[str]] = []
+
+    class RecordingStanza(_FakeStanzaBackend):
+        def parse_pretokenized(self, tokens):
+            seen.append(list(tokens))
+            return super().parse_pretokenized(tokens)
+
+    phase1 = tmp_path / "review" / "p003.cha"
+    _write_phase1(phase1, "p003")
+    reviewed = phase1.read_text(encoding="utf-8").replace(
+        "*PAR:\ttôi là_sinh_viên .", "*PAR:\t&-ờ tôi [/] tôi xxx (.) là_sinh_viên ."
+    )
+    lines = [line for line in reviewed.splitlines() if not line.startswith("%wor:")]
+    phase1.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    monkeypatch.setattr("say_transcribe.cli.StanzaBackend", RecordingStanza)
+    out_file = tmp_path / "final" / "p003.cha"
+    assert main(["tag", str(phase1), "--out", str(out_file)]) == 0
+
+    assert seen == [["tôi", "là_sinh_viên", "."]]
+    tagged = out_file.read_text(encoding="utf-8")
+    assert "*PAR:\t&-ờ tôi [/] tôi xxx (.) là_sinh_viên ." in tagged
+    assert tagged.count("%mor:") == 1

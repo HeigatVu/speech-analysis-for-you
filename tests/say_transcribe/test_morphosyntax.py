@@ -241,3 +241,15 @@ def test_mor_renders_ud_feats_as_chat_suffixes_with_a_single_pipe():
 
     assert item.format_mor() == "pron|tôi-Plur-1"
     assert item.format_mor().count("|") == 1
+
+
+def test_mor_members_keep_words_and_separators_but_not_markup():
+    from say_transcribe.morphosyntax import mor_members
+    from say_transcribe.word_grouping import GroupedWord
+
+    words = [
+        GroupedWord(text, None, None, ())
+        for text in ["&-ờ", "<tôi", "đi>", "[/]", "tôi", "đi", ",", "xxx", "(.)", "."]
+    ]
+
+    assert [w.word for w in mor_members(words)] == ["tôi", "đi", ",", "."]

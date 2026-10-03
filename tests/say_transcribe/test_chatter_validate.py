@@ -64,7 +64,32 @@ def _unintelligible_only() -> UtteranceRecord:
     return _utterance([_word("xxx"), _word(".")], timed=False)
 
 
+def _markup() -> UtteranceRecord:
+    words = [
+        _word("&-ờ", 0, 100),
+        _word("<tôi", 100, 400),
+        _word("đi>", 400, 800),
+        _word("[/]"),
+        _word("tôi", 800, 1100),
+        _word("đi", 1100, 1500),
+        _word("xxx"),
+        _word("(.)"),
+        _word("."),
+    ]
+    return _utterance(
+        words,
+        [MorItem("pron", "tôi"), MorItem("verb", "đi"), MorItem("punct", ".")],
+        [GraItem(1, 2, "NSUBJ"), GraItem(2, 0, "ROOT"), GraItem(3, 2, "PUNCT")],
+    )
+
+
+def _markup_without_analysable_word() -> UtteranceRecord:
+    return _utterance([_word("&-ờ", 0, 100), _word("xxx"), _word(".")])
+
+
 CASES = {
+    "retrace_filler_untranscribed_pause": _markup,
+    "no_analysable_word": _markup_without_analysable_word,
     "plain": _plain,
     "comma": _comma,
     "ud_feats": _feats,
@@ -104,4 +129,45 @@ def test_repo_chatter_fixture_is_chatter_valid() -> None:
         check=False,
     )
 
+    assert result.returncode == 0, result.stdout[-1500:]
+
+
+class _FakeWord:
+    def __init__(self, index: int, text: str) -> None:
+        self.id = index
+        self.text = text
+        self.lemma = text
+        self.upos = "noun"
+        self.feats = None
+        self.head = 0 if index == 1 else 1
+        self.deprel = "root" if index == 1 else "nsubj"
+
+
+class _FakeStanza:
+    def __init__(self, **kwargs) -> None:
+        pass
+
+    def parse_pretokenized(self, tokens):
+        words = [_FakeWord(i, t) for i, t in enumerate(tokens, start=1)]
+        return type("D", (), {"sentences": [type("S", (), {"words": words})()]})()
+
+
+@NEEDS_CHATTER
+def test_tag_output_for_reviewed_markup_is_chatter_valid(tmp_path: Path, monkeypatch) -> None:
+    from say_transcribe.cli import main
+
+    reviewed = tmp_path / "review" / "s1.cha"
+    reviewed.parent.mkdir()
+    reviewed.write_text(format_chat_session("s1", "0" * 64, [_markup()]), encoding="utf-8")
+    monkeypatch.setattr("say_transcribe.cli.StanzaBackend", _FakeStanza)
+    final = tmp_path / "final" / "s1.cha"
+
+    assert main(["tag", str(reviewed), "--out", str(final)]) == 0
+
+    result = subprocess.run(
+        [CHATTER, "validate", "--force", "-f", "text", str(final)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
     assert result.returncode == 0, result.stdout[-1500:]

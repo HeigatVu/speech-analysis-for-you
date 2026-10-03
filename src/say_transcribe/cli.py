@@ -23,7 +23,7 @@ from say_transcribe.chat_writer import PARTICIPANTS, UtteranceRecord, write_chat
 from say_transcribe.denoise import DenoiseError
 from say_transcribe.diarize import PyannoteBackend, WavlmClusterBackend, assign_speakers
 from say_transcribe.manifest import ManifestError, load_manifest
-from say_transcribe.morphosyntax import StanzaBackend, project_morphosyntax
+from say_transcribe.morphosyntax import StanzaBackend, mor_members, project_morphosyntax
 from say_transcribe.profile import ProfileError
 from say_transcribe.study import StudyError, run_study
 from say_transcribe.word_grouping import GroupedWord, WordGroupingError, group_utterance_words
@@ -309,7 +309,7 @@ def cmd_run(
                     if w.word.strip()
                 )
             mor_gra = (
-                project_morphosyntax(words, backend=stanza_backend)
+                project_morphosyntax(mor_members(words), backend=stanza_backend)
                 if words and not skip_morphosyntax
                 else None
             )
@@ -427,7 +427,11 @@ def _reviewed_records(
                 end_ms=None if utterance.end_s is None else round(utterance.end_s * 1000),
                 text=" ".join(word.word for word in words),
                 words=words,
-                morphosyntax=project_morphosyntax(words, backend=stanza_backend) if words else None,
+                morphosyntax=(
+                    project_morphosyntax(mor_members(words), backend=stanza_backend)
+                    if words
+                    else None
+                ),
             )
         )
     return document.document_id, _document_source_sha256(document), utterances

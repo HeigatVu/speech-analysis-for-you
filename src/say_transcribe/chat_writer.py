@@ -2,6 +2,8 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Sequence
 
+from speech_features.formats.chat import tier_roles
+
 from say_transcribe.morphosyntax import GraItem, MorItem, UtteranceMorphosyntax
 from say_transcribe.word_grouping import GroupedWord
 
@@ -85,23 +87,30 @@ def format_chat_session(
             timing = f" \x15{utt.start_ms}_{utt.end_ms}\x15"  # chatter rejects a tab here
         lines.append(f"*{utt.speaker}:\t{main_text}{timing}")
 
-        # %wor tier
+        roles = tier_roles(tokens)
+
+        # %wor tier: words, fillers and retraced words (brackets stripped); not `xxx`
         has_timing = any(w.start_ms is not None for w in utt.words)
         if has_timing:
             wor_items: list[str] = []
-            for i, token in enumerate(tokens):
-                is_final_punct = (i == len(tokens) - 1) and token in {".", "?", "!", "...", "…"}
-                if is_final_punct:
-                    wor_items.append(token)
+            for i, (token, role) in enumerate(zip(tokens, roles)):
+                if role not in ("word", "filler", "retraced"):
+                    continue
+                if role == "retraced":
+                    token = token.removeprefix("<").removesuffix(">")
+                word = utt.words[i] if i < len(utt.words) else None
+                if word is not None and word.start_ms is not None and word.end_ms is not None:
+                    wor_items.append(f"{token} \x15{word.start_ms}_{word.end_ms}\x15")
                 else:
-                    if i < len(utt.words) and utt.words[i].start_ms is not None and utt.words[i].end_ms is not None:
-                        wor_items.append(f"{token} \x15{utt.words[i].start_ms}_{utt.words[i].end_ms}\x15")
-                    else:
-                        wor_items.append(token)
+                    wor_items.append(token)
             lines.append(f"%wor:\t{' '.join(wor_items)}")
 
-        # %mor and %gra tiers
-        if utt.morphosyntax is not None:
+        # %mor and %gra tiers (chatter: none when no word is analysable)
+        analysable = any(
+            role == "word" and any(c.isalnum() for c in token)
+            for token, role in zip(tokens, roles)
+        )
+        if utt.morphosyntax is not None and analysable:
             lines.append(utt.morphosyntax.mor_line())
             lines.append(utt.morphosyntax.gra_line())
 

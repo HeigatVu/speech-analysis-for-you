@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from typing import Any, Sequence
 
 from say_transcribe.asr import AsrError
+from speech_features.formats.chat import tier_roles
 from say_transcribe.word_grouping import GroupedWord
 
 
@@ -90,6 +91,12 @@ class StanzaBackend:
             raise AsrError("MODEL_UNAVAILABLE", "Stanza parse execution failed") from None
 
 
+def mor_members(words: Sequence[GroupedWord]) -> tuple[GroupedWord, ...]:
+    """Words `%mor` and `%gra` align to: not retraced, filler, `xxx`, pause or annotation."""
+    roles = tier_roles([w.word for w in words])
+    return tuple(w for w, role in zip(words, roles) if role == "word")
+
+
 def project_morphosyntax(
     grouped_words: Sequence[GroupedWord],
     backend: StanzaBackend | None = None,
@@ -98,7 +105,8 @@ def project_morphosyntax(
 
     Returns UtteranceMorphosyntax or None if parsing fails.
     """
-    if not grouped_words:
+    # chatter rejects %mor/%gra on an utterance with no analysable word (E706, E722).
+    if not any(c.isalnum() for w in grouped_words for c in w.word):
         return None
 
     tokens = [w.word for w in grouped_words]

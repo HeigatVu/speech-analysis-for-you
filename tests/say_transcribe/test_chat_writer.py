@@ -221,3 +221,46 @@ def test_session_round_trips_through_chat_py_with_spaced_media(tmp_path):
         return out
 
     assert shape(doc) == shape(doc2)
+
+
+def _record(words, morphosyntax=None):
+    from say_transcribe.chat_writer import UtteranceRecord
+
+    return UtteranceRecord("PAR", 0, 2000, " ".join(w.word for w in words), tuple(words), morphosyntax)
+
+
+def test_wor_leaves_out_untranscribed_and_keeps_retraced_words_unbracketed():
+    from say_transcribe.chat_writer import format_chat_session
+    from say_transcribe.word_grouping import GroupedWord
+
+    words = [
+        GroupedWord("<tôi", 0, 300, ()),
+        GroupedWord("đi>", 300, 600, ()),
+        GroupedWord("[/]", None, None, ()),
+        GroupedWord("tôi", 600, 900, ()),
+        GroupedWord("xxx", None, None, ()),
+        GroupedWord("&-ờ", 900, 1000, ()),
+        GroupedWord(".", None, None, ()),
+    ]
+
+    text = format_chat_session("s1", "0" * 64, [_record(words)])
+
+    assert "*PAR:\t<tôi đi> [/] tôi xxx &-ờ . \x150_2000\x15" in text
+    assert (
+        "%wor:\ttôi \x150_300\x15 đi \x15300_600\x15 tôi \x15600_900\x15 &-ờ \x15900_1000\x15 ."
+    ) in text
+
+
+def test_mor_and_gra_are_dropped_when_no_word_is_analysable():
+    from say_transcribe.chat_writer import format_chat_session
+    from say_transcribe.morphosyntax import GraItem, MorItem, UtteranceMorphosyntax
+    from say_transcribe.word_grouping import GroupedWord
+
+    words = [GroupedWord("xxx", None, None, ()), GroupedWord(".", None, None, ())]
+    mor = UtteranceMorphosyntax(
+        (MorItem("x", "xxx"), MorItem("punct", ".")), (GraItem(1, 0, "ROOT"), GraItem(2, 1, "PUNCT"))
+    )
+
+    text = format_chat_session("s1", "0" * 64, [_record(words, mor)])
+
+    assert "%mor" not in text and "%gra" not in text
