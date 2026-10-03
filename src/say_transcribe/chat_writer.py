@@ -23,6 +23,15 @@ PARTICIPANTS: tuple[tuple[str, str], ...] = (
 )
 
 
+def _has_timing(utterances: Sequence[UtteranceRecord]) -> bool:
+    """chatter (E544) requires `unlinked` on @Media when nothing carries timing."""
+    return any(
+        (utt.start_ms is not None and utt.end_ms is not None)
+        or any(w.start_ms is not None for w in utt.words)
+        for utt in utterances
+    )
+
+
 def format_chat_session(
     session_id: str,
     source_sha256: str,
@@ -37,7 +46,7 @@ def format_chat_session(
         "@Languages:\tvie",
         "@Participants:\t" + ", ".join(f"{code} {role}" for code, role in PARTICIPANTS),
         *(f"@ID:\tvie|corpus|{code}|||||{role}|||" for code, role in PARTICIPANTS),
-        f"@Media:\t{session_id}, audio",
+        f"@Media:\t{session_id}, audio{'' if _has_timing(utterances) else ', unlinked'}",
         f"@Comment:\tsource_sha256 {source_sha256}",
         (
             "@Comment:\tspeaker labels draft, auto-diarized; review before use"
@@ -73,7 +82,7 @@ def format_chat_session(
         main_text = " ".join(tokens)
         timing = ""
         if utt.start_ms is not None and utt.end_ms is not None:
-            timing = f"\t\x15{utt.start_ms}_{utt.end_ms}\x15"
+            timing = f" \x15{utt.start_ms}_{utt.end_ms}\x15"  # chatter rejects a tab here
         lines.append(f"*{utt.speaker}:\t{main_text}{timing}")
 
         # %wor tier

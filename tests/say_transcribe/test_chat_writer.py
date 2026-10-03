@@ -84,8 +84,8 @@ def test_chat_writer_format_and_provenance_lines(tmp_path: Path):
     assert cha_text.count("@Comment:\tspeaker labels draft, auto-diarized; review before use") == 1
 
     # Main tiers
-    assert "*INV:\thọc_sinh đi học .\t\x150_1200\x15" in cha_text
-    assert "*PAR:\tvâng hiểu rồi .\t\x151300_2500\x15" in cha_text
+    assert "*INV:\thọc_sinh đi học . \x150_1200\x15" in cha_text
+    assert "*PAR:\tvâng hiểu rồi . \x151300_2500\x15" in cha_text
 
     # %wor tier in Delaware shape
     assert "%wor:\thọc_sinh \x150_600\x15 đi \x15600_800\x15 học \x15800_1200\x15 ." in cha_text
