@@ -71,12 +71,12 @@ quiet backend change would change the study arm.
 | [`asr.py`](asr.py) | ASR backend factory and transcription, silence-snapped 20 s windows, repetition-loop guard, segment normalization | `transcribe()`, `make_asr_backend()`, `ASR_MODEL_CHOICES`, `PhoWhisperBackend`, `Qwen3AsrBackend`, `compute_sha256()` |
 | [`vad.py`](vad.py) | Silero VAD detection (on a copy boosted to a −23 dBFS peak, with one lower-threshold retry) and greedy window merging for ASR chunking | `get_speech_windows()`, `merge_asr_windows()` |
 | [`diarize.py`](diarize.py) | Diarization execution, WavLM fallback, and PAR/INV role assignment | `assign_speakers()`, `PyannoteBackend`, `WavlmClusterBackend` |
-| [`alignment.py`](alignment.py) | Wav2Vec2 CTC forced alignment for fine word timestamp boundaries | `align_words()`, `_Wav2Vec2Backend` |
+| [`alignment.py`](alignment.py) | Wav2Vec2 CTC forced alignment for fine word timestamp boundaries; `align_segments()` times word-less, bounded segments for `run --align` | `align_words()`, `align_segments()`, `_Wav2Vec2Backend` |
 | [`word_grouping.py`](word_grouping.py) | Underthesea tokenization, multi-syllable word grouping, span aggregation | `group_utterance_words()`, `GroupedWord` |
 | [`morphosyntax.py`](morphosyntax.py) | Stanza UD-VTB projection into `%mor` and `%gra` format strings (words only; features as `-Val` suffixes) | `project_morphosyntax()`, `mor_members()`, `StanzaBackend`, `UtteranceMorphosyntax` |
 | [`disfluency.py`](disfluency.py) | Draft markup of `[/]` retraces and `&-` Vietnamese fillers; words are marked, never removed | `mark_disfluencies()`, `FILLERS` |
 | [`chat_writer.py`](chat_writer.py) | Serialization of Chatter-valid Delaware-style CHAT format, checked by `chatter validate` in `tests/say_transcribe/test_chatter_validate.py` | `format_chat_session()`, `write_chat_file()` |
-| [`evaluate.py`](evaluate.py) | Evaluation metrics: CER, WER, SyER, and DER with bootstrap resampling | `run_evaluation()`, `score_uncapped()`, `compute_der()`, `items_from_texts()`, `levenshtein()` |
+| [`evaluate.py`](evaluate.py) | Evaluation metrics: CER, WER, SyER, and DER with bootstrap resampling. Predictions with untimed utterances are scored strictly; DER is `null` when a prediction has no timed utterance | `run_evaluation()`, `score_uncapped()`, `compute_der()`, `items_from_texts()`, `levenshtein()` |
 | [`manifest.py`](manifest.py) | Study manifest loading. Rows are private inputs: errors name **row indexes and field names only**, never values, paths, or transcript content | `load_manifest()`, `load_denoiser_specs()`, `ManifestRow`, `ManifestError` |
 | [`profile.py`](profile.py) | The P0 preprocessing profile: zero-phase 200 Hz–3.4 kHz band-pass → 8 kHz → FFmpeg `libgsm` round trip → 16 kHz → two-pass EBU R128 `loudnorm` (`linear=true, I=-23, TP=-1, LRA=50`). All intermediates stay in memory or pipes; **nothing is written to disk and the master audio is never touched** | `bandpass_narrowband()`, `gsm_roundtrip()`, `loudnorm_two_pass()`, `ProfileResult`, `LoudnessReport` |
 | [`denoise.py`](denoise.py) | Denoiser dispatch to subprocess workers in isolated, pinned environments. Never imports torch/torchaudio/DeepFilterNet and never touches the network | `denoise_pcm()`, `DenoiserSpec`, `DenoiseError` |
@@ -106,6 +106,12 @@ say-transcribe run session_001.wav --channel 0 --out output/ --device cuda \
 say-transcribe run session_001.wav --channel 0 --out output/ --asr-model qwen3-asr \
   --expected-sha256 APPROVED_64_CHARACTER_HEX_DIGEST
 
+# 3b. Word timing for word-less ASR arms, and PhoWhisper-large on a 12 GB card
+say-transcribe run session_001.wav --channel 0 --out output/ --asr-model qwen3-asr \
+  --align wav2vec2-vi --expected-sha256 APPROVED_64_CHARACTER_HEX_DIGEST
+say-transcribe run session_001.wav --channel 0 --out output/ --asr-model phowhisper-large \
+  --timestamps segment --align wav2vec2-vi --expected-sha256 APPROVED_64_CHARACTER_HEX_DIGEST
+
 # 4. Compare baseline vs VAD-guided vs CTC-aligned variants
 say-transcribe compare session_001.wav --channel 0 --out comparison/ \
   --expected-sha256 <64-char-hex-hash> --device cuda
@@ -114,7 +120,8 @@ say-transcribe compare session_001.wav --channel 0 --out comparison/ \
 say-transcribe evaluate gold_transcripts/ predicted_transcripts/ --out eval_report.json
 
 # 6. Benchmark ASR models or diarization backends over a study manifest
-say-transcribe benchmark --task asr --manifest manifest.json --out reports/
+say-transcribe benchmark --task asr --manifest manifest.json --out reports/ \
+  --asr-models qwen3-asr,zipformer-vi,phowhisper-large
 say-transcribe benchmark --task diarization --manifest manifest.json --out reports/
 ```
 

@@ -89,8 +89,8 @@ The `say_transcribe` module automates the generation of Delaware-compliant CHAT 
    - **Two-phase mode:** `%mor`/`%gra` describe the *reviewed* text, so `--no-morphosyntax` writes main tiers and `%wor` only (Stanza never loads); after hand-correction, `say-transcribe tag` adds `%mor`/`%gra` to a **new** file. It never overwrites, and `%wor` timings survive the round trip.
 9. **Comparison, Benchmarking & Evaluation:**
    - `say-transcribe compare`: Generates baseline, VAD-guided, and CTC-aligned transcripts side-by-side for methodological comparison.
-   - `say-transcribe evaluate`: Computes Character Error Rate (CER), Word Error Rate (WER), Syllable Error Rate (SyER), and Diarization Error Rate (DER) with seeded bootstrap confidence intervals.
-   - `say-transcribe benchmark --task {asr,diarization}`: Scores ASR models (`phowhisper-large`, `qwen3-asr`) or diarizers (`pyannote`, `wavlm`) against reference transcripts over a study manifest, writing `benchmark-<task>.json` and `benchmark-<task>.md`. Both diarizers run over one fixed `phowhisper-large` front-end so the numbers isolate the diarization variable. Every row checks the source SHA-256 first, unmapped diarization clusters score as `UNKNOWN` rather than being attributed to `PAR`, and each failure is a stable error code.
+   - `say-transcribe evaluate`: Computes Character Error Rate (CER), Word Error Rate (WER), Syllable Error Rate (SyER), and Diarization Error Rate (DER) with seeded bootstrap confidence intervals. A prediction with untimed utterances is still scored strictly (they contribute no interval); one with no timing at all reports DER as absent (`null`, `der_sessions_scored: 0`) rather than 1.0. Word-level WER counts underthesea compounds as one unit, so it is higher than the `benchmark` WER, which is computed over whitespace tokens and therefore equals SyER.
+   - `say-transcribe benchmark --task {asr,diarization}`: Scores ASR models (default `phowhisper-large`, `qwen3-asr`; choose any of the six with `--asr-models`) or diarizers (`pyannote`, `wavlm`) against reference transcripts over a study manifest, writing `benchmark-<task>.json` and `benchmark-<task>.md`. Both diarizers run over one fixed `phowhisper-large` front-end so the numbers isolate the diarization variable. Every row checks the source SHA-256 first, unmapped diarization clusters score as `UNKNOWN` rather than being attributed to `PAR`, and each failure is a stable error code. Each ASR cell records its device and, when pinned, its revision.
    - `say-transcribe preprocess-study`: Runs the opt-in preprocessing A/B study over a private manifest (arms N0 baseline, N1 `vad_asr`, P0 profile, PF/PD denoise) without re-implementing any ASR, VAD, or DSP stage.
    - `say-transcribe ablate --revision <sha>`: Runs six arms (`main`, `compatibility`, `quiet-vad`, `empty-retry`, `silence-cut`, `combined`) that switch the ported VAD boost, empty-retry and silence-snap behaviors on and off individually, scores every arm with the same uncapped spoken-domain metrics and coverage as `evaluate`, and writes `ablation.json` plus `ABLATION.md`. Rates are uncapped because a clamped rate hides the size of a regression. The revision is required — an unpinned arm result is not comparable — and arms that select identical VAD windows reuse one decode, so their runtime is reported as not measured rather than as a second measurement. Promotion is reported only for a strict accuracy gain over `main` with no content, coverage or timing regression; nothing is promoted automatically.
 
@@ -303,6 +303,12 @@ say-transcribe run recording.wav --channel 0 --out output/ --device cuda
 say-transcribe run recording.wav --channel 0 --out output/ --asr-model qwen3-asr
 say-transcribe run recording.wav --channel 0 --out output/ --diarizer wavlm
 
+# 3b. Time the words of a word-less ASR (qwen3-asr, zipformer-vi) with Vietnamese CTC alignment,
+#     or fit PhoWhisper-large on a 12 GB card with segment timestamps plus alignment
+say-transcribe run recording.wav --channel 0 --out output/ --asr-model qwen3-asr --align wav2vec2-vi
+say-transcribe run recording.wav --channel 0 --out output/ --asr-model phowhisper-large \
+  --timestamps segment --align wav2vec2-vi
+
 # 4. Phase 1 without morphosyntax (Stanza never loads), then tag the reviewed draft
 say-transcribe run recording.wav --channel 0 --out draft/ --no-morphosyntax
 say-transcribe tag draft/recording.cha --out final/recording.cha
@@ -316,6 +322,8 @@ say-transcribe evaluate gold_transcripts/ pred_transcripts/ --out eval_report.js
 
 # 7. Benchmark ASR models or diarization backends over a study manifest
 say-transcribe benchmark --task asr --manifest manifest.json --out reports/
+say-transcribe benchmark --task asr --manifest manifest.json --out reports/ \
+  --asr-models qwen3-asr,zipformer-vi,phowhisper-large   # any of the six ASR arms
 ```
 
 `say-transcribe` exit codes: `0` success, `2` usage error, `3` environment/model
