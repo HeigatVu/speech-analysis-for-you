@@ -14,9 +14,9 @@ spec:
       args: [HF_HUB_OFFLINE=1, TRANSFORMERS_OFFLINE=1, .venv/bin/python, -m, pytest, tests, -q]
       timeoutSeconds: 900
     e2e:
-      description: Offline CLI and CHAT serialization integration; private model pilot evidence is recorded separately.
+      description: Offline CLI, CHAT serialization and Chatter integration; set CHATTER_BIN for required local validation. Private pilot evidence is recorded separately.
       command: env
-      args: [HF_HUB_OFFLINE=1, TRANSFORMERS_OFFLINE=1, .venv/bin/python, -m, pytest, tests/say_transcribe/test_cli.py, tests/say_transcribe/test_chat_writer.py, -q]
+      args: [HF_HUB_OFFLINE=1, TRANSFORMERS_OFFLINE=1, .venv/bin/python, -m, pytest, tests/say_transcribe/test_cli.py, tests/say_transcribe/test_chat_writer.py, tests/say_transcribe/test_chatter_validate.py, -q, -rs]
       timeoutSeconds: 300
     lint:
       command: .venv/bin/python

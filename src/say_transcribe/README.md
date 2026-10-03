@@ -87,15 +87,21 @@ quiet backend change would change the study arm.
 
 ## 3. CLI Usage
 
+Use the digest from the approved annotation manifest. `run` and file-based
+`transcribe` reject a missing, malformed or mismatched digest before decoding or
+loading models, and verify it again before publishing results.
+
 ```bash
 # 1. Diagnose environment and model availability
 say-transcribe diagnose
 
 # 2. Transcribe a master WAV file on a specific channel
-say-transcribe run session_001.wav --channel 0 --out output/ --device cuda
+say-transcribe run session_001.wav --channel 0 --out output/ --device cuda \
+  --expected-sha256 APPROVED_64_CHARACTER_HEX_DIGEST
 
 # 3. Choose the ASR model and the diarizer explicitly
-say-transcribe run session_001.wav --channel 0 --out output/ --asr-model qwen3-asr
+say-transcribe run session_001.wav --channel 0 --out output/ --asr-model qwen3-asr \
+  --expected-sha256 APPROVED_64_CHARACTER_HEX_DIGEST
 
 # 4. Compare baseline vs VAD-guided vs CTC-aligned variants
 say-transcribe compare session_001.wav --channel 0 --out comparison/ \
@@ -116,7 +122,8 @@ hand-correction: transcribe without them, review the main tiers, then tag.
 
 ```bash
 # Phase 1: main tiers + %wor only (Stanza never loads)
-say-transcribe run session_001.wav --channel 0 --out draft/ --no-morphosyntax
+say-transcribe run session_001.wav --channel 0 --out draft/ --no-morphosyntax \
+  --expected-sha256 APPROVED_64_CHARACTER_HEX_DIGEST
 
 # ... hand-correct speakers and text in draft/session_001.cha ...
 
