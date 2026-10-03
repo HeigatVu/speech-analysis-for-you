@@ -66,13 +66,14 @@ quiet backend change would change the study arm.
 |---|---|---|
 | [`__init__.py`](__init__.py) | Package entry point; re-exports the audio contract so the pipeline is usable without the CLI | `read_wav()`, `extract_channel()`, `resample_to_16kHz()`, `Audio`, `AudioPreparationError` |
 | [`audio.py`](audio.py) | Audio I/O, strict channel selection, and in-memory resampling | `read_wav()`, `extract_channel()`, `resample_to_16kHz()` |
-| [`asr.py`](asr.py) | ASR backend factory and transcription, repetition guard, segment normalization | `transcribe()`, `make_asr_backend()`, `ASR_MODEL_CHOICES`, `PhoWhisperBackend`, `Qwen3AsrBackend`, `compute_sha256()` |
-| [`vad.py`](vad.py) | Silero VAD detection and greedy window merging for ASR chunking | `get_speech_windows()`, `merge_asr_windows()` |
+| [`asr.py`](asr.py) | ASR backend factory and transcription, silence-snapped 20 s windows, repetition-loop guard, segment normalization | `transcribe()`, `make_asr_backend()`, `ASR_MODEL_CHOICES`, `PhoWhisperBackend`, `Qwen3AsrBackend`, `compute_sha256()` |
+| [`vad.py`](vad.py) | Silero VAD detection (on a copy boosted to a −23 dBFS peak, with one lower-threshold retry) and greedy window merging for ASR chunking | `get_speech_windows()`, `merge_asr_windows()` |
 | [`diarize.py`](diarize.py) | Diarization execution, WavLM fallback, and PAR/INV role assignment | `assign_speakers()`, `PyannoteBackend`, `WavlmClusterBackend` |
 | [`alignment.py`](alignment.py) | Wav2Vec2 CTC forced alignment for fine word timestamp boundaries | `align_words()`, `_Wav2Vec2Backend` |
 | [`word_grouping.py`](word_grouping.py) | Underthesea tokenization, multi-syllable word grouping, span aggregation | `group_utterance_words()`, `GroupedWord` |
-| [`morphosyntax.py`](morphosyntax.py) | Stanza UD-VTB projection into `%mor` and `%gra` format strings | `project_morphosyntax()`, `StanzaBackend`, `UtteranceMorphosyntax` |
-| [`chat_writer.py`](chat_writer.py) | Serialization of Chatter-valid Delaware-style CHAT format | `format_chat_session()`, `write_chat_file()` |
+| [`morphosyntax.py`](morphosyntax.py) | Stanza UD-VTB projection into `%mor` and `%gra` format strings (words only; features as `-Val` suffixes) | `project_morphosyntax()`, `mor_members()`, `StanzaBackend`, `UtteranceMorphosyntax` |
+| [`disfluency.py`](disfluency.py) | Draft markup of `[/]` retraces and `&-` Vietnamese fillers; words are marked, never removed | `mark_disfluencies()`, `FILLERS` |
+| [`chat_writer.py`](chat_writer.py) | Serialization of Chatter-valid Delaware-style CHAT format, checked by `chatter validate` in `tests/say_transcribe/test_chatter_validate.py` | `format_chat_session()`, `write_chat_file()` |
 | [`evaluate.py`](evaluate.py) | Evaluation metrics: CER, WER, SyER, and DER with bootstrap resampling | `run_evaluation()`, `score_uncapped()`, `compute_der()`, `items_from_texts()`, `levenshtein()` |
 | [`manifest.py`](manifest.py) | Study manifest loading. Rows are private inputs: errors name **row indexes and field names only**, never values, paths, or transcript content | `load_manifest()`, `load_denoiser_specs()`, `ManifestRow`, `ManifestError` |
 | [`profile.py`](profile.py) | The P0 preprocessing profile: zero-phase 200 Hz–3.4 kHz band-pass → 8 kHz → FFmpeg `libgsm` round trip → 16 kHz → two-pass EBU R128 `loudnorm` (`linear=true, I=-23, TP=-1, LRA=50`). All intermediates stay in memory or pipes; **nothing is written to disk and the master audio is never touched** | `bandpass_narrowband()`, `gsm_roundtrip()`, `loudnorm_two_pass()`, `ProfileResult`, `LoudnessReport` |
@@ -154,6 +155,24 @@ crash at 6.6 GiB).
 
 Codes `3` and `4` print **static** messages only. A backend's own message is
 never surfaced because it may carry private details.
+
+---
+
+## Batchalign3 alignment
+
+The tier rules follow `TalkBank/chatter` and `FranklinChen/talkbank-tools` (Batchalign3) and are checked with `chatter validate` (tested against chatter 0.28.0; set `CHATTER_BIN` or put `chatter` on `PATH`, otherwise those tests are skipped).
+
+| Tier | Aligned to |
+|---|---|
+| `%mor`, `%gra` | words, `,` (`cm\|cm`) and the terminator; **not** retraced words, `&-` fillers, `xxx`, `(.)`, `&+`/`&~`, or annotations. No `%mor`/`%gra` at all when an utterance has no analysable word. |
+| `%wor` | words, fillers and retraced words (without `<>`), plus the terminator; not `xxx`. |
+| bullets | a space (never a tab) before the `\x15start_end\x15` bullet; `@Media: name, audio, unlinked` when nothing is timed. |
+
+Retrace markup is an exact repeated n-gram (1 to 4 words, case-insensitive, `[/]` only); a repeat across punctuation is not marked. The Vietnamese filler list (`ờ ừ à ơ ừm ờm`) is a local choice, since Batchalign3 only lists English fillers.
+
+Divergences kept on purpose:
+- **Compound words.** Batchalign3 tags one token per syllable and strips `_` from lemmas; this package keeps underthesea compounds (`học_sinh`), which chatter accepts.
+- **Audio channels.** Batchalign3's `inference/audio.py` mean-downmixes multichannel audio; this package never does (AGENTS.md), so that file is a reference for in-memory resampling only.
 
 ---
 
