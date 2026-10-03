@@ -6,6 +6,11 @@ from speech_features.formats.chat import tier_roles
 from say_transcribe.word_grouping import GroupedWord
 
 
+_NO_FEATS_POS = frozenset(
+    {"adp", "adv", "cconj", "intj", "num", "part", "sconj", "sym", "x", "punct"}
+)
+
+
 @dataclass(frozen=True)
 class MorItem:
     pos: str
@@ -18,8 +23,8 @@ class MorItem:
         if self.lemma in {".", "?", "!", "...", "…"}:
             return self.lemma
         # UD feats are "Key=Val|Key=Val"; %mor allows one "|" (pos|lemma), so keep the
-        # values only, as "-Val" suffixes.
-        pairs = self.feats.split("|") if self.feats else []
+        # values only, as "-Val" suffixes. Function-word POS carry none (Batchalign3).
+        pairs = self.feats.split("|") if self.feats and self.pos not in _NO_FEATS_POS else []
         suffix = "".join(f"-{pair.partition('=')[2] or pair}" for pair in pairs)
         return f"{self.pos}|{self.lemma}{suffix}"
 

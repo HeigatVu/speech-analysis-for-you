@@ -4,6 +4,8 @@ import subprocess
 import sys
 from typing import Any, Sequence
 
+import pytest
+
 from say_transcribe.morphosyntax import (
     GraItem,
     MorItem,
@@ -253,3 +255,12 @@ def test_mor_members_keep_words_and_separators_but_not_markup():
     ]
 
     assert [w.word for w in mor_members(words)] == ["tôi", "đi", ",", "."]
+
+
+@pytest.mark.parametrize("pos", ["adp", "adv", "cconj", "intj", "num", "part", "sconj", "sym", "x", "punct"])
+def test_mor_writes_no_features_for_function_word_pos(pos):
+    assert MorItem(pos=pos, lemma="của", feats="Case=Gen").format_mor() == f"{pos}|của"
+
+
+def test_mor_keeps_comma_joined_feature_values():
+    assert MorItem("noun", "nhà", "Number=Plur,Sing").format_mor() == "noun|nhà-Plur,Sing"

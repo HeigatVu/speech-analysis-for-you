@@ -56,6 +56,19 @@ def _feats() -> UtteranceRecord:
     )
 
 
+def _feats_variants() -> UtteranceRecord:
+    return _utterance(
+        [_word("nhà", 0, 300), _word("của", 300, 500), _word("tôi", 500, 800), _word(".")],
+        [
+            MorItem("noun", "nhà", "Number=Plur,Sing"),
+            MorItem("adp", "của", "Case=Gen"),
+            MorItem("pron", "tôi", "Person=1"),
+            MorItem("punct", "."),
+        ],
+        [GraItem(1, 0, "ROOT"), GraItem(2, 1, "CASE"), GraItem(3, 2, "OBL"), GraItem(4, 1, "PUNCT")],
+    )
+
+
 def _untimed_main_tier_only() -> UtteranceRecord:
     return _utterance([_word("tôi"), _word("đi"), _word(".")], timed=False)
 
@@ -93,6 +106,7 @@ CASES = {
     "plain": _plain,
     "comma": _comma,
     "ud_feats": _feats,
+    "ud_feats_multi_value_and_function_pos": _feats_variants,
     "main_tier_only": _untimed_main_tier_only,
     "unintelligible_only": _unintelligible_only,
 }
