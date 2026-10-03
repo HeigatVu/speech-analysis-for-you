@@ -98,3 +98,78 @@ def test_hides_detector_errors_behind_stable_vad_error(monkeypatch: pytest.Monke
 
     assert caught.value.code == "VAD_UNAVAILABLE"
     assert "private model path" not in str(caught.value)
+
+
+def _quiet(peak: float, samples: int = 16000) -> np.ndarray:
+    audio = np.zeros(samples, dtype=np.float32)
+    audio[::7] = peak
+    audio[3::7] = -peak
+    return audio
+
+
+def test_quiet_audio_is_boosted_to_a_minus_23_dbfs_peak_for_detection_only() -> None:
+    audio = _quiet(0.02)
+    original = audio.copy()
+    seen: list[np.ndarray] = []
+
+    def detector(clip: np.ndarray) -> list[tuple[int, int]]:
+        seen.append(clip)
+        return [(0, 8000)]
+
+    get_speech_windows(audio, detector=detector)
+
+    assert float(np.abs(seen[0]).max()) == pytest.approx(0.071, rel=1e-3)
+    assert np.array_equal(audio, original)
+
+
+def test_loud_audio_is_not_boosted() -> None:
+    audio = _quiet(0.5)
+    seen: list[np.ndarray] = []
+
+    def detector(clip: np.ndarray) -> list[tuple[int, int]]:
+        seen.append(clip)
+        return [(0, 8000)]
+
+    get_speech_windows(audio, detector=detector)
+
+    assert float(np.abs(seen[0]).max()) == pytest.approx(0.5)
+
+
+def test_boost_gain_is_capped_so_near_silence_is_not_amplified_into_speech() -> None:
+    seen: list[np.ndarray] = []
+
+    def detector(clip: np.ndarray) -> list[tuple[int, int]]:
+        seen.append(clip)
+        return []
+
+    get_speech_windows(_quiet(1e-5), detector=detector)
+
+    assert float(np.abs(seen[0]).max()) == pytest.approx(1e-3, rel=1e-3)
+
+
+def test_empty_first_pass_retries_once_with_lower_threshold_and_shorter_speech(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[float, int]] = []
+
+    def detect(_audio: np.ndarray, threshold: float, min_speech_ms: int = 250):
+        calls.append((threshold, min_speech_ms))
+        return [] if len(calls) == 1 else [(0, 3000)]  # 187 ms: kept only by the retry
+
+    monkeypatch.setattr("say_transcribe.vad._load_silero_detector", lambda: detect)
+
+    assert get_speech_windows(_quiet(0.02), threshold=0.2) == [(0, 3480)]
+    assert calls == [(0.2, 250), (0.1, 150)]
+
+
+def test_no_retry_when_the_first_pass_finds_speech(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[float] = []
+
+    def detect(_audio: np.ndarray, threshold: float, min_speech_ms: int = 250):
+        calls.append(threshold)
+        return [(0, 8000)]
+
+    monkeypatch.setattr("say_transcribe.vad._load_silero_detector", lambda: detect)
+    get_speech_windows(_quiet(0.02), threshold=0.2)
+
+    assert calls == [0.2]

@@ -10,6 +10,13 @@ _MIN_SPEECH_SAMPLES = SAMPLE_RATE // 4
 _MAX_SILENCE_SAMPLES = SAMPLE_RATE * 7 // 10
 _PAD_SAMPLES = SAMPLE_RATE * 30 // 1000
 _MAX_WINDOW_SAMPLES = SAMPLE_RATE * 20
+_DEFAULT_MIN_SPEECH_MS = 250
+_RETRY_MIN_SPEECH_MS = 150
+# Quiet recordings (-33 to -55 LUFS) starve Silero, so detection sees a copy lifted to a
+# -23 dBFS peak (sherpa-vietnamese-asr). Gain is capped at 40 dB so near-silence is not
+# amplified into false speech. ASR and the audio on disk never see the boosted copy.
+_BOOST_PEAK = 0.071
+_MAX_BOOST_GAIN = 100.0
 
 
 class VADUnavailableError(Exception):
@@ -22,7 +29,7 @@ class VADUnavailableError(Exception):
 
 
 Detector = Callable[[np.ndarray], Iterable[tuple[int, int]]]
-DefaultDetector = Callable[[np.ndarray, float], Iterable[tuple[int, int]]]
+DefaultDetector = Callable[..., Iterable[tuple[int, int]]]
 
 
 @lru_cache(maxsize=1)
@@ -35,19 +42,40 @@ def _load_silero_detector() -> DefaultDetector:
     except Exception as exc:
         raise VADUnavailableError() from exc
 
-    def detect(audio: np.ndarray, threshold: float) -> list[tuple[int, int]]:
+    def detect(
+        audio: np.ndarray, threshold: float, min_speech_ms: int = _DEFAULT_MIN_SPEECH_MS
+    ) -> list[tuple[int, int]]:
         spans = get_speech_timestamps(
             torch.from_numpy(audio),
             model,
             sampling_rate=SAMPLE_RATE,
             threshold=threshold,
-            min_speech_duration_ms=250,
+            min_speech_duration_ms=min_speech_ms,
             min_silence_duration_ms=100,
             speech_pad_ms=0,
         )
         return [(int(span["start"]), int(span["end"])) for span in spans]
 
     return detect
+
+
+def _boost_for_detection(audio: np.ndarray) -> np.ndarray:
+    peak = float(np.abs(audio).max())
+    if peak == 0 or peak >= _BOOST_PEAK:
+        return audio
+    return audio * np.float32(min(_BOOST_PEAK / peak, _MAX_BOOST_GAIN))
+
+
+def _bound_spans(
+    spans: Iterable[tuple[int, int]], length: int, min_samples: int
+) -> list[tuple[int, int]]:
+    bounded: list[tuple[int, int]] = []
+    for start, end in spans:
+        start = max(0, min(length, int(start)))
+        end = max(0, min(length, int(end)))
+        if end - start >= min_samples:
+            bounded.append((start, end))
+    return bounded
 
 
 def merge_asr_windows(
@@ -88,19 +116,19 @@ def get_speech_windows(
     if len(audio) == 0:
         return []
 
+    detect_audio = _boost_for_detection(audio)
     try:
-        detected = list(
-            _load_silero_detector()(audio, threshold)
-            if detector is None
-            else detector(audio)
-        )
-        bounded: list[tuple[int, int]] = []
-        for span in detected:
-            start, end = span
-            start = max(0, min(len(audio), int(start)))
-            end = max(0, min(len(audio), int(end)))
-            if end - start >= _MIN_SPEECH_SAMPLES:
-                bounded.append((start, end))
+        if detector is not None:
+            bounded = _bound_spans(detector(detect_audio), len(audio), _MIN_SPEECH_SAMPLES)
+        else:
+            detect = _load_silero_detector()
+            bounded = _bound_spans(detect(detect_audio, threshold), len(audio), _MIN_SPEECH_SAMPLES)
+            if not bounded:
+                bounded = _bound_spans(
+                    detect(detect_audio, threshold / 2, _RETRY_MIN_SPEECH_MS),
+                    len(audio),
+                    SAMPLE_RATE * _RETRY_MIN_SPEECH_MS // 1000,
+                )
     except VADUnavailableError:
         raise
     except Exception as exc:
