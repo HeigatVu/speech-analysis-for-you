@@ -173,3 +173,65 @@ def test_no_retry_when_the_first_pass_finds_speech(monkeypatch: pytest.MonkeyPat
     get_speech_windows(_quiet(0.02), threshold=0.2)
 
     assert calls == [0.2]
+
+
+# The three ported robustness behaviors are separable so the ablation study can
+# turn one off at a time. Defaults keep every earlier caller on today's behavior.
+
+
+def test_boost_can_be_turned_off_for_an_ablation_arm() -> None:
+    seen: list[np.ndarray] = []
+
+    def detector(clip: np.ndarray) -> list[tuple[int, int]]:
+        seen.append(clip)
+        return [(0, 8000)]
+
+    get_speech_windows(_quiet(0.02), detector=detector, boost=False)
+
+    assert float(np.abs(seen[0]).max()) == pytest.approx(0.02)
+
+
+def test_retry_can_be_turned_off_for_an_ablation_arm(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[float] = []
+
+    def detect(_audio: np.ndarray, threshold: float, min_speech_ms: int = 250):
+        calls.append(threshold)
+        return []
+
+    monkeypatch.setattr("say_transcribe.vad._load_silero_detector", lambda: detect)
+
+    assert get_speech_windows(_quiet(0.02), threshold=0.2, retry=False) == []
+    assert calls == [0.2]
+
+
+def _long_speech_with_a_quiet_patch() -> tuple[np.ndarray, int]:
+    """45 s of loud speech with 500 ms of silence at 18.5 s, inside the 2 s search."""
+    rate = 16000
+    audio = np.full(45 * rate, 0.5, dtype=np.float32)
+    quiet_start = 18 * rate + rate // 2
+    audio[quiet_start : quiet_start + rate // 2] = 0.0
+    return audio, quiet_start
+
+
+def test_a_hard_cut_is_the_default_until_an_arm_asks_for_snapping() -> None:
+    audio, _ = _long_speech_with_a_quiet_patch()
+
+    windows = get_speech_windows(audio, detector=lambda _: [(0, 40 * 16000)])
+
+    assert windows[0] == (0, 20 * 16000)
+
+
+def test_snapping_cuts_at_the_quietest_frame_before_the_hard_limit() -> None:
+    rate = 16000
+    audio, quiet_start = _long_speech_with_a_quiet_patch()
+
+    snapped = get_speech_windows(audio, detector=lambda _: [(0, 40 * rate)], snap=True)
+    hard = get_speech_windows(audio, detector=lambda _: [(0, 40 * rate)])
+
+    # The cut moves into the quiet patch, never past it and never past the hard limit.
+    assert quiet_start <= snapped[0][1] <= quiet_start + rate // 2
+    assert snapped[0][1] < hard[0][1]
+    # Snapping re-cuts the same audio, so nothing is dropped or duplicated.
+    assert snapped[0][0] == hard[0][0] == 0
+    assert all(left[1] == right[0] for left, right in zip(snapped, snapped[1:]))
+    assert snapped[-1][1] == hard[-1][1]

@@ -6,6 +6,7 @@ from typing import Any, Sequence
 
 from speech_features.formats.chat import InvalidChatError, decode_chat
 
+from say_transcribe.ablation import run_ablation
 from say_transcribe.alignment import AlignmentError, align_words
 from say_transcribe.asr import (
     ASR_MODEL_CHOICES,
@@ -159,6 +160,27 @@ def build_parser() -> argparse.ArgumentParser:
         choices=list(ASR_MODEL_CHOICES),
         default="phowhisper-medium",
         help="ASR model backend",
+    )
+
+    # ablate (T13 six-arm study of the ported ASR/VAD robustness behaviors)
+    ablate_parser = subparsers.add_parser(
+        "ablate", help="Run the six-arm ablation over a private manifest"
+    )
+    ablate_parser.add_argument("manifest", type=Path, help="Path to private study manifest JSON")
+    ablate_parser.add_argument("--out", type=Path, required=True, help="Private output directory")
+    ablate_parser.add_argument(
+        "--device", choices=["cpu", "cuda"], default="cpu", help="Compute device"
+    )
+    ablate_parser.add_argument(
+        "--asr-model",
+        choices=list(ASR_MODEL_CHOICES),
+        default="phowhisper-large",
+        help="ASR model backend",
+    )
+    ablate_parser.add_argument(
+        "--revision",
+        required=True,
+        help="Pinned model revision; an unpinned arm result is not comparable",
     )
 
     # benchmark
@@ -738,6 +760,40 @@ def cmd_preprocess_study(
         return 4
 
 
+def cmd_ablate(
+    manifest: Path,
+    out_dir: Path,
+    revision: str,
+    device: str = "cpu",
+    asr_model: str = "phowhisper-large",
+) -> int:
+    try:
+        run_ablation(
+            manifest_path=manifest,
+            out_dir=out_dir,
+            model=asr_model,
+            revision=revision,
+            device=device,
+        )
+        sys.stdout.write("Ablation run complete\n")
+        return 0
+    except ManifestError as error:
+        sys.stderr.write(f"[{error.code}] {error.message}\n")
+        return 2
+    except StudyError as error:
+        sys.stderr.write(f"[{error.code}] {error.message}\n")
+        return 2 if error.code == "SOURCE_HASH_MISMATCH" else 4
+    except AsrError as error:
+        sys.stderr.write(f"[{error.code}] {error.message}\n")
+        return 3 if error.code in ("GPU_UNAVAILABLE", "MODEL_UNAVAILABLE") else 4
+    except VADUnavailableError:
+        sys.stderr.write("[VAD_UNAVAILABLE] Speech activity detection failed\n")
+        return 4
+    except Exception:
+        sys.stderr.write("[ABLATION_FAILED] Ablation pipeline execution failed\n")
+        return 4
+
+
 def cmd_benchmark(task: str, manifest: Path, out_dir: Path, device: str = "cpu") -> int:
     try:
         rows = load_manifest(manifest)
@@ -806,6 +862,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         return cmd_preprocess_study(
             manifest=args.manifest,
             out_dir=args.out,
+            device=args.device,
+            asr_model=args.asr_model,
+        )
+    elif args.command == "ablate":
+        return cmd_ablate(
+            manifest=args.manifest,
+            out_dir=args.out,
+            revision=args.revision,
             device=args.device,
             asr_model=args.asr_model,
         )

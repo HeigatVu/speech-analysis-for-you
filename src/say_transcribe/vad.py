@@ -12,6 +12,9 @@ _PAD_SAMPLES = SAMPLE_RATE * 30 // 1000
 _MAX_WINDOW_SAMPLES = SAMPLE_RATE * 20
 _DEFAULT_MIN_SPEECH_MS = 250
 _RETRY_MIN_SPEECH_MS = 150
+_SNAP_SEARCH_SAMPLES = SAMPLE_RATE * 2
+_SNAP_FRAME_SAMPLES = SAMPLE_RATE * 3 // 10
+_SNAP_HOP_SAMPLES = SAMPLE_RATE // 20
 # Quiet recordings (-33 to -55 LUFS) starve Silero, so detection sees a copy lifted to a
 # -23 dBFS peak (sherpa-vietnamese-asr). Gain is capped at 40 dB so near-silence is not
 # amplified into false speech. ASR and the audio on disk never see the boosted copy.
@@ -66,6 +69,21 @@ def _boost_for_detection(audio: np.ndarray) -> np.ndarray:
     return audio * np.float32(min(_BOOST_PEAK / peak, _MAX_BOOST_GAIN))
 
 
+def _quietest_cut(audio: np.ndarray, low: int, high: int) -> int:
+    """Midpoint of the lowest-energy frame in [low, high), or `high` if the search span
+    is shorter than a frame or its last frame is already the quietest."""
+    if high - low < _SNAP_FRAME_SAMPLES:
+        return high
+    squares = np.concatenate(([0.0], np.cumsum(np.square(audio[low:high], dtype=np.float64))))
+    starts = np.arange(0, high - low - _SNAP_FRAME_SAMPLES + 1, _SNAP_HOP_SAMPLES)
+    starts = np.append(starts, high - low - _SNAP_FRAME_SAMPLES)
+    energy = squares[starts + _SNAP_FRAME_SAMPLES] - squares[starts]
+    best = int(np.argmin(energy))
+    if energy[best] >= energy[-1]:
+        return high
+    return low + int(starts[best]) + _SNAP_FRAME_SAMPLES // 2
+
+
 def _bound_spans(
     spans: Iterable[tuple[int, int]], length: int, min_samples: int
 ) -> list[tuple[int, int]]:
@@ -104,8 +122,15 @@ def get_speech_windows(
     *,
     detector: Detector | None = None,
     threshold: float = 0.2,
+    boost: bool = True,
+    retry: bool = True,
+    snap: bool = False,
 ) -> list[tuple[int, int]]:
-    """Return padded, merged 16 kHz speech windows as half-open sample spans."""
+    """Return padded, merged 16 kHz speech windows as half-open sample spans.
+
+    `boost`, `retry` and `snap` each switch off one ported robustness behavior so an
+    ablation arm can measure it alone; every default is the shipped behavior.
+    """
     if not 0 < threshold < 1:
         raise ValueError("VAD threshold must be between 0 and 1")
     audio = np.asarray(audio_16k, dtype=np.float32)
@@ -116,14 +141,14 @@ def get_speech_windows(
     if len(audio) == 0:
         return []
 
-    detect_audio = _boost_for_detection(audio)
+    detect_audio = _boost_for_detection(audio) if boost else audio
     try:
         if detector is not None:
             bounded = _bound_spans(detector(detect_audio), len(audio), _MIN_SPEECH_SAMPLES)
         else:
             detect = _load_silero_detector()
             bounded = _bound_spans(detect(detect_audio, threshold), len(audio), _MIN_SPEECH_SAMPLES)
-            if not bounded:
+            if not bounded and retry:
                 bounded = _bound_spans(
                     detect(detect_audio, threshold / 2, _RETRY_MIN_SPEECH_MS),
                     len(audio),
@@ -151,6 +176,12 @@ def get_speech_windows(
         end = min(len(audio), end + _PAD_SAMPLES)
         while start < end:
             window_end = min(start + _MAX_WINDOW_SAMPLES, end)
+            if snap and window_end < end:
+                window_end = _quietest_cut(
+                    audio,
+                    max(start + _SNAP_FRAME_SAMPLES, window_end - _SNAP_SEARCH_SAMPLES),
+                    window_end,
+                )
             windows.append((start, window_end))
             start = window_end
     return windows

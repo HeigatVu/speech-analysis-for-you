@@ -499,7 +499,7 @@ def compute_arm_results(
     )
 
 
-def _read_reference(row: ManifestRow) -> str:
+def read_reference(row: ManifestRow) -> str:
     try:
         return row.reference_path.read_text(encoding="utf-8")
     except OSError:
@@ -511,13 +511,15 @@ def session_record(
     arms: dict[str, AsrResult],
     *,
     extras: dict[str, dict[str, Any]] | None = None,
+    order: Sequence[str] = ARM_ORDER,
 ) -> dict[str, Any]:
     """Build the private per-session record: arm predictions plus uncapped scores.
 
     ``extras`` are per-arm additions (coverage, features, runtime) computed by the
-    study run; the scoring record itself is unchanged without them.
+    study run; the scoring record itself is unchanged without them. ``order`` is the
+    arm order to record, so a different arm set reuses this one scoring path.
     """
-    reference_text = _read_reference(row)
+    reference_text = read_reference(row)
     gold = extract_session_items(reference_text)
     if not gold["syllables"]:
         raise StudyError("INVALID_ARGUMENT", "reference transcript contains no scorable text")
@@ -531,7 +533,7 @@ def session_record(
         "asr_revision": row.asr_revision,
         "arms": {},
     }
-    for name in ARM_ORDER:
+    for name in order:
         if name not in arms:
             continue
         result = arms[name]
@@ -585,7 +587,7 @@ def compute_session(
     # mid-run cannot mix sources into one record.
     verify_source(row)
 
-    document = load_reference_document(_read_reference(row))
+    document = load_reference_document(read_reference(row))
     reference = reference_intervals(document)
     audio_ms = int(round(run.signals["N1"].shape[0] * 1000 / SAMPLE_RATE))
     if max(end for _, end in reference.utterances) > audio_ms + REFERENCE_TAIL_TOLERANCE_MS:

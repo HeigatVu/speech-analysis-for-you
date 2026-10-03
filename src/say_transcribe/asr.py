@@ -7,6 +7,7 @@ from typing import Any, Callable, Sequence
 import numpy as np
 
 from say_transcribe.audio import extract_channel, read_wav, resample_to_16kHz
+from say_transcribe.vad import _SNAP_FRAME_SAMPLES, _SNAP_SEARCH_SAMPLES, _quietest_cut
 
 
 class AsrError(Exception):
@@ -166,9 +167,6 @@ def _collapse_loop_segments(segments: Sequence[dict[str, Any]]) -> list[dict[str
 
 
 _WINDOW_SAMPLES = 20 * 16000
-_SNAP_SEARCH_SAMPLES = 2 * 16000
-_SNAP_FRAME_SAMPLES = 16000 * 3 // 10
-_SNAP_HOP_SAMPLES = 16000 // 20
 
 
 def _window_bounds(
@@ -191,21 +189,6 @@ def _window_bounds(
         bounds.append((start, end))
         start = end
     return bounds
-
-
-def _quietest_cut(audio: np.ndarray, low: int, high: int) -> int:
-    """Midpoint of the lowest-energy frame in [low, high), or `high` if the search span
-    is shorter than a frame or its last frame is already the quietest."""
-    if high - low < _SNAP_FRAME_SAMPLES:
-        return high
-    squares = np.concatenate(([0.0], np.cumsum(np.square(audio[low:high], dtype=np.float64))))
-    starts = np.arange(0, high - low - _SNAP_FRAME_SAMPLES + 1, _SNAP_HOP_SAMPLES)
-    starts = np.append(starts, high - low - _SNAP_FRAME_SAMPLES)
-    energy = squares[starts + _SNAP_FRAME_SAMPLES] - squares[starts]
-    best = int(np.argmin(energy))
-    if energy[best] >= energy[-1]:
-        return high
-    return low + int(starts[best]) + _SNAP_FRAME_SAMPLES // 2
 
 
 def _has_complete_lexical_timing(words: Sequence[dict[str, Any]]) -> bool:
