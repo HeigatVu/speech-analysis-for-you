@@ -153,6 +153,47 @@ def test_generated_session_is_chatter_valid(tmp_path: Path, name: str) -> None:
 
 
 @NEEDS_CHATTER
+def test_asr_segment_with_glued_punctuation_is_chatter_valid(tmp_path: Path) -> None:
+    """p002's draft was rejected with E316/E342 because Whisper glued the sentence
+    period onto the last word. This walks the same steps `run` walks, from the raw
+    ASR segment to the written file, so the delivered draft cannot be invalid CHAT."""
+    import numpy as np
+
+    from say_transcribe.asr import result_from_windows
+    from say_transcribe.disfluency import drop_invalid_commas, mark_disfluencies
+    from say_transcribe.word_grouping import group_utterance_words
+
+    raw = {
+        "start_ms": 0,
+        "end_ms": 900,
+        "text": "như thế. như thế,",
+        "words": [
+            {"word": "như", "start_ms": 0, "end_ms": 200},
+            {"word": "thế.", "start_ms": 200, "end_ms": 400},
+            {"word": "như", "start_ms": 400, "end_ms": 600},
+            {"word": "thế,", "start_ms": 600, "end_ms": 900},
+        ],
+    }
+    asr = result_from_windows(
+        np.zeros(16000, dtype=np.float32), "0" * 64, ((0, 16000, (raw,)),)
+    )
+    segment = asr.segments[0]
+    words = mark_disfluencies(drop_invalid_commas(group_utterance_words(segment)))
+    utterance = UtteranceRecord(
+        speaker="PAR",
+        start_ms=segment.start_ms,
+        end_ms=segment.end_ms,
+        text=segment.text,
+        words=words,
+        morphosyntax=None,
+    )
+
+    result = validate(tmp_path, [utterance])
+
+    assert result.returncode == 0, result.stdout[-1500:]
+
+
+@NEEDS_CHATTER
 def test_repo_chatter_fixture_is_chatter_valid() -> None:
     fixture = Path(__file__).parent / "fixtures" / "chatter_mor_gra_fixture.cha"
 

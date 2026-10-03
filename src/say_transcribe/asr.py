@@ -93,6 +93,12 @@ def _is_lexical_word(word: Any) -> bool:
     return any(character.isalnum() for character in str(word))
 
 
+# Same set the repetition guard already strips: Whisper's word chunks carry sentence
+# punctuation on the word itself. CHAT markup characters are deliberately absent, so a
+# token like `&-ờ` or `[/]` can never be reshaped here.
+_ASR_EDGE_PUNCTUATION = ".,!?…"
+
+
 def _is_suspected_repetition(words: Sequence[dict[str, Any]]) -> bool:
     """Flag a decode that looks like a Whisper repetition loop or an unrecognized
     token, rather than trusting it as real speech (real p001 pilot output: 59-65%
@@ -199,11 +205,29 @@ def _has_complete_lexical_timing(words: Sequence[dict[str, Any]]) -> bool:
     )
 
 
+def _without_sentence_punctuation(text: str) -> str:
+    """Drop the sentence punctuation Whisper glues onto a word's edges.
+
+    Real p002 output ended a segment with the word ``"thế."``. Left alone it makes the
+    written main tier unparsable (chatter E316, then E316/E342 on ``%wor``) and counts
+    as a phantom substitution against the reference, which compares bare tokens.
+    """
+    return text.strip(_ASR_EDGE_PUNCTUATION)
+
+
 def _normalize_segment(
     segment: dict[str, Any], duration_ms: int
 ) -> dict[str, Any]:
     segment_span = _valid_span(
         segment.get("start_ms"), segment.get("end_ms"), duration_ms
+    )
+    text = " ".join(
+        cleaned
+        for cleaned in (
+            _without_sentence_punctuation(token)
+            for token in str(segment.get("text", "")).split()
+        )
+        if cleaned
     )
     words = []
     timed_spans = []
@@ -211,7 +235,10 @@ def _normalize_segment(
     lexical_words_timed = True
     lexical_word_count = 0
     for word in segment.get("words", []):
-        is_lexical = _is_lexical_word(word.get("word", ""))
+        token = _without_sentence_punctuation(str(word.get("word", "")))
+        if not token:
+            continue
+        is_lexical = _is_lexical_word(token)
         lexical_word_count += is_lexical
         span = _valid_span(word.get("start_ms"), word.get("end_ms"), duration_ms)
         if span is not None and segment_span is not None:
@@ -227,7 +254,7 @@ def _normalize_segment(
             start_ms, end_ms = span
             timed_spans.append(span)
             previous_start = start_ms
-        words.append({**word, "start_ms": start_ms, "end_ms": end_ms})
+        words.append({**word, "word": token, "start_ms": start_ms, "end_ms": end_ms})
 
     if segment_span is None and timed_spans and lexical_word_count and lexical_words_timed:
         segment_span = min(start for start, _ in timed_spans), max(end for _, end in timed_spans)
@@ -235,6 +262,7 @@ def _normalize_segment(
         **segment,
         "start_ms": None if segment_span is None else segment_span[0],
         "end_ms": None if segment_span is None else segment_span[1],
+        "text": text,
         "words": words,
     }
 

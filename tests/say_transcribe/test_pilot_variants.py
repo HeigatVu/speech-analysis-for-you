@@ -72,7 +72,7 @@ def test_alignment_splits_after_asr_and_keeps_unalignable_text_untimed():
         aligner=lambda clip, words: ((100, 250), (300, 450), (None, None), (1400, 1600)),
     )
 
-    assert [segment.text for segment in result.segments] == ["xin chào.", "cảm ơn"]
+    assert [segment.text for segment in result.segments] == ["xin chào", "cảm ơn"]
     assert (result.segments[0].start_ms, result.segments[0].end_ms) == (1100, 1450)
     assert result.segments[1].start_ms is None
     assert result.segments[1].end_ms is None

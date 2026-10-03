@@ -578,7 +578,8 @@ def test_short_valid_vietnamese_repeats_are_kept():
 
     segs = backend.transcribe_audio(np.zeros(16000 * 5, dtype=np.float32))
 
-    assert [s["text"] for s in segs] == ["một một bảy.", "ừ ừ."]
+    # The repeats survive; Whisper's own sentence periods do not reach this layer.
+    assert [s["text"] for s in segs] == ["một một bảy", "ừ ừ"]
 
 
 def _noise(seconds, seed=0):
@@ -641,3 +642,82 @@ def test_backend_offsets_follow_the_snapped_windows():
 
     assert [s["start_ms"] for s in segs] == [round(start / 16) for start, _ in bounds]
     assert bounds[0][1] != 20 * 16000
+
+
+# Real p002 output: Whisper glued the sentence period onto the last word, which made
+# chatter reject the file (E316 on the main tier, then E316/E342 on %wor) and counted
+# as a phantom substitution against the reference. The ASR boundary owns the split.
+_GLUED_SEGMENT = {
+    "start_ms": 0,
+    "end_ms": 900,
+    "text": "như thế.",
+    "words": [
+        {"word": "như", "start_ms": 0, "end_ms": 400},
+        {"word": "thế.", "start_ms": 400, "end_ms": 900},
+    ],
+}
+
+
+def test_transcribe_leaves_no_sentence_punctuation_on_words(sample_wav):
+    backend = FakePhoWhisperBackend([_GLUED_SEGMENT])
+
+    res = transcribe(
+        sample_wav, expected_sha256=compute_sha256(sample_wav), channel_index=0, backend=backend
+    )
+
+    assert [w.word for w in res.segments[0].words] == ["như", "thế"]
+    assert res.segments[0].text == "như thế"
+
+
+def test_window_pipeline_cleans_the_same_punctuation():
+    from say_transcribe.asr import result_from_windows
+
+    res = result_from_windows(
+        np.zeros(16000, dtype=np.float32), "a" * 64, ((0, 16000, (_GLUED_SEGMENT,)),)
+    )
+
+    assert [w.word for w in res.segments[0].words] == ["như", "thế"]
+    assert res.segments[0].text == "như thế"
+
+
+def test_punctuation_only_word_is_dropped_rather_than_emptied():
+    from say_transcribe.asr import result_from_windows
+
+    segment = {
+        "start_ms": 0,
+        "end_ms": 900,
+        "text": "thế .",
+        "words": [
+            {"word": "thế", "start_ms": 0, "end_ms": 400},
+            {"word": ".", "start_ms": 400, "end_ms": 500},
+        ],
+    }
+
+    res = result_from_windows(
+        np.zeros(16000, dtype=np.float32), "a" * 64, ((0, 16000, (segment,)),)
+    )
+
+    assert [w.word for w in res.segments[0].words] == ["thế"]
+    assert res.segments[0].text == "thế"
+
+
+def test_cleaning_leaves_chat_markup_and_diacritics_verbatim():
+    from say_transcribe.asr import result_from_windows
+
+    kept = ["&-ờ", "[/]", "cứu_hoả", "(.)", "xxx", "được", "cô_bé"]
+    segment = {
+        "start_ms": 0,
+        "end_ms": 900,
+        "text": " ".join(kept),
+        "words": [
+            {"word": token, "start_ms": i * 100, "end_ms": i * 100 + 90}
+            for i, token in enumerate(kept)
+        ],
+    }
+
+    res = result_from_windows(
+        np.zeros(16000, dtype=np.float32), "a" * 64, ((0, 16000, (segment,)),)
+    )
+
+    assert [w.word for w in res.segments[0].words] == kept
+    assert res.segments[0].text == " ".join(kept)
