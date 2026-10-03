@@ -486,8 +486,8 @@ class PhoWhisperBackend:
 class Qwen3AsrBackend:
     """Lazy Qwen3-ASR backend using transformers-native checkpoints.
 
-    Qwen3-ASR has no Vietnamese forced aligner, so segments carry text with
-    null word timings; scoring is text-based and unaffected."""
+    Qwen3-ASR has no Vietnamese forced aligner, so segments carry their decode-window
+    span and null word timings; scoring is text-based and unaffected."""
 
     def __init__(
         self,
@@ -538,7 +538,7 @@ class Qwen3AsrBackend:
     def transcribe_audio(self, audio_16k_mono: np.ndarray) -> Sequence[dict[str, Any]]:
         """Run Qwen3-ASR on 16kHz float32 mono audio array.
 
-        Returns one segment dict per decode with null timings and no words.
+        Returns one segment dict per decode spanning its window, with no words.
         """
         if self._processor is None or self._model is None:
             self.load()
@@ -568,8 +568,15 @@ class Qwen3AsrBackend:
                 text = self._processor.decode(generated[0], return_format="transcription_only")
                 text = str(text).strip()
                 if text:
+                    # ponytail: Qwen3 has no word timer, so the segment spans its decode
+                    # window (coarse, but bounded). Word timing needs the CTC aligner.
                     results.append(
-                        {"start_ms": None, "end_ms": None, "text": text, "words": []}
+                        {
+                            "start_ms": round(start * 1000 / 16000),
+                            "end_ms": round(end * 1000 / 16000),
+                            "text": text,
+                            "words": [],
+                        }
                     )
             return results
         except Exception:

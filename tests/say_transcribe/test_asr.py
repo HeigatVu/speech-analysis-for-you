@@ -605,9 +605,23 @@ def test_qwen3_segment_shape_and_forced_language():
     backend = _fake_qwen3()
     segments = backend.transcribe_audio(np.zeros(16000, dtype=np.float32))
     assert segments == [
-        {"start_ms": None, "end_ms": None, "text": "chào thế giới", "words": []}
+        {"start_ms": 0, "end_ms": 1000, "text": "chào thế giới", "words": []}
     ]
     assert backend._processor.calls[0]["language"] == "Vietnamese"
+
+
+def test_qwen3_segments_carry_their_window_span_on_the_passed_audio_timeline():
+    """Qwen3 has no word timer, but each decode knows the window it decoded, so every
+    segment is bounded: bullets and diarization overlap work, and a later aligner can
+    time the words inside that span."""
+    backend = _fake_qwen3(text="mot hai")
+    segments = backend.transcribe_audio(np.zeros(45 * 16000, dtype=np.float32))
+    spans = [(s["start_ms"], s["end_ms"]) for s in segments]
+    assert len(spans) == 3
+    assert spans[0][0] == 0 and spans[-1][1] == 45000
+    assert all(start < end for start, end in spans)
+    assert all(a[1] == b[0] for a, b in zip(spans, spans[1:]))
+    assert all(s["words"] == [] for s in segments)
 
 
 def test_qwen3_empty_decode_yields_no_segments():
