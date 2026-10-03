@@ -29,6 +29,7 @@ transcribe = [
     "underthesea>=6.8.0",
     "stanza>=1.14.0",
     "silero-vad[onnx-cpu]==6.2.3",
+    "sherpa-onnx>=1.13",
 ]
 
 [tool.ruff]

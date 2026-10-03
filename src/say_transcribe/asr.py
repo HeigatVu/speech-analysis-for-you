@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 import hashlib
 import math
+import unicodedata
 from pathlib import Path
 from typing import Any, Callable, Sequence
 
@@ -665,15 +666,79 @@ class Qwen3AsrBackend:
             raise AsrError("MODEL_UNAVAILABLE", "ASR inference execution failed") from None
 
 
+class ZipformerViBackend:
+    """Vietnamese Zipformer-RNNT (sherpa-onnx, ~70k h) on CPU: no VRAM, text only.
+
+    The recognizer reports syllable start times but no ends, and inventing ends would
+    fake word spans, so segments carry their decode window and `run --align` times
+    the words, exactly as for Qwen3-ASR."""
+
+    def __init__(
+        self,
+        model_id: str = "csukuangfj/sherpa-onnx-zipformer-vi-2025-04-20",
+        device: str = "cpu",
+        revision: str | None = "0fc3fea3ccd9c50b439755fa8a6aba546cb3a7d4",
+    ) -> None:
+        self.model_id = model_id
+        self.device = device  # onnxruntime-cpu only; the flag is accepted, not used
+        self.revision = revision
+        self._recognizer: Any = None
+
+    def load(self) -> None:
+        try:
+            import sherpa_onnx
+            from huggingface_hub import snapshot_download
+
+            root = snapshot_download(
+                self.model_id,
+                revision=self.revision,
+                allow_patterns=["*.onnx", "tokens.txt"],
+            )
+            self._recognizer = sherpa_onnx.OfflineRecognizer.from_transducer(
+                encoder=f"{root}/encoder-epoch-12-avg-8.onnx",
+                decoder=f"{root}/decoder-epoch-12-avg-8.onnx",
+                joiner=f"{root}/joiner-epoch-12-avg-8.onnx",
+                tokens=f"{root}/tokens.txt",
+                num_threads=4,
+            )
+        except Exception:
+            raise AsrError("MODEL_UNAVAILABLE", "Failed to load Zipformer model") from None
+
+    def transcribe_audio(self, audio_16k_mono: np.ndarray) -> Sequence[dict[str, Any]]:
+        if self._recognizer is None:
+            self.load()
+        results: list[dict[str, Any]] = []
+        try:
+            for start, end in _window_bounds(audio_16k_mono):
+                stream = self._recognizer.create_stream()
+                stream.accept_waveform(16000, np.asarray(audio_16k_mono[start:end], np.float32))
+                self._recognizer.decode_stream(stream)
+                # The model emits upper-case syllables; CHAT words are lower-case NFC.
+                text = unicodedata.normalize("NFC", stream.result.text).strip().lower()
+                if text:
+                    results.append(
+                        {
+                            "start_ms": round(start * 1000 / 16000),
+                            "end_ms": round(end * 1000 / 16000),
+                            "text": text,
+                            "words": [],
+                        }
+                    )
+            return results
+        except Exception:
+            raise AsrError("MODEL_UNAVAILABLE", "ASR inference execution failed") from None
+
+
 ASR_MODEL_CHOICES = (
     "phowhisper-medium",
     "phowhisper-large",
     "qwen3-asr",
     "whisper-large-v3",
     "wav2vec2-vi",
+    "zipformer-vi",
 )
 
-AsrBackend = PhoWhisperBackend | Qwen3AsrBackend
+AsrBackend = PhoWhisperBackend | Qwen3AsrBackend | ZipformerViBackend
 
 
 def make_asr_backend(
@@ -708,6 +773,8 @@ def make_asr_backend(
             timestamps=timestamps,
             language="vi",
         )
+    if model == "zipformer-vi":
+        return ZipformerViBackend(device=device, **({"revision": revision} if revision else {}))
     if model == "wav2vec2-vi":
         return Wav2Vec2AsrBackend(device=device, revision=revision or WAV2VEC2_VI_REVISION)
     raise AsrError("MODEL_UNKNOWN", f"Unknown ASR model: {model}")

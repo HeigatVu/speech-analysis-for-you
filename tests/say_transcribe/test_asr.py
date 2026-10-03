@@ -929,3 +929,55 @@ def test_wav2vec2_vi_is_a_pinned_ctc_arm_with_native_word_timing():
     assert calls == [{}, {}]
     assert segs[0]["words"][0]["start_ms"] == 100
     assert segs[1]["words"][0]["start_ms"] == 20100  # second window, master timeline
+
+
+class _FakeZipformerStream:
+    def __init__(self) -> None:
+        self.waveform_len = 0
+        self.result = type("R", (), {"text": ""})()
+
+    def accept_waveform(self, rate, samples):
+        assert rate == 16000
+        self.waveform_len = len(samples)
+
+
+class _FakeZipformer:
+    def __init__(self, text: str) -> None:
+        self.text = text
+        self.streams: list[_FakeZipformerStream] = []
+
+    def create_stream(self):
+        self.streams.append(_FakeZipformerStream())
+        return self.streams[-1]
+
+    def decode_stream(self, stream):
+        stream.result.text = self.text
+
+
+def test_zipformer_vi_is_a_pinned_cpu_arm_returning_lowercase_nfc_window_segments():
+    from say_transcribe.asr import ZipformerViBackend, make_asr_backend
+
+    backend = make_asr_backend("zipformer-vi")
+    assert isinstance(backend, ZipformerViBackend)
+    assert backend.model_id == "csukuangfj/sherpa-onnx-zipformer-vi-2025-04-20"
+    assert backend.revision == "0fc3fea3ccd9c50b439755fa8a6aba546cb3a7d4"
+
+    fake = _FakeZipformer("  VÀ CÁI NHIỆM VỤ ")
+    backend._recognizer = fake
+    segs = backend.transcribe_audio(np.zeros(25 * 16000, dtype=np.float32))
+
+    assert [s["text"] for s in segs] == ["và cái nhiệm vụ"] * 2
+    assert segs[0]["start_ms"] == 0 and segs[-1]["end_ms"] == 25000
+    assert all(s["words"] == [] for s in segs)  # ends are not invented; --align times words
+    assert sum(st.waveform_len for st in fake.streams) == 25 * 16000
+
+
+def test_zipformer_vi_missing_dependency_maps_to_model_unavailable(monkeypatch):
+    import sys
+
+    from say_transcribe.asr import ZipformerViBackend
+
+    monkeypatch.setitem(sys.modules, "sherpa_onnx", None)  # import raises ImportError
+    with pytest.raises(AsrError) as excinfo:
+        ZipformerViBackend().load()
+    assert excinfo.value.code == "MODEL_UNAVAILABLE"
