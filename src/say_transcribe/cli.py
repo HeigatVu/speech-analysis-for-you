@@ -352,15 +352,15 @@ def cmd_run(
             sys.stderr.write(f"[{e.code}] Source verification failed\n")
             return 2
         if e.code in _UNAVAILABLE_CODES:
-            sys.stderr.write(f"[{e.code}] {e.message}\n")
+            sys.stderr.write(f"[{e.code}] Pipeline execution failed\n")
             return 3
-        sys.stderr.write(f"[{e.code}] {e.message}\n")
+        sys.stderr.write(f"[{e.code}] Pipeline execution failed\n")
         return 4
     except AudioPreparationError as e:
-        sys.stderr.write(f"[{e.code}] {e.message}\n")
+        sys.stderr.write(f"[{e.code}] Pipeline execution failed\n")
         return 4
     except WordGroupingError as e:
-        sys.stderr.write(f"[{e.code}] {e.message}\n")
+        sys.stderr.write(f"[{e.code}] Pipeline execution failed\n")
         return 4
     except FileExistsError:
         sys.stderr.write("[OUTPUT_EXISTS] Refusing to overwrite an existing transcript\n")
@@ -494,7 +494,7 @@ def cmd_tag(
         sys.stderr.write("[CHAT_VALIDATION_FAILED] CHAT output validation failed\n")
         return 4
     except AsrError as error:
-        sys.stderr.write(f"[{error.code}] {error.message}\n")
+        sys.stderr.write(f"[{error.code}] Pipeline execution failed\n")
         return 3 if error.code in _UNAVAILABLE_CODES else 4
     except Exception:
         sys.stderr.write("[CHAT_VALIDATION_FAILED] Pipeline execution failed\n")
@@ -684,10 +684,10 @@ def cmd_compare(
             sys.stdout.write(f"Wrote {variant} transcript for session: {session_id}\n")
         return 0
     except AsrError as error:
-        sys.stderr.write(f"[{error.code}] {error.message}\n")
+        sys.stderr.write(f"[{error.code}] Pipeline execution failed\n")
         return 3 if error.code in _UNAVAILABLE_CODES else 4
     except AudioPreparationError as error:
-        sys.stderr.write(f"[{error.code}] {error.message}\n")
+        sys.stderr.write(f"[{error.code}] Pipeline execution failed\n")
         return 4
     except VADUnavailableError:
         sys.stderr.write("[VAD_UNAVAILABLE] Speech activity detection failed\n")

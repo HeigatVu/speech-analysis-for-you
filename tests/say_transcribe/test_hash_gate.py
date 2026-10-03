@@ -95,3 +95,39 @@ def test_tag_redacts_raw_validation_exception(tmp_path, monkeypatch, capsys):
     assert "[CHAT_VALIDATION_FAILED]" in error
     assert str(path) not in error
     assert "private transcript" not in error
+
+
+def test_run_redacts_backend_error_message(tmp_path, monkeypatch, capsys):
+    from say_transcribe import cli
+    import wave
+
+    path = tmp_path / "master.wav"
+    with wave.open(str(path), "wb") as output:
+        output.setnchannels(1)
+        output.setsampwidth(2)
+        output.setframerate(16000)
+        output.writeframes(b"\x00\x00" * 160)
+
+    def broken(*args, **kwargs):
+        raise asr.AsrError("MODEL_UNAVAILABLE", str(path) + " private transcript")
+
+    monkeypatch.setattr(cli, "make_asr_backend", broken)
+    assert (
+        main(
+            [
+                "run",
+                str(path),
+                "--channel",
+                "0",
+                "--out",
+                str(tmp_path / "out"),
+                "--expected-sha256",
+                asr.compute_sha256(path),
+            ]
+        )
+        == 3
+    )
+    error = capsys.readouterr().err
+    assert "[MODEL_UNAVAILABLE]" in error
+    assert str(path) not in error
+    assert "private transcript" not in error

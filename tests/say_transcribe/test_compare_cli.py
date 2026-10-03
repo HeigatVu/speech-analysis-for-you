@@ -321,7 +321,7 @@ def test_compare_no_morphosyntax_writes_phase1_variants(tmp_path, monkeypatch):
 
 
 def test_comparison_variant_cleans_words_and_tags_only_real_words(tmp_path, monkeypatch):
-    from say_transcribe.asr import AsrResult, compute_sha256, AsrSegment
+    from say_transcribe.asr import AsrResult, AsrSegment
     from say_transcribe.cli import _write_comparison_result
     from say_transcribe.word_grouping import GroupedWord
 
