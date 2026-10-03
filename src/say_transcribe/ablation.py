@@ -222,6 +222,18 @@ def _gpu_memory_bytes(device: str) -> int | None:
     return int(torch.cuda.max_memory_allocated())
 
 
+def _reset_gpu_peak(device: str) -> None:
+    """Start a row's peak measurement from zero, so one session cannot report another's."""
+    if not device.startswith("cuda"):
+        return
+    try:
+        import torch
+    except Exception:
+        return
+    if torch.cuda.is_available():
+        torch.cuda.reset_peak_memory_stats()
+
+
 def _arm_summary(record: dict[str, Any]) -> dict[str, Any]:
     return {
         name: {
@@ -360,6 +372,7 @@ def run_ablation(
         source_sha256 = verify_source(row)
         views = prepare_views(row)
         reference = reference_intervals(load_reference_document(read_reference(row)))
+        _reset_gpu_peak(device)
         runs, decodes = {}, {}
         for arm in ARMS:
             windows = tuple(arm_windows(views.audio_16k, arm, detector=detector))
