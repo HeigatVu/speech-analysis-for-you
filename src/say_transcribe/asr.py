@@ -483,6 +483,65 @@ class PhoWhisperBackend:
         return segments
 
 
+_DIGITS = ("không", "một", "hai", "ba", "bốn", "năm", "sáu", "bảy", "tám", "chín")
+_SCALES = ("", "nghìn", "triệu", "tỷ")
+
+
+def _spell_group(n: int, full: bool) -> str:
+    """Read 0 < n < 1000; `full` keeps "không trăm" for a non-leading group."""
+    hundreds, rest = divmod(n, 100)
+    tens, units = divmod(rest, 10)
+    parts = [f"{_DIGITS[hundreds]} trăm"] if hundreds else (["không trăm"] if full else [])
+    if tens == 0 and units:
+        parts += (["lẻ"] if hundreds or full else []) + [_DIGITS[units]]
+    elif tens == 1:
+        parts += ["mười"] + ([{5: "lăm"}.get(units, _DIGITS[units])] if units else [])
+    elif tens:
+        unit = {1: "mốt", 4: "tư", 5: "lăm"}.get(units, _DIGITS[units]) if units else ""
+        parts += [f"{_DIGITS[tens]} mươi"] + ([unit] if unit else [])
+    return " ".join(parts)
+
+
+def _spell_number(n: int) -> str:
+    # ponytail: "mốt/tư/lăm/lẻ/nghìn" are the common spoken forms; regional variants
+    # (ngàn, linh) are not modelled. Counts above 999,999,999,999 are left as digits.
+    if n == 0:
+        return _DIGITS[0]
+    groups = []
+    while n:
+        n, group = divmod(n, 1000)
+        groups.append(group)
+    words = [
+        f"{_spell_group(g, full=i < len(groups) - 1)} {_SCALES[i]}".strip()
+        for i, g in reversed(list(enumerate(groups)))
+        if g
+    ]
+    return " ".join(words)
+
+
+def _spell_numbers(text: str) -> str:
+    """Spell bare integers (and a trailing %) as Vietnamese words.
+
+    Qwen3-ASR writes numerals and "%" that CHAT cannot parse (chatter E220/E316).
+    Leading-zero strings and decimals are left alone: guessing them would invent speech.
+    """
+    out = []
+    for token in text.split():
+        core = token.rstrip(_ASR_EDGE_PUNCTUATION)
+        tail = token[len(core) :]
+        percent = core.endswith("%")
+        digits = core[:-1] if percent else core
+        if (digits.isascii() and digits.isdigit() and 0 < len(digits) <= 12
+                and (digits == "0" or digits[0] != "0")):
+            spoken = _spell_number(int(digits)) + (" phần trăm" if percent else "")
+            out.append(spoken + tail)
+        elif core == "%":
+            out.append("phần trăm" + tail)
+        else:
+            out.append(token)
+    return " ".join(out)
+
+
 class Qwen3AsrBackend:
     """Lazy Qwen3-ASR backend using transformers-native checkpoints.
 
@@ -566,7 +625,7 @@ class Qwen3AsrBackend:
                 output_ids = self._model.generate(**prepared, max_new_tokens=max_tokens)
                 generated = output_ids[:, prepared["input_ids"].shape[1] :]
                 text = self._processor.decode(generated[0], return_format="transcription_only")
-                text = str(text).strip()
+                text = _spell_numbers(str(text).strip())
                 if text:
                     # ponytail: Qwen3 has no word timer, so the segment spans its decode
                     # window (coarse, but bounded). Word timing needs the CTC aligner.

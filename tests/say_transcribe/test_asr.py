@@ -846,3 +846,31 @@ def test_cleaning_leaves_chat_markup_and_diacritics_verbatim():
 
     assert [w.word for w in res.segments[0].words] == kept
     assert res.segments[0].text == " ".join(kept)
+
+
+@pytest.mark.parametrize(
+    "text, spoken",
+    [
+        ("70", "bảy mươi"),
+        ("15", "mười lăm"),
+        ("21", "hai mươi mốt"),
+        ("105", "một trăm lẻ năm"),
+        ("1005", "một nghìn không trăm lẻ năm"),
+        ("2024", "hai nghìn không trăm hai mươi tư"),
+        ("30%", "ba mươi phần trăm"),
+        ("%", "phần trăm"),
+        ("tôi 70 tuổi.", "tôi bảy mươi tuổi."),
+        ("0123", "0123"),  # leading zero: an identifier, not a quantity
+        ("3.5", "3.5"),  # decimals are left for chatter to flag, never guessed
+    ],
+)
+def test_spell_numbers_reads_vietnamese_quantities(text, spoken):
+    from say_transcribe.asr import _spell_numbers
+
+    assert _spell_numbers(text) == spoken
+
+
+def test_qwen3_numerals_and_percent_are_spoken_so_the_main_tier_parses():
+    backend = _fake_qwen3(text="giảm 70 %")
+    [segment] = backend.transcribe_audio(np.zeros(16000, dtype=np.float32))
+    assert segment["text"] == "giảm bảy mươi phần trăm"
