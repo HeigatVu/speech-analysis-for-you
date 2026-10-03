@@ -53,6 +53,13 @@ docs/2026-09-24/audio-preprocessing-experiment/*
 docs/2026-09-24/audio-preprocessing-experiment/1/*
 !docs/2026-09-24/audio-preprocessing-experiment/1/SPEC-2026-09-24.md
 !docs/README.md
+!docs/2026-10-04/
+docs/2026-10-04/*
+!docs/2026-10-04/vietnamese-cha-quality/
+docs/2026-10-04/vietnamese-cha-quality/*
+!docs/2026-10-04/vietnamese-cha-quality/1/
+docs/2026-10-04/vietnamese-cha-quality/1/*
+!docs/2026-10-04/vietnamese-cha-quality/1/FINDINGS-2026-10-04.md
 !docs/2026-09-02/
 docs/2026-09-02/*
 !docs/2026-09-02/vietnamese-transcription-pipeline/

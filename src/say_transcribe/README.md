@@ -43,7 +43,9 @@ flowchart TD
 |---|---|---|---|
 | **ASR & Word Timing** | **PhoWhisper-medium** (default) | [`vinai/phowhisper-medium`](https://huggingface.co/vinai/phowhisper-medium) | 20s-windowed inference, repetition loop heuristic guard, word timestamps |
 | **ASR (alternative)** | **PhoWhisper-large** | [`vinai/phowhisper-large`](https://huggingface.co/vinai/phowhisper-large) | Larger PhoWhisper; the pinned ASR arm in both benchmark tasks |
-| **ASR (alternative)** | **Qwen3-ASR** | [`Qwen/Qwen3-ASR-1.7B-hf`](https://huggingface.co/Qwen/Qwen3-ASR-1.7B-hf) | Transformers-native multimodal checkpoint. **Has no Vietnamese forced aligner**, so segments carry text with *null* word timings — scoring is text-based and unaffected |
+| **ASR (alternative)** | **Qwen3-ASR** | [`Qwen/Qwen3-ASR-1.7B-hf`](https://huggingface.co/Qwen/Qwen3-ASR-1.7B-hf) | Transformers-native multimodal checkpoint. Best measured accuracy. **Has no Vietnamese forced aligner**, so segments carry their decode-window span and *null* word timings; add `run --align wav2vec2-vi` to time the words |
+| **ASR (alternative)** | **Zipformer-vi** | [`csukuangfj/sherpa-onnx-zipformer-vi-2025-04-20`](https://huggingface.co/csukuangfj/sherpa-onnx-zipformer-vi-2025-04-20) via `sherpa-onnx` | CPU only, no VRAM; text plus window span, like Qwen3-ASR (`--asr-model zipformer-vi`) |
+| **ASR (comparison)** | **whisper-large-v3**, **wav2vec2-vi** | `openai/whisper-large-v3` (language pinned to `vi`), `nguyenvulebinh/wav2vec2-base-vi-vlsp2020` | Benchmark arms only; both scored worse (see [findings](../../docs/2026-10-04/vietnamese-cha-quality/1/FINDINGS-2026-10-04.md)) |
 | **Speaker Diarization** | **Pyannote Audio 3.1** (default) | [`pyannote/speaker-diarization-3.1`](https://huggingface.co/pyannote/speaker-diarization-3.1) | Multi-speaker diarization for participant vs investigator clustering; requires an accepted-conditions Hugging Face token |
 | **Diarization (alternative)** | **WavLM Embedding Cluster** | [`microsoft/wavlm-base-plus-sv`](https://huggingface.co/microsoft/wavlm-base-plus-sv) | Ungated clustering fallback, selectable via `--diarizer wavlm` |
 | **Word Segmentation** | **Underthesea** | `underthesea>=6.8.0` | Vietnamese compound word grouping (`_`-joined), preserves tones, NFC, $d/đ$ |
@@ -52,7 +54,7 @@ flowchart TD
 | **CTC Alignment (Spike)** | **Wav2Vec2 Vietnamese CTC** | [`nguyenvulebinh/wav2vec2-base-vi-vlsp2020`](https://huggingface.co/nguyenvulebinh/wav2vec2-base-vi-vlsp2020) | High-resolution forced alignment (`say-transcribe compare`) |
 
 **ASR and diarization are explicit selections, never implicit fallbacks.**
-`--asr-model {phowhisper-medium,phowhisper-large,qwen3-asr}` defaults to
+`--asr-model {phowhisper-medium,phowhisper-large,qwen3-asr,whisper-large-v3,wav2vec2-vi,zipformer-vi}` defaults to
 `phowhisper-medium`; `--diarizer {pyannote,wavlm}` defaults to `pyannote`. When
 pyannote cannot run, the CLI reports the stable code `PYANNOTE_TOKEN_MISSING`
 and exits `3` — it does not silently swap in a different diarizer, because a
@@ -143,7 +145,7 @@ transcript.
 
 | Task | Arms compared | Notes |
 |---|---|---|
-| `asr` | `phowhisper-large`, `qwen3-asr` | Pinned to `phowhisper-large` for the comparison even though the CLI default stays `phowhisper-medium` |
+| `asr` | `phowhisper-large`, `qwen3-asr` (default); any of `--asr-models a,b,...` | Each cell records the device and, when pinned, the revision. The default pair is unchanged and the CLI default stays `phowhisper-medium` |
 | `diarization` | `pyannote`, `wavlm` | Both diarizers run over one fixed `phowhisper-large` ASR front-end, so the numbers isolate the diarization variable |
 
 Each row's source audio SHA-256 is verified first (`SOURCE_HASH_MISMATCH`
