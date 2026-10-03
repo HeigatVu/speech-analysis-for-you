@@ -6,10 +6,38 @@ import unicodedata
 
 import numpy as np
 
-from speech_features.formats.chat import InvalidChatError, decode_chat
+from speech_features.formats.chat import InvalidChatError, decode_chat, tier_roles
 
 _MAIN_TIER_LINE = re.compile(r"^\*[A-Z]{3}:\s*(.*)$")
 _PUNCTUATION_ONLY = {".", "?", "!", ",", "...", "…"}
+
+# Spoken-domain scoring keeps what a microphone would have heard: words,
+# physically spoken fillers and retraced words. Untranscribed spans, nonword
+# fragments and annotation syntax carry no scorable surface.
+_SPOKEN_ROLES = ("word", "retraced", "filler")
+
+
+def _spoken_surface(role: str, item: str) -> str:
+    """Surface form of a spoken main-tier item with its CHAT markup removed."""
+    if role == "filler":
+        return item[2:]
+    if role == "retraced":
+        return item.strip("<>")
+    return item
+
+
+def _uncertainty_code(item: str) -> str | None:
+    """Stable code for a skipped item that scoring cannot settle, else ``None``.
+
+    Pauses and bare retrace markers are expected markup rather than uncertainty.
+    """
+    if item.startswith("["):
+        return "REPLACEMENT_ANNOTATION" if ":" in item else None
+    if item.startswith("("):
+        return None
+    if item.startswith("&"):
+        return "NONWORD_FRAGMENT"
+    return None
 
 
 def levenshtein(seq1: Sequence[Any], seq2: Sequence[Any]) -> int:
@@ -61,6 +89,7 @@ def _extract_lenient_text_items(cha_text: str) -> dict[str, Any]:
         "heads": [],
         "rels": [],
         "intervals": [],
+        "uncertainty": [],
     }
 
 
@@ -82,18 +111,33 @@ def extract_session_items(cha_text: str) -> dict[str, Any]:
     heads: list[str] = []
     rels: list[str] = []
     speaker_intervals: list[tuple[int, int, str]] = []  # (start_ms, end_ms, speaker)
+    uncertainty: list[dict[str, Any]] = []
 
     layers = {a.layer: a.values for a in doc.annotations}
     mor_dict = layers.get("mor", {})
     gra_dict = layers.get("gra", {})
 
-    for u in doc.utterances:
+    for index, u in enumerate(doc.utterances):
         start_ms = int(round(u.start_s * 1000.0))
         end_ms = int(round(u.end_s * 1000.0))
         speaker_intervals.append((start_ms, end_ms, u.speaker_id))
 
-        for t in u.tokens:
-            norm_word = unicodedata.normalize("NFC", t.text.strip())
+        codes: set[str] = set()
+        if end_ms <= start_ms:
+            codes.add("ZERO_DURATION_UTTERANCE")
+
+        roles = tier_roles([t.text for t in u.tokens])
+        for role, t in zip(roles, u.tokens):
+            if role == "untranscribed":
+                codes.add("UNTRANSCRIBED_SPAN")
+                continue
+            if role == "skip":
+                code = _uncertainty_code(t.text)
+                if code is not None:
+                    codes.add(code)
+                continue
+
+            norm_word = unicodedata.normalize("NFC", _spoken_surface(role, t.text).strip())
             if not norm_word or norm_word in _PUNCTUATION_ONLY:
                 continue
             words.append(norm_word)
@@ -115,6 +159,9 @@ def extract_session_items(cha_text: str) -> dict[str, Any]:
                     heads.append(parts[1])
                     rels.append(parts[2].upper())
 
+        for code in sorted(codes):
+            uncertainty.append({"utterance_index": index, "code": code})
+
     return {
         "syllables": syllables,
         "words": words,
@@ -123,6 +170,7 @@ def extract_session_items(cha_text: str) -> dict[str, Any]:
         "heads": heads,
         "rels": rels,
         "intervals": speaker_intervals,
+        "uncertainty": uncertainty,
     }
 
 
@@ -151,6 +199,7 @@ def items_from_texts(texts: Sequence[str]) -> dict[str, Any]:
         "heads": [],
         "rels": [],
         "intervals": [],
+        "uncertainty": [],
     }
 
 
@@ -234,6 +283,8 @@ def run_evaluation(
     las_correct = 0
     syntax_total = 0
 
+    uncertainty_counts: dict[str, int] = {}
+
     for g_path in gold_files:
         p_path = pred_dir / g_path.name
         if not p_path.exists():
@@ -245,6 +296,9 @@ def run_evaluation(
             valid_sessions += 1
         except Exception:
             continue
+
+        for entry in g_data["uncertainty"]:
+            uncertainty_counts[entry["code"]] = uncertainty_counts.get(entry["code"], 0) + 1
 
         # SyER
         ref_syl = g_data["syllables"]
@@ -313,6 +367,7 @@ def run_evaluation(
     report = {
         "sessions_evaluated": valid_sessions,
         "format_pass_rate": round(pass_rate, 4),
+        "uncertainty": dict(sorted(uncertainty_counts.items())),
         "metrics": {
             "syer": bootstrap_ci(session_syer),
             "cer": bootstrap_ci(session_cer),

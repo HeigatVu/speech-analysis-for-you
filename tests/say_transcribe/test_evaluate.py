@@ -1,4 +1,5 @@
 import json
+import unicodedata
 from pathlib import Path
 
 from say_transcribe.evaluate import (
@@ -151,3 +152,65 @@ def test_deterministic_bootstrap_seeded(tmp_path: Path):
     run_evaluation(gold_dir, pred_dir, out2, bootstrap_samples=500, seed=123)
 
     assert out1.read_text() == out2.read_text()
+
+
+_SPOKEN_HEADER = """@UTF8
+@Begin
+@Languages:\tvie
+@Participants:\tPAR Participant
+@ID:\tvie|corpus|PAR|||||Participant|||
+@Media:\tp001, audio
+"""
+
+
+def _spoken_document(main_tier: str, bullet: str = "\x150_1000\x15") -> str:
+    return f"{_SPOKEN_HEADER}*PAR:\t{main_tier}\t{bullet}\n@End\n"
+
+
+def test_spoken_domain_keeps_fillers_and_retraces_without_annotation_syntax():
+    items = extract_session_items(
+        _spoken_document("tôi đi <tôi đi> [/] tôi đi &-ờ xxx [: x] (.) .")
+    )
+
+    assert items["words"] == ["tôi", "đi", "tôi", "đi", "tôi", "đi", "ờ"]
+    assert items["syllables"] == ["tôi", "đi", "tôi", "đi", "tôi", "đi", "ờ"]
+    assert items["chars"] == list("tôiđitôiđitôiđiờ")
+
+
+def test_spoken_domain_keeps_vietnamese_surface_intact():
+    items = extract_session_items(_spoken_document("đi &-ờ &-đ &-vâng ."))
+
+    assert items["words"] == ["đi", "ờ", "đ", "vâng"]
+    assert items["words"][1] == "\u1edd"
+    assert items["words"][2] == "\u0111"
+    assert all(word == unicodedata.normalize("NFC", word) for word in items["words"])
+
+
+def test_uncertainty_queue_reports_codes_and_positions_only():
+    items = extract_session_items(_spoken_document("tôi xxx &+ư &~ờ [: nhà] ."))
+
+    assert items["uncertainty"] == [
+        {"utterance_index": 0, "code": "NONWORD_FRAGMENT"},
+        {"utterance_index": 0, "code": "REPLACEMENT_ANNOTATION"},
+        {"utterance_index": 0, "code": "UNTRANSCRIBED_SPAN"},
+    ]
+    for entry in items["uncertainty"]:
+        assert set(entry) == {"utterance_index", "code"}
+
+
+def test_uncertainty_queue_does_not_repeat_an_already_reported_code():
+    items = extract_session_items(_spoken_document("xxx xxx xxx ."))
+
+    assert items["uncertainty"] == [{"utterance_index": 0, "code": "UNTRANSCRIBED_SPAN"}]
+
+
+def test_zero_duration_utterance_enters_the_uncertainty_queue():
+    items = extract_session_items(_spoken_document("tôi .", bullet="\x150_0\x15"))
+
+    assert items["uncertainty"] == [{"utterance_index": 0, "code": "ZERO_DURATION_UTTERANCE"}]
+
+
+def test_timed_document_without_markup_has_an_empty_uncertainty_queue():
+    items = extract_session_items(_spoken_document("tôi đi học ."))
+
+    assert items["uncertainty"] == []
