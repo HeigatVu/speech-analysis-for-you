@@ -2,6 +2,8 @@
 
 Source was read directly during planning on 2026-10-03. Historical T1/T3/T4 permission blockers are settled by this source evidence and Chatter 0.28.0 validation, independently of agent summaries.
 
+Supporting files: [Batchalign2 strip](https://github.com/TalkBank/batchalign2/blob/d8bb0cd05d968b31333e6cfbbd4e93b93d288236/batchalign/document.py#L333), [UD morphotagger](https://github.com/TalkBank/batchalign2/blob/d8bb0cd05d968b31333e6cfbbd4e93b93d288236/batchalign/pipelines/morphosyntax/ud.py#L750), [Batchalign3 features](https://github.com/FranklinChen/talkbank-tools/blob/f5f4235255a473042272d55a0581fcd58152334f/crates/batchalign-transform/src/morphosyntax/features.rs), [retrace transform](https://github.com/FranklinChen/talkbank-tools/blob/f5f4235255a473042272d55a0581fcd58152334f/crates/batchalign-transform/src/asr_postprocess/retrace.rs), [Chatter alignment](https://github.com/TalkBank/chatter/blob/5c414cf65fec64358dcec804ed777646eb8b35f4/book/src/architecture/alignment.md), [wor timing](https://github.com/TalkBank/chatter/blob/5c414cf65fec64358dcec804ed777646eb8b35f4/book/src/architecture/wor-timing.md), [Sherpa VAD](https://github.com/welcomyou/sherpa-vietnamese-asr/blob/350f5a4c569d714cfe574e36e9a2913b81912ba1/core/vad_utils.py), and [ASR engine](https://github.com/welcomyou/sherpa-vietnamese-asr/blob/350f5a4c569d714cfe574e36e9a2913b81912ba1/core/asr_engine.py).
+
 | Source | Commit | Evidence |
 |---|---|---|
 | [FranklinChen/talkbank-tools](https://github.com/FranklinChen/talkbank-tools/tree/f5f4235255a473042272d55a0581fcd58152334f) | f5f4235255a473042272d55a0581fcd58152334f | Batchalign3 transform morphology and ASR retrace source |
