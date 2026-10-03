@@ -70,13 +70,14 @@ class ArmRun:
     """What one arm produced: its windows, its ASR result and its wall-clock cost.
 
     `reused_from` names the arm whose decode this one reuses when both arms select the
-    same windows; the two decodes would be byte-identical, so running the second one
-    would spend the same minutes again for the same answer.
+    same windows; the second arm would hand the decoder identical input, so no behaviour
+    could differ and running it again would only spend the same minutes twice. `seconds`
+    is then `None` rather than a measurement, because no decode happened.
     """
 
     windows: tuple[tuple[int, int], ...]
     result: AsrResult
-    seconds: float
+    seconds: float | None
     reused_from: str | None = None
 
 
@@ -292,19 +293,6 @@ def render_markdown(report: dict[str, Any]) -> str:
             "| utterances w/o timing | repetition flags | syllables | runtime s |",
             "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
         ]
-        reused = {
-            name: arm["reused_from"]
-            for name, arm in session["arms"].items()
-            if arm.get("reused_from")
-        }
-        if reused:
-            lines += [
-                "Arms whose VAD windows are identical to an earlier arm's reuse that arm's "
-                "decode, so their runtime is not a separate measurement: "
-                + ", ".join(f"`{name}` from `{source}`" for name, source in reused.items())
-                + ".",
-                "",
-            ]
         for name, arm in session["arms"].items():
             scores = arm["scores"]
             coverage = (arm["coverage"] or {}).get("coverage")
@@ -319,6 +307,19 @@ def render_markdown(report: dict[str, Any]) -> str:
                 f"| {counts.get('repetition_flags', '-')} "
                 f"| {content.get('syllables', '-')} | {_number(arm['runtime_s'], 1)} |"
             )
+        reused = {
+            name: arm["reused_from"]
+            for name, arm in session["arms"].items()
+            if arm.get("reused_from")
+        }
+        if reused:
+            lines += [
+                "",
+                "Arms whose VAD windows are identical to an earlier arm's reuse that arm's "
+                "decode, so their runtime is not a separate measurement: "
+                + ", ".join(f"`{name}` from `{source}`" for name, source in reused.items())
+                + ".",
+            ]
         lines.append("")
     verdict = report["promotion"]
     if verdict:
@@ -389,12 +390,12 @@ def run_ablation(
                 )
             else:
                 base = runs[source]
-                runs[arm.name] = ArmRun(base.windows, base.result, 0.0, source)
+                runs[arm.name] = ArmRun(base.windows, base.result, None, source)
             run = runs[arm.name]
             note = f", reused {run.reused_from}" if run.reused_from else ""
             print(
                 f"{row.session_id} {arm.name}: {len(run.windows)} windows, "
-                f"{run.seconds:.1f}s{note}",
+                f"{_number(run.seconds, 1)}s{note}",
                 flush=True,
             )
         extras = {name: session_extras(run, reference) for name, run in runs.items()}

@@ -303,6 +303,9 @@ def test_ablation_runs_every_arm_and_writes_a_redacted_report(tmp_path, monkeypa
     markdown = (out_dir / "ABLATION.md").read_text(encoding="utf-8")
     for name in ABLATION_ARM_ORDER:
         assert name in markdown
+    # A reused arm did not decode, so its runtime is absent rather than a measured zero.
+    assert arms["main"]["runtime_s"] > 0
+    assert {arm["runtime_s"] for name, arm in arms.items() if name != "main"} == {None}
     # Every quantity the ablation is required to record is visible in the rendered report,
     # not only in the JSON.
     header = next(line for line in markdown.splitlines() if line.startswith("| arm |"))
@@ -311,6 +314,16 @@ def test_ablation_runs_every_arm_and_writes_a_redacted_report(tmp_path, monkeypa
     assert "repetition flags" in header
     assert "Device `cpu`, GPU memory not applicable." in markdown
     assert "`compatibility` from `main`" in markdown
+    # The table must stay a table: the header is followed directly by the delimiter and
+    # then the first arm, with no prose wedged in between, or a Markdown renderer drops
+    # every arm row into a paragraph.
+    lines = markdown.splitlines()
+    header_at = lines.index(header)
+    assert lines[header_at + 1].startswith("| --- |")
+    assert lines[header_at + 2].startswith(f"| {ABLATION_ARM_ORDER[0]} |")
+    assert len(lines[header_at + 2].split("|")) == len(header.split("|"))
+    assert lines[header_at + 2 + len(ABLATION_ARM_ORDER)].strip() == ""
+    assert lines[header_at + 3 + len(ABLATION_ARM_ORDER)].startswith("Arms whose VAD windows")
 
 
 def test_the_cli_exposes_the_ablation_with_a_pinned_revision(tmp_path, monkeypatch) -> None:
