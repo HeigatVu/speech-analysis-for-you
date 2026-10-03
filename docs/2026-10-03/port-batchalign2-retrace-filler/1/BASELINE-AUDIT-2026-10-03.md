@@ -22,7 +22,7 @@ Batchalign3 feature mapping is POS-specific, ordered and not arbitrary UD-value 
 
 - Both upstream audio helpers include mean-downmix paths. The repository's declared-channel rule is stricter and wins; the upstream citation does not establish a never-downmix guarantee. Native PCM stays intact and model resampling is in memory.
 - Upstream retrace marking supports longer repeated spans and protects split seams. The local heuristic is capped at four and respects punctuation boundaries. It remains provisional for human review; a repeated clinical word is not automatically a hallucination.
-- Sherpa VAD peaks a detector copy at 0.071 only for quiet input. Its current first threshold is 0.5, empty retry 0.3/150 ms. Local first threshold 0.2 and retry half that threshold are deliberately more sensitive; copying 0.3 after 0.2 would make an empty retry stricter. Historical T7 text is superseded by this correction.
+- Sherpa VAD peaks a detector copy at 0.071 only for quiet input. Its public VAD helper defaults to 0.2, internal inference defaults to 0.5, and empty retry explicitly uses 0.3/150 ms. Local retry halves the configured threshold; copying 0.3 after 0.2 would be stricter. Historical T7 text is superseded by this correction.
 - Sherpa silence cuts use a 300 ms quiet run near a midpoint, 30 s chunks and 3 s overlap. Local 20 s cuts search the preceding 2 s and cover audio without overlap. This is an adaptation, not numerical equivalence.
 - Sherpa's repeated n-gram deletion is disabled to preserve legitimate Vietnamese repeats. Do not import content deletion, backchannel removal, global ASR gain or new models without separate evidence.
 
