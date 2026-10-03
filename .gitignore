@@ -152,3 +152,13 @@ docs/2026-10-01/add-qwen3-asr-github/1/*
 # temporary runtime directory
 tmp/
 .venvs/
+!docs/2026-10-03/
+docs/2026-10-03/*
+!docs/2026-10-03/port-batchalign2-retrace-filler/
+docs/2026-10-03/port-batchalign2-retrace-filler/*
+!docs/2026-10-03/port-batchalign2-retrace-filler/1/
+docs/2026-10-03/port-batchalign2-retrace-filler/1/*
+!docs/2026-10-03/port-batchalign2-retrace-filler/1/SPEC-2026-10-03.md
+!docs/2026-10-03/port-batchalign2-retrace-filler/1/RESEARCH-2026-10-03.md
+!docs/2026-10-03/port-batchalign2-retrace-filler/1/PLAN-2026-10-03.md
+!docs/2026-10-03/port-batchalign2-retrace-filler/1/TASKS-2026-10-03.md
