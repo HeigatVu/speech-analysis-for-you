@@ -22,6 +22,7 @@ from say_transcribe.benchmark import run_asr_benchmark, run_diarization_benchmar
 from say_transcribe.chat_writer import PARTICIPANTS, UtteranceRecord, write_chat_file
 from say_transcribe.denoise import DenoiseError
 from say_transcribe.diarize import PyannoteBackend, WavlmClusterBackend, assign_speakers
+from say_transcribe.disfluency import mark_disfluencies
 from say_transcribe.manifest import ManifestError, load_manifest
 from say_transcribe.morphosyntax import StanzaBackend, mor_members, project_morphosyntax
 from say_transcribe.profile import ProfileError
@@ -308,6 +309,7 @@ def cmd_run(
                     for w in seg.words
                     if w.word.strip()
                 )
+            words = mark_disfluencies(words)
             mor_gra = (
                 project_morphosyntax(mor_members(words), backend=stanza_backend)
                 if words and not skip_morphosyntax

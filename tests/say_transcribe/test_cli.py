@@ -545,3 +545,46 @@ def test_cli_tag_sends_only_real_words_to_stanza(tmp_path: Path, monkeypatch):
     tagged = out_file.read_text(encoding="utf-8")
     assert "*PAR:\t&-ờ tôi [/] tôi xxx (.) là_sinh_viên ." in tagged
     assert tagged.count("%mor:") == 1
+
+
+def test_cli_run_marks_retraces_and_fillers_and_tags_only_real_words(
+    tmp_path: Path, monkeypatch
+):
+    from say_transcribe.asr import AsrResult, AsrSegment, WordTiming
+
+    audio_file = _make_wav_file(tmp_path / "session_03_master.wav")
+    out_dir = tmp_path / "out"
+    seen: list[list[str]] = []
+
+    class RecordingStanza(_FakeStanzaBackend):
+        def parse_pretokenized(self, tokens):
+            seen.append(list(tokens))
+            return super().parse_pretokenized(tokens)
+
+    spoken = ["ờ", "tôi", "tôi", "đi", "."]
+    segment = AsrSegment(
+        start_ms=0,
+        end_ms=900,
+        text=" ".join(spoken),
+        words=tuple(
+            WordTiming(w, i * 150, i * 150 + 140) if w != "." else WordTiming(w, None, None)
+            for i, w in enumerate(spoken)
+        ),
+    )
+    monkeypatch.setattr(
+        "say_transcribe.cli.transcribe",
+        lambda *a, **k: AsrResult(source_sha256="b" * 64, segments=(segment,), warnings=()),
+    )
+    monkeypatch.setattr(
+        "say_transcribe.cli.PyannoteBackend",
+        lambda **kwargs: type("D", (), {"diarize": lambda self, _: ()})(),
+    )
+    monkeypatch.setattr("say_transcribe.cli.StanzaBackend", RecordingStanza)
+
+    assert main(["run", str(audio_file), "--channel", "0", "--out", str(out_dir)]) == 0
+
+    text = (out_dir / "session_03.cha").read_text(encoding="utf-8")
+    assert "*PAR:\t&-ờ tôi [/] tôi đi . \x150_900\x15" in text
+    assert seen == [["tôi", "đi", "."]]
+    assert text.count("%mor:") == 1
+    assert "%wor:\t&-ờ \x150_140\x15 tôi \x15150_290\x15 tôi \x15300_440\x15 đi " in text
