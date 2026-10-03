@@ -10,7 +10,7 @@ User authorization: “Implement the plan.” Existing T1–T7 remain done. Work
 | T11 tag preservation | Only morphology tiers change; original headers, main tiers, %wor, task boundaries and MED roster preserved | done |
 | T12 evaluation/draft | Spoken-domain scoring; separate provisional audio-grounded p002 draft and uncertainty queue | done |
 | T13 ablations | Main, compatibility and individual/combined Sherpa arms on approved p001/p002 channel 0 | done |
-| T14 local delivery | Fresh review, offline suite, Ruff, zero-skipped Chatter, commits and authorized local integration; user pushes | queued |
+| T14 local delivery | Fresh review, offline suite, Ruff, zero-skipped Chatter, commits and authorized local integration; user pushes | done |
 
 ## Binding constraints
 
