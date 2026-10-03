@@ -448,6 +448,7 @@ def compute_arm_results(
         channel_index=row.channel_index,
         device=device,
         backend=backend,
+        expected_sha256=row.sha256,
     )
     baseline_seconds = time.perf_counter() - started
     if baseline.source_sha256.lower() != source_sha256.lower():

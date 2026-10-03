@@ -12,6 +12,7 @@ from say_transcribe.asr import (
     ASR_MODEL_CHOICES,
     AsrError,
     compute_sha256,
+    verify_source_sha256,
     make_asr_backend,
     result_from_windows,
     transcribe,
@@ -62,6 +63,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--channel", type=int, required=True, help="Audio channel index (0-based)"
     )
     run_parser.add_argument("--out", type=Path, required=True, help="Output directory")
+    run_parser.add_argument("--expected-sha256", required=True, help="Approved master WAV SHA-256")
     run_parser.add_argument(
         "--device", choices=["cpu", "cuda"], default="cpu", help="Compute device"
     )
@@ -230,6 +232,7 @@ def cmd_run(
     audio_path: Path,
     channel: int,
     out_dir: Path,
+    expected_sha256: str,
     device: str = "cpu",
     asr_model: str = "phowhisper-medium",
     diarizer: str = "pyannote",
@@ -247,6 +250,7 @@ def cmd_run(
         return 2
 
     try:
+        verify_source_sha256(audio_path, expected_sha256)
         # Step 1-3: Load audio & resample
         audio = read_wav(audio_path)
         channel_samples = extract_channel(audio, channel)
@@ -260,6 +264,7 @@ def cmd_run(
             channel_index=channel,
             device=device,
             backend=asr_backend,
+            expected_sha256=expected_sha256,
         )
         run_warnings: list[str] = list(asr_res.warnings)
 
@@ -329,6 +334,7 @@ def cmd_run(
         # Step 9: Write CHAT file
         session_id = audio_path.stem.replace("_master", "")
         out_file = out_dir / f"{session_id}.cha"
+        verify_source_sha256(audio_path, expected_sha256)
         write_chat_file(
             output_path=out_file,
             session_id=session_id,
@@ -342,6 +348,9 @@ def cmd_run(
         return 0
 
     except AsrError as e:
+        if e.code in {"INVALID_ARGUMENT", "SOURCE_HASH_MISMATCH"}:
+            sys.stderr.write(f"[{e.code}] Source verification failed\n")
+            return 2
         if e.code in _UNAVAILABLE_CODES:
             sys.stderr.write(f"[{e.code}] {e.message}\n")
             return 3
@@ -455,8 +464,8 @@ def cmd_tag(
             transcript_path.read_text(encoding="utf-8"),
             source=str(transcript_path),
         )
-    except (InvalidChatError, OSError, UnicodeDecodeError) as error:
-        sys.stderr.write(f"[CHAT_VALIDATION_FAILED] {error}\n")
+    except (InvalidChatError, OSError, UnicodeDecodeError):
+        sys.stderr.write("[CHAT_VALIDATION_FAILED] CHAT input validation failed\n")
         return 4
 
     try:
@@ -481,8 +490,8 @@ def cmd_tag(
     except FileExistsError:
         sys.stderr.write("[OUTPUT_EXISTS] Refusing to overwrite an existing transcript\n")
         return 2
-    except ValueError as error:
-        sys.stderr.write(f"[CHAT_VALIDATION_FAILED] {error}\n")
+    except ValueError:
+        sys.stderr.write("[CHAT_VALIDATION_FAILED] CHAT output validation failed\n")
         return 4
     except AsrError as error:
         sys.stderr.write(f"[{error.code}] {error.message}\n")
@@ -600,6 +609,7 @@ def cmd_compare(
             channel_index=channel,
             device=device,
             backend=asr_backend,
+            expected_sha256=expected_sha256,
         )
         if baseline.source_sha256.lower() != source_sha256.lower():
             sys.stderr.write("[SOURCE_HASH_MISMATCH] Master audio changed during processing\n")
@@ -659,6 +669,7 @@ def cmd_compare(
             return 2
 
         for variant, target_path, asr_result in variant_targets:
+            verify_source_sha256(audio_path, expected_sha256)
             run_warnings = list(diarization_warnings)
             _write_comparison_result(
                 asr_result,
@@ -785,6 +796,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             audio_path=args.audio,
             channel=args.channel,
             out_dir=args.out,
+            expected_sha256=args.expected_sha256,
             device=args.device,
             asr_model=args.asr_model,
             diarizer=args.diarizer,

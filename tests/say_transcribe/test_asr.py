@@ -94,7 +94,7 @@ def test_transcribe_happy_path_with_word_timestamps(sample_wav):
         }
     ]
     backend = FakePhoWhisperBackend(fake_segments)
-    res = transcribe(sample_wav, channel_index=0, backend=backend)
+    res = transcribe(sample_wav, expected_sha256=compute_sha256(sample_wav), channel_index=0, backend=backend)
 
     assert isinstance(res, AsrResult)
     assert len(res.segments) == 1
@@ -129,7 +129,7 @@ def test_transcribe_missing_word_timing_records_warning(sample_wav):
         },
     ]
     backend = FakePhoWhisperBackend(fake_segments)
-    res = transcribe(sample_wav, channel_index=0, backend=backend)
+    res = transcribe(sample_wav, expected_sha256=compute_sha256(sample_wav), channel_index=0, backend=backend)
 
     assert len(res.segments) == 2
     assert res.warnings == ("CHAT_WORD_TIMING_UNAVAILABLE:1",)
@@ -172,7 +172,7 @@ def test_model_unavailable_raises_distinct_code():
 
 def test_invalid_channel_index_fails_with_stable_code(sample_wav):
     with pytest.raises(AudioPreparationError) as exc_info:
-        transcribe(sample_wav, channel_index=5)
+        transcribe(sample_wav, expected_sha256=compute_sha256(sample_wav), channel_index=5)
     assert exc_info.value.code == "INVALID_AUDIO_CHANNEL"
 
 
@@ -283,7 +283,7 @@ def test_transcribe_flags_repetition_suspected_segment_with_a_warning(sample_wav
         }
     ]
     backend = FakePhoWhisperBackend(fake_segments)
-    result = transcribe(sample_wav, channel_index=0, backend=backend)
+    result = transcribe(sample_wav, expected_sha256=compute_sha256(sample_wav), channel_index=0, backend=backend)
 
     assert result.segments[0].text == " ".join(["a"] * 30)
     assert "ASR_REPETITION_SUSPECTED:1" in result.warnings
@@ -318,7 +318,7 @@ def test_invalid_word_timing_is_unavailable_without_losing_text(
         ]
     )
 
-    result = transcribe(sample_wav, backend=backend)
+    result = transcribe(sample_wav, expected_sha256=compute_sha256(sample_wav), backend=backend)
 
     assert result.segments[0].text == "xin lỗi"
     assert result.segments[0].words == (
@@ -333,7 +333,7 @@ def test_all_untimed_asr_text_does_not_get_a_fabricated_zero_span(sample_wav):
         [{"start_ms": None, "end_ms": None, "text": "xin chào", "words": []}]
     )
 
-    result = transcribe(sample_wav, backend=backend)
+    result = transcribe(sample_wav, expected_sha256=compute_sha256(sample_wav), backend=backend)
 
     assert result.segments[0] == AsrSegment(None, None, "xin chào", ())
     assert result.warnings == (
@@ -382,7 +382,7 @@ def test_word_timing_outside_declared_segment_is_discarded(sample_wav):
         ]
     )
 
-    result = transcribe(sample_wav, backend=backend)
+    result = transcribe(sample_wav, expected_sha256=compute_sha256(sample_wav), backend=backend)
 
     assert result.segments[0].start_ms == 100
     assert result.segments[0].end_ms == 200
@@ -405,7 +405,7 @@ def test_backwards_word_timing_is_discarded(sample_wav):
         ]
     )
 
-    result = transcribe(sample_wav, backend=backend)
+    result = transcribe(sample_wav, expected_sha256=compute_sha256(sample_wav), backend=backend)
 
     assert result.segments[0].text == "xin rồi"
     assert result.segments[0].words == (
@@ -430,7 +430,7 @@ def test_partial_word_times_do_not_create_an_utterance_span(sample_wav):
         ]
     )
 
-    result = transcribe(sample_wav, backend=backend)
+    result = transcribe(sample_wav, expected_sha256=compute_sha256(sample_wav), backend=backend)
 
     assert result.segments[0].text == "xin chào"
     assert result.segments[0].start_ms is None

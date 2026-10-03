@@ -5,6 +5,7 @@ import wave
 import numpy as np
 
 from say_transcribe.cli import main
+from say_transcribe.asr import compute_sha256
 
 
 def _make_wav_file(path: Path, sample_rate: int = 16000, duration_s: float = 1.0) -> Path:
@@ -30,12 +31,12 @@ def test_cli_diagnose_exit_code_zero(capsys):
 def test_cli_exit_code_two_on_validation_failure(tmp_path: Path, capsys):
     # Non-existent audio file
     non_existent = tmp_path / "not_there.wav"
-    ret = main(["run", str(non_existent), "--channel", "0", "--out", str(tmp_path)])
+    ret = main(["run", str(non_existent), "--channel", "0", "--out", str(tmp_path), "--expected-sha256", "0" * 64])
     assert ret == 2
 
     # Negative channel index
     audio_file = _make_wav_file(tmp_path / "audio.wav")
-    ret = main(["run", str(audio_file), "--channel", "-1", "--out", str(tmp_path)])
+    ret = main(["run", str(audio_file), "--channel", "-1", "--out", str(tmp_path), "--expected-sha256", compute_sha256(Path(str(audio_file)))])
     assert ret == 2
 
 
@@ -50,7 +51,7 @@ def test_cli_exit_code_three_on_model_or_gpu_unavailable(tmp_path: Path, monkeyp
 
     monkeypatch.setattr("say_transcribe.cli.transcribe", fail_transcribe)
 
-    ret = main(["run", str(audio_file), "--channel", "0", "--out", str(tmp_path / "out"), "--device", "cuda"])
+    ret = main(["run", str(audio_file), "--channel", "0", "--out", str(tmp_path / "out"), "--device", "cuda", "--expected-sha256", compute_sha256(Path(str(audio_file)))])
     assert ret == 3
     captured = capsys.readouterr()
     assert "[GPU_UNAVAILABLE]" in captured.err
@@ -61,7 +62,7 @@ def test_cli_exit_code_three_on_model_or_gpu_unavailable(tmp_path: Path, monkeyp
 def test_cli_exit_code_four_on_pipeline_failure(tmp_path: Path, capsys):
     audio_file = _make_wav_file(tmp_path / "audio.wav")
     # Channel 5 is out of bounds for mono audio -> INVALID_AUDIO_CHANNEL -> exit 4
-    ret = main(["run", str(audio_file), "--channel", "5", "--out", str(tmp_path / "out")])
+    ret = main(["run", str(audio_file), "--channel", "5", "--out", str(tmp_path / "out"), "--expected-sha256", compute_sha256(Path(str(audio_file)))])
     assert ret == 4
     captured = capsys.readouterr()
     assert "[INVALID_AUDIO_CHANNEL]" in captured.err
@@ -110,7 +111,7 @@ def test_cli_run_happy_path_exit_code_zero(tmp_path: Path, monkeypatch, capsys):
     )
     monkeypatch.setattr("say_transcribe.cli.project_morphosyntax", lambda *args, **kwargs: None)
 
-    ret = main(["run", str(audio_file), "--channel", "0", "--out", str(out_dir)])
+    ret = main(["run", str(audio_file), "--channel", "0", "--out", str(out_dir), "--expected-sha256", compute_sha256(Path(str(audio_file)))])
     assert ret == 0
     assert (out_dir / "session_01.cha").exists()
 
@@ -133,7 +134,7 @@ def test_cli_run_refuses_to_overwrite_existing_transcript(tmp_path: Path, monkey
         lambda **kwargs: type("D", (), {"diarize": lambda self, _: ()})(),
     )
 
-    ret = main(["run", str(audio_file), "--channel", "0", "--out", str(out_dir)])
+    ret = main(["run", str(audio_file), "--channel", "0", "--out", str(out_dir), "--expected-sha256", compute_sha256(Path(str(audio_file)))])
     assert ret == 2
     captured = capsys.readouterr()
     assert "[OUTPUT_EXISTS]" in captured.err
@@ -194,7 +195,7 @@ def test_cli_run_survives_word_grouping_mismatch(tmp_path: Path, monkeypatch, ca
     )
     monkeypatch.setattr("say_transcribe.cli.project_morphosyntax", lambda *args, **kwargs: None)
 
-    ret = main(["run", str(audio_file), "--channel", "0", "--out", str(tmp_path / "out")])
+    ret = main(["run", str(audio_file), "--channel", "0", "--out", str(tmp_path / "out"), "--expected-sha256", compute_sha256(Path(str(audio_file)))])
     assert ret == 0
     assert (tmp_path / "out" / "audio.cha").is_file()
     captured = capsys.readouterr()
@@ -226,7 +227,7 @@ def test_cli_fails_redacted_when_diarization_backend_fails(
     monkeypatch.setattr("say_transcribe.cli.group_utterance_words", lambda seg: ())
     monkeypatch.setattr("say_transcribe.cli.project_morphosyntax", lambda *args, **kwargs: None)
 
-    ret = main(["run", str(audio_file), "--channel", "0", "--out", str(tmp_path / "out")])
+    ret = main(["run", str(audio_file), "--channel", "0", "--out", str(tmp_path / "out"), "--expected-sha256", compute_sha256(Path(str(audio_file)))])
 
     assert ret == 3
     captured = capsys.readouterr()
@@ -261,7 +262,7 @@ def test_cli_warns_when_diarization_returns_no_turns(
     monkeypatch.setattr("say_transcribe.cli.group_utterance_words", lambda seg: ())
     monkeypatch.setattr("say_transcribe.cli.project_morphosyntax", lambda *args, **kwargs: None)
 
-    ret = main(["run", str(audio_file), "--channel", "0", "--out", str(tmp_path / "out")])
+    ret = main(["run", str(audio_file), "--channel", "0", "--out", str(tmp_path / "out"), "--expected-sha256", compute_sha256(Path(str(audio_file)))])
 
     assert ret == 0
     captured = capsys.readouterr()
@@ -305,7 +306,7 @@ def test_cli_diarizer_wavlm_selects_wavlm_backend(tmp_path: Path, monkeypatch):
 
     ret = main(
         ["run", str(audio_file), "--channel", "0", "--out", str(tmp_path / "out"),
-         "--diarizer", "wavlm"]
+         "--diarizer", "wavlm", "--expected-sha256", compute_sha256(Path(str(audio_file)))]
     )
 
     assert ret == 0
@@ -317,10 +318,10 @@ def test_cli_asr_model_flag_on_run_compare_and_study():
 
     parser = build_parser()
     assert parser.parse_args(
-        ["run", "a.wav", "--channel", "0", "--out", "o"]
+        ["run", "a.wav", "--channel", "0", "--out", "o", "--expected-sha256", "0" * 64]
     ).asr_model == "phowhisper-medium"
     assert parser.parse_args(
-        ["run", "a.wav", "--channel", "0", "--out", "o", "--asr-model", "qwen3-asr"]
+        ["run", "a.wav", "--channel", "0", "--out", "o", "--asr-model", "qwen3-asr", "--expected-sha256", "0" * 64]
     ).asr_model == "qwen3-asr"
     assert parser.parse_args(
         ["compare", "a.wav", "--channel", "0", "--out", "o", "--expected-sha256", "0" * 64,
@@ -432,7 +433,7 @@ def test_cli_run_no_morphosyntax_defers_mor_gra(tmp_path: Path, monkeypatch, cap
             "--out",
             str(out_dir),
             "--no-morphosyntax",
-        ]
+        "--expected-sha256", compute_sha256(Path(str(audio_file)))]
     )
 
     assert ret == 0
@@ -581,7 +582,7 @@ def test_cli_run_marks_retraces_and_fillers_and_tags_only_real_words(
     )
     monkeypatch.setattr("say_transcribe.cli.StanzaBackend", RecordingStanza)
 
-    assert main(["run", str(audio_file), "--channel", "0", "--out", str(out_dir)]) == 0
+    assert main(["run", str(audio_file), "--channel", "0", "--out", str(out_dir), "--expected-sha256", compute_sha256(Path(str(audio_file)))]) == 0
 
     text = (out_dir / "session_03.cha").read_text(encoding="utf-8")
     assert "*PAR:\t&-ờ tôi [/] tôi đi . \x150_900\x15" in text

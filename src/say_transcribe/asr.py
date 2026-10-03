@@ -47,6 +47,21 @@ def compute_sha256(path: Path) -> str:
     return h.hexdigest()
 
 
+def verify_source_sha256(path: Path, expected_sha256: str) -> str:
+    """Verify an approved master before decoding, without exposing file details."""
+    if not isinstance(expected_sha256, str) or len(expected_sha256) != 64 or any(
+        character not in "0123456789abcdefABCDEF" for character in expected_sha256
+    ):
+        raise AsrError("INVALID_ARGUMENT", "Expected SHA-256 must be 64 hexadecimal characters")
+    try:
+        actual = compute_sha256(path)
+    except OSError:
+        raise AsrError("SOURCE_UNREADABLE", "Master audio could not be read") from None
+    if actual != expected_sha256.lower():
+        raise AsrError("SOURCE_HASH_MISMATCH", "Master audio does not match approved SHA-256")
+    return actual
+
+
 def _valid_span(start: Any, end: Any, duration_ms: int) -> tuple[int, int] | None:
     if (
         isinstance(start, bool)
@@ -560,13 +575,15 @@ def transcribe(
     channel_index: int = 0,
     device: str = "cpu",
     backend: AsrBackend | None = None,
+    *,
+    expected_sha256: str,
 ) -> AsrResult:
     """Transcribe a master WAV file on the declared channel.
 
     Loads audio, extracts channel without downmixing, resamples in-memory to 16 kHz,
     and runs PhoWhisper ASR to produce timed segments and word timestamps.
     """
-    source_sha256 = compute_sha256(audio_path)
+    source_sha256 = verify_source_sha256(audio_path, expected_sha256)
     audio = read_wav(audio_path)
     channel_samples = extract_channel(audio, channel_index)
     audio_16k = resample_to_16kHz(channel_samples, audio.sample_rate, audio.sample_width)
@@ -610,6 +627,7 @@ def transcribe(
         if seg.get("repetition_suspected"):
             warnings.append(f"ASR_REPETITION_SUSPECTED:{i}")
 
+    verify_source_sha256(audio_path, expected_sha256)
     return AsrResult(
         source_sha256=source_sha256,
         segments=tuple(parsed_segments),

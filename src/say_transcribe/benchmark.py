@@ -11,6 +11,7 @@ from typing import Any, Callable, Sequence
 from say_transcribe.asr import (
     AsrError,
     compute_sha256,
+    verify_source_sha256,
     make_asr_backend,
     transcribe,
 )
@@ -99,12 +100,14 @@ def run_asr_benchmark(
             entry: dict[str, Any] = {"session_id": row.session_id, "model": model}
             backend: Any = None
             try:
+                verify_source_sha256(row.audio_path, row.sha256)
                 backend = factory(model, device)
                 result = transcribe(
                     audio_path=row.audio_path,
                     channel_index=row.channel_index,
                     device=device,
                     backend=backend,
+                    expected_sha256=row.sha256,
                 )
                 scores = score_uncapped(
                     gold, items_from_texts([segment.text for segment in result.segments])
@@ -166,12 +169,14 @@ def run_diarization_benchmark(
 
         asr_backend: Any = None
         try:
+            verify_source_sha256(row.audio_path, row.sha256)
             asr_backend = make_asr(DIARIZATION_ASR_MODEL, device)
             result = transcribe(
                 audio_path=row.audio_path,
                 channel_index=row.channel_index,
                 device=device,
                 backend=asr_backend,
+                expected_sha256=row.sha256,
             )
             audio = read_wav(row.audio_path)
             channel_samples = extract_channel(audio, row.channel_index)
