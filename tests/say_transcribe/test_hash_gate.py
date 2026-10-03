@@ -131,3 +131,54 @@ def test_run_redacts_backend_error_message(tmp_path, monkeypatch, capsys):
     assert "[MODEL_UNAVAILABLE]" in error
     assert str(path) not in error
     assert "private transcript" not in error
+
+
+def test_comparison_rechecks_after_morphology_before_publication(tmp_path, monkeypatch):
+    from say_transcribe import cli
+    from say_transcribe.word_grouping import GroupedWord
+
+    path = tmp_path / "master.wav"
+    path.write_bytes(b"approved")
+    approved = asr.compute_sha256(path)
+    result = asr.AsrResult(approved, (asr.AsrSegment(0, 100, "xin", ()),), ())
+    monkeypatch.setattr(
+        cli, "group_utterance_words", lambda segment: (GroupedWord("xin", 0, 100, ()),)
+    )
+
+    def mutate(*args, **kwargs):
+        path.write_bytes(b"changed")
+        return None
+
+    monkeypatch.setattr(cli, "project_morphosyntax", mutate)
+    target = tmp_path / "out.cha"
+    with pytest.raises(asr.AsrError) as caught:
+        cli._write_comparison_result(
+            result, target, "s1", (), "cpu", object(), [], audio_path=path, expected_sha256=approved
+        )
+    assert caught.value.code == "SOURCE_HASH_MISMATCH"
+    assert not target.exists()
+
+
+def test_study_rechecks_after_features_before_record_publication(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from say_transcribe import study
+
+    path = tmp_path / "master.wav"
+    path.write_bytes(b"approved")
+    row = SimpleNamespace(audio_path=path, sha256=asr.compute_sha256(path), asr_revision="pinned")
+    monkeypatch.setattr(study, "load_manifest", lambda path: (row,))
+    monkeypatch.setattr(study, "load_denoiser_specs", lambda path: {})
+
+    def mutate(*args, **kwargs):
+        path.write_bytes(b"changed")
+        return {"session_id": "s1"}
+
+    monkeypatch.setattr(study, "compute_session", mutate)
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("stale source record published")
+
+    monkeypatch.setattr(study, "write_session_record", forbidden)
+    with pytest.raises(study.StudyError) as caught:
+        study.run_study(tmp_path / "manifest.json", tmp_path / "out", asr_backend=object())
+    assert caught.value.code == "SOURCE_HASH_MISMATCH"

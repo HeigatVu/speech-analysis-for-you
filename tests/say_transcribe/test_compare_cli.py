@@ -348,7 +348,12 @@ def test_comparison_variant_cleans_words_and_tags_only_real_words(tmp_path, monk
     result = AsrResult("a" * 64, (AsrSegment(0, 700, " ".join(spoken), ()),), ())
     out = tmp_path / "s1.cha"
 
-    _write_comparison_result(result, out, "s1", (), "cpu", RecordingStanza(), [])
+    audio_path = tmp_path / "master.wav"
+    audio_path.write_bytes(b"synthetic master")
+    _write_comparison_result(
+        result, out, "s1", (), "cpu", RecordingStanza(), [],
+        audio_path=audio_path, expected_sha256=compute_sha256(audio_path),
+    )
 
     text = out.read_text(encoding="utf-8")
     assert "*PAR:\t&-ờ tôi [/] tôi xxx đi . " in text

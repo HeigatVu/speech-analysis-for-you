@@ -510,6 +510,8 @@ def _write_comparison_result(
     stanza_backend: Any,
     run_warnings: list[str],
     *,
+    audio_path: Path,
+    expected_sha256: str,
     skip_morphosyntax: bool = False,
 ) -> None:
     speaker_result = assign_speakers(asr_result.segments, turns)
@@ -552,6 +554,7 @@ def _write_comparison_result(
                 morphosyntax=morphosyntax,
             )
         )
+    verify_source_sha256(audio_path, expected_sha256)
     write_chat_file(
         output_path=output_path,
         session_id=session_id,
@@ -679,6 +682,8 @@ def cmd_compare(
                 device,
                 stanza_backend,
                 run_warnings,
+                audio_path=audio_path,
+                expected_sha256=expected_sha256,
                 skip_morphosyntax=skip_morphosyntax,
             )
             sys.stdout.write(f"Wrote {variant} transcript for session: {session_id}\n")

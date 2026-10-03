@@ -1076,12 +1076,14 @@ def run_study(
     records: list[dict[str, Any]] = []
     backends: dict[str, Any] = {}
     for row in rows:
+        verify_source(row)
         backend = (
             asr_backend
             if asr_backend is not None
             else _backend_for_revision(asr_model, row.asr_revision, device, backends)
         )
         record = compute_session(row, backend, denoisers, device)
+        verify_source(row)
         write_session_record(record, out_dir)
         records.append(record)
     write_summary(build_summary(records), out_dir)

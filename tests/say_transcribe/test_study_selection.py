@@ -641,6 +641,9 @@ def test_study_uses_the_revision_pinned_by_each_manifest_row(tmp_path, monkeypat
         "*PAR:\tmột hai .\t\x150_1000\x15\n@End\n",
     )
     payload = json.loads(manifest.read_text(encoding="utf-8"))
+    from say_transcribe.asr import compute_sha256
+
+    payload["rows"][0]["sha256"] = compute_sha256(Path(payload["rows"][0]["audio_path"]))
     payload["rows"].append(
         {**payload["rows"][0], "session_id": "s2", "participant_id": "p2", "asr_revision": "rev-b"}
     )
