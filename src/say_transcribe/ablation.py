@@ -259,11 +259,16 @@ def render_markdown(report: dict[str, Any]) -> str:
         "",
     ]
     for session_id, session in report["sessions"].items():
+        gpu = session.get("gpu_memory_bytes")
         lines += [
             f"## {session_id} ({session['split']}, {_number(session['audio_seconds'], 1)} s)",
             "",
-            "| arm | SyER | CER | WER | coverage | words w/o timing | syllables | runtime s |",
-            "| --- | --- | --- | --- | --- | --- | --- | --- |",
+            f"Device `{session['device']}`, GPU memory "
+            f"{'not applicable' if gpu is None else f'{gpu} bytes'}.",
+            "",
+            "| arm | SyER | CER | WER | coverage | words w/o timing "
+            "| utterances w/o timing | repetition flags | syllables | runtime s |",
+            "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
         ]
         for name, arm in session["arms"].items():
             scores = arm["scores"]
@@ -275,6 +280,8 @@ def render_markdown(report: dict[str, Any]) -> str:
                 f"| {_number((scores.get('cer') or {}).get('rate'))} "
                 f"| {_number((scores.get('wer') or {}).get('rate'))} "
                 f"| {_number(coverage)} | {counts.get('words_without_timing', '-')} "
+                f"| {counts.get('utterances_without_timing', '-')} "
+                f"| {counts.get('repetition_flags', '-')} "
                 f"| {content.get('syllables', '-')} | {_number(arm['runtime_s'], 1)} |"
             )
         lines.append("")

@@ -295,6 +295,13 @@ def test_ablation_runs_every_arm_and_writes_a_redacted_report(tmp_path, monkeypa
     markdown = (out_dir / "ABLATION.md").read_text(encoding="utf-8")
     for name in ABLATION_ARM_ORDER:
         assert name in markdown
+    # Every quantity the ablation is required to record is visible in the rendered report,
+    # not only in the JSON.
+    header = next(line for line in markdown.splitlines() if line.startswith("| arm |"))
+    assert "words w/o timing" in header
+    assert "utterances w/o timing" in header
+    assert "repetition flags" in header
+    assert "Device `cpu`, GPU memory not applicable." in markdown
 
 
 def test_the_cli_exposes_the_ablation_with_a_pinned_revision(tmp_path, monkeypatch) -> None:
