@@ -16,7 +16,10 @@ class MorItem:
             return "cm|cm"
         if self.lemma in {".", "?", "!", "...", "…"}:
             return self.lemma
-        suffix = f"-{self.feats}" if self.feats else ""
+        # UD feats are "Key=Val|Key=Val"; %mor allows one "|" (pos|lemma), so keep the
+        # values only, as "-Val" suffixes.
+        pairs = self.feats.split("|") if self.feats else []
+        suffix = "".join(f"-{pair.partition('=')[2] or pair}" for pair in pairs)
         return f"{self.pos}|{self.lemma}{suffix}"
 
 

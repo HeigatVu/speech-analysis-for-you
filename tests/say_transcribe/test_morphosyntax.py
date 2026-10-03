@@ -234,3 +234,10 @@ def test_stanza_failure_returns_none():
     backend = FakeStanzaBackend(fail=True)
     res = project_morphosyntax(grouped, backend=backend)
     assert res is None
+
+
+def test_mor_renders_ud_feats_as_chat_suffixes_with_a_single_pipe():
+    item = MorItem(pos="pron", lemma="tôi", feats="Number=Plur|Person=1")
+
+    assert item.format_mor() == "pron|tôi-Plur-1"
+    assert item.format_mor().count("|") == 1
