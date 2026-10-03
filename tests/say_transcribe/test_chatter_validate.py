@@ -69,6 +69,25 @@ def _feats_variants() -> UtteranceRecord:
     )
 
 
+def _pipeline_messy() -> UtteranceRecord:
+    """What `run` makes of ASR words with stray commas, fillers, repeats and `xxx`."""
+    from say_transcribe.disfluency import drop_invalid_commas, mark_disfluencies
+    from say_transcribe.morphosyntax import mor_members
+
+    spoken = [",", "ờ", ",", "tôi", ",", ",", "tôi", "đi", "xxx", ",", "đi", "."]
+    words = [
+        _word(w, i * 100, i * 100 + 90) if w not in {",", "xxx", "."} else _word(w)
+        for i, w in enumerate(spoken)
+    ]
+    marked = mark_disfluencies(drop_invalid_commas(words))
+    items = [
+        MorItem("cm", "cm") if w.word == "," else MorItem("punct", ".") if w.word == "." else MorItem("verb", w.word)
+        for w in mor_members(marked)
+    ]
+    gra = [GraItem(i + 1, 0 if i == 0 else 1, "ROOT" if i == 0 else "DEP") for i in range(len(items))]
+    return _utterance(marked, items, gra)
+
+
 def _untimed_main_tier_only() -> UtteranceRecord:
     return _utterance([_word("tôi"), _word("đi"), _word(".")], timed=False)
 
@@ -103,6 +122,7 @@ def _markup_without_analysable_word() -> UtteranceRecord:
 CASES = {
     "retrace_filler_untranscribed_pause": _markup,
     "no_analysable_word": _markup_without_analysable_word,
+    "run_pipeline_messy_asr_words": _pipeline_messy,
     "plain": _plain,
     "comma": _comma,
     "ud_feats": _feats,

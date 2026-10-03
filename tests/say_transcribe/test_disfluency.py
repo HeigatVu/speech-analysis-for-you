@@ -1,6 +1,6 @@
 import pytest
 
-from say_transcribe.disfluency import mark_disfluencies
+from say_transcribe.disfluency import drop_invalid_commas, mark_disfluencies
 from say_transcribe.word_grouping import GroupedWord
 
 
@@ -44,3 +44,22 @@ def test_words_keep_their_timings_and_none_are_removed() -> None:
     assert [(w.start_ms, w.end_ms) for w in real] == [(w.start_ms, w.end_ms) for w in words]
     assert [w.word.strip("<>") for w in real] == [w.word for w in words]
     assert next(w for w in marked if w.word == "[/]").start_ms is None
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        (", tôi .", "tôi ."),
+        ("tôi , , đi .", "tôi , đi ."),
+        ("ờ , tôi .", "ờ tôi ."),
+        ("xxx , tôi .", "xxx tôi ."),
+        ("tôi , ờ , đi .", "tôi , ờ , đi ."),
+        ("tôi ờ , đi .", "tôi ờ , đi ."),
+        ("tôi (.) , đi .", "tôi (.) , đi ."),
+        ("tôi , .", "tôi , ."),
+        ("tôi đi .", "tôi đi ."),
+    ],
+)
+def test_drop_invalid_commas(text: str, expected: str) -> None:
+    # chatter rejects a comma with no prior spoken word (E259) and consecutive commas (E258)
+    assert " ".join(w.word for w in drop_invalid_commas(_words(text))) == expected

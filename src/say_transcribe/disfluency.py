@@ -82,3 +82,18 @@ def mark_disfluencies(words: Sequence[GroupedWord]) -> tuple[GroupedWord, ...]:
         out.append(word)
         index += 1
     return tuple(out)
+
+
+def drop_invalid_commas(words: Sequence[GroupedWord]) -> tuple[GroupedWord, ...]:
+    """Drop commas chatter rejects: one before any spoken word (fillers and `xxx` do not
+    count, E259) or directly after another comma (E258). Only punctuation is removed."""
+    out: list[GroupedWord] = []
+    spoken = False
+    for word in words:
+        if word.word == ",":
+            if not spoken or (out and out[-1].word == ","):
+                continue
+        elif _is_lexical(word.word):
+            spoken = True
+        out.append(word)
+    return tuple(out)
