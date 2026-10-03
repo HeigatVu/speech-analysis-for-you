@@ -150,6 +150,49 @@ def _collapse_loop_segments(segments: Sequence[dict[str, Any]]) -> list[dict[str
     return out
 
 
+_WINDOW_SAMPLES = 20 * 16000
+_SNAP_SEARCH_SAMPLES = 2 * 16000
+_SNAP_FRAME_SAMPLES = 16000 * 3 // 10
+_SNAP_HOP_SAMPLES = 16000 // 20
+
+
+def _window_bounds(
+    audio_16k: np.ndarray, max_samples: int = _WINDOW_SAMPLES
+) -> list[tuple[int, int]]:
+    """Cut audio into windows of at most `max_samples`, ending each cut in the quietest
+    300 ms of the last 2 s so a cut does not land mid-word (sherpa-vietnamese-asr
+    chunking). A cut keeps the hard limit when nothing there is quieter."""
+    total = len(audio_16k)
+    bounds: list[tuple[int, int]] = []
+    start = 0
+    while start < total:
+        end = start + max_samples
+        if end >= total:
+            end = total
+        else:
+            end = _quietest_cut(
+                audio_16k, max(start + _SNAP_FRAME_SAMPLES, end - _SNAP_SEARCH_SAMPLES), end
+            )
+        bounds.append((start, end))
+        start = end
+    return bounds
+
+
+def _quietest_cut(audio: np.ndarray, low: int, high: int) -> int:
+    """Midpoint of the lowest-energy frame in [low, high), or `high` if the search span
+    is shorter than a frame or its last frame is already the quietest."""
+    if high - low < _SNAP_FRAME_SAMPLES:
+        return high
+    squares = np.concatenate(([0.0], np.cumsum(np.square(audio[low:high], dtype=np.float64))))
+    starts = np.arange(0, high - low - _SNAP_FRAME_SAMPLES + 1, _SNAP_HOP_SAMPLES)
+    starts = np.append(starts, high - low - _SNAP_FRAME_SAMPLES)
+    energy = squares[starts + _SNAP_FRAME_SAMPLES] - squares[starts]
+    best = int(np.argmin(energy))
+    if energy[best] >= energy[-1]:
+        return high
+    return low + int(starts[best]) + _SNAP_FRAME_SAMPLES // 2
+
+
 def _has_complete_lexical_timing(words: Sequence[dict[str, Any]]) -> bool:
     lexical_words = [word for word in words if _is_lexical_word(word.get("word", ""))]
     return bool(lexical_words) and all(
@@ -256,13 +299,10 @@ class PhoWhisperBackend:
         # (steps x layers x heads x src, fp32): dense 30s speech reached ~9GB reserved;
         # worst case here is ~0.8GB cache. No overlap; add stride+dedupe if boundary loss
         # shows in eval.
-        chunk_len = int(20.0 * 16000)
         results: list[dict[str, Any]] = []
         try:
-            for start in range(0, max(len(audio_16k_mono), 1), chunk_len):
-                chunk = audio_16k_mono[start : start + chunk_len]
-                if not len(chunk):
-                    break
+            for start, end in _window_bounds(audio_16k_mono):
+                chunk = audio_16k_mono[start:end]
                 max_tokens = min(400, max(32, math.ceil(len(chunk) / 16000 * 20)))
                 result = self._pipe(
                     {"raw": chunk, "sampling_rate": 16000},
@@ -460,13 +500,10 @@ class Qwen3AsrBackend:
         if self._processor is None or self._model is None:
             self.load()
 
-        chunk_len = int(20.0 * 16000)
         results: list[dict[str, Any]] = []
         try:
-            for start in range(0, max(len(audio_16k_mono), 1), chunk_len):
-                chunk = audio_16k_mono[start : start + chunk_len]
-                if not len(chunk):
-                    break
+            for start, end in _window_bounds(audio_16k_mono):
+                chunk = audio_16k_mono[start:end]
                 max_tokens = min(400, max(32, math.ceil(len(chunk) / 16000 * 20)))
                 inputs = self._processor.apply_transcription_request(
                     audio=np.asarray(chunk, dtype=np.float32),

@@ -579,3 +579,65 @@ def test_short_valid_vietnamese_repeats_are_kept():
     segs = backend.transcribe_audio(np.zeros(16000 * 5, dtype=np.float32))
 
     assert [s["text"] for s in segs] == ["một một bảy.", "ừ ừ."]
+
+
+def _noise(seconds, seed=0):
+    return (np.random.default_rng(seed).uniform(-0.5, 0.5, int(seconds * 16000))).astype(
+        np.float32
+    )
+
+
+def test_window_cut_snaps_into_a_silent_gap_before_the_hard_limit():
+    from say_transcribe.asr import _window_bounds
+
+    audio = _noise(45)
+    audio[int(18.0 * 16000) : int(18.6 * 16000)] = 0.0
+
+    bounds = _window_bounds(audio)
+
+    assert 18.0 * 16000 <= bounds[0][1] <= 18.6 * 16000
+
+
+def test_windows_cover_the_input_without_gaps_and_stay_within_the_limit():
+    from say_transcribe.asr import _window_bounds
+
+    audio = _noise(65)
+    audio[int(37.0 * 16000) : int(37.5 * 16000)] = 0.0
+
+    bounds = _window_bounds(audio)
+
+    assert bounds[0][0] == 0 and bounds[-1][1] == len(audio)
+    assert all(a[1] == b[0] for a, b in zip(bounds, bounds[1:]))
+    assert all(0 < end - start <= 20 * 16000 for start, end in bounds)
+
+
+def test_window_cut_stays_at_the_hard_limit_when_nothing_is_quieter():
+    from say_transcribe.asr import _window_bounds
+
+    bounds = _window_bounds(np.zeros(45 * 16000, dtype=np.float32))
+
+    assert bounds == [(0, 320000), (320000, 640000), (640000, 720000)]
+
+
+def test_window_bounds_for_short_and_empty_audio():
+    from say_transcribe.asr import _window_bounds
+
+    assert _window_bounds(np.zeros(0, dtype=np.float32)) == []
+    assert _window_bounds(_noise(5)) == [(0, 5 * 16000)]
+
+
+def test_backend_offsets_follow_the_snapped_windows():
+    from say_transcribe.asr import _window_bounds
+
+    audio = _noise(30)
+    audio[int(19.0 * 16000) : int(19.4 * 16000)] = 0.0
+    bounds = _window_bounds(audio)
+    backend = PhoWhisperBackend(model_id="fake", device="cpu")
+    backend._pipe = lambda _input, **kwargs: {
+        "chunks": [{"text": "xin.", "timestamp": (0.0, 0.2)}]
+    }
+
+    segs = backend.transcribe_audio(audio)
+
+    assert [s["start_ms"] for s in segs] == [round(start / 16) for start, _ in bounds]
+    assert bounds[0][1] != 20 * 16000
