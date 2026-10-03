@@ -18,6 +18,7 @@ code ``INVALID_CHAT``.
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 from ..document import (
@@ -69,6 +70,49 @@ def _item_kind(item: str) -> str:
     if item == "[*]":
         return "error"
     return "word"
+
+
+_UNTRANSCRIBED = frozenset({"xxx", "yyy", "www"})
+
+
+def tier_roles(items: Sequence[str]) -> list[str]:
+    """Role of each main-tier item for dependent-tier alignment.
+
+    Follows chatter/Batchalign3 (validated with ``chatter validate``): ``%mor`` and
+    ``%gra`` align to ``word`` items only (punctuation separators and the terminator
+    are ``word``); ``%wor`` also takes ``filler`` (``&-um``) and ``retraced`` items
+    (words before ``[/]``/``[//]``). ``untranscribed`` (``xxx``) and ``skip``
+    (``&+``/``&~``/``&=``, ``(.)``, ``[: x]`` and other annotations) are in neither."""
+    roles = ["word"] * len(items)
+    in_annotation = False
+    for i, item in enumerate(items):
+        if in_annotation:
+            roles[i] = "skip"
+            in_annotation = not item.endswith("]")
+        elif item.startswith("["):
+            roles[i] = "skip"
+            in_annotation = not item.endswith("]")
+        elif item.startswith("(") and item.endswith(")") and set(item[1:-1]) == {"."}:
+            roles[i] = "skip"
+        elif item.startswith("&-"):
+            roles[i] = "filler"
+        elif item.startswith("&") or (item.endswith("-") and len(item) > 1):
+            roles[i] = "skip"
+        elif item.strip(".,!?…").lower() in _UNTRANSCRIBED:
+            roles[i] = "untranscribed"
+    for i, item in enumerate(items):
+        if item not in ("[/]", "[//]") or i == 0:
+            continue
+        start = i - 1
+        if items[start].endswith(">"):
+            while start > 0 and not items[start].startswith("<"):
+                start -= 1
+            if not items[start].startswith("<"):
+                start = i - 1
+        for j in range(start, i):
+            if roles[j] == "word":
+                roles[j] = "retraced"
+    return roles
 
 
 def _split_header(line: str) -> tuple[str, str]:
@@ -139,19 +183,20 @@ def decode_chat(text: str, *, source: str = "", sha256: str | None = None) -> Sp
                     raise _invalid(f"token {token.id} times outside utterance times")
                 object.__setattr__(token, "start_s", start)
                 object.__setattr__(token, "end_s", end)
-        content_tokens = current["content"]
+        roles = tier_roles([t.text for t in current["tokens"]])
         for name, layer_key in (("%wor", "wor"), ("%mor", "mor"), ("%gra", "gra")):
             if name in current["tiers"]:
                 if name == "%wor":
                     items = _chunk_wor(current["tiers"][name])
                 else:
                     items = current["tiers"][name].split()
-                if len(items) != len(content_tokens):
+                members = _tier_members(name, current["tokens"], roles, len(items))
+                if len(items) != len(members):
                     raise _invalid(
                         f"incompatible {name} alignment: {len(items)} items for "
-                        f"{len(content_tokens)} content tokens"
+                        f"{len(members)} alignable tokens"
                     )
-                for token, item in zip(content_tokens, items):
+                for token, item in zip(members, items):
                     annotations[layer_key][token.id] = item
         utterances.append(
             DocumentUtterance(
@@ -358,6 +403,26 @@ def decode_chat(text: str, *, source: str = "", sha256: str | None = None) -> Sp
     )
 
 
+def _tier_members(
+    tier: str, tokens: Sequence[DocumentToken], roles: Sequence[str], item_count: int
+) -> list[DocumentToken]:
+    """Tokens a dependent tier aligns to, the first candidate whose size matches.
+
+    chatter/Batchalign3 rules come first: ``%mor``/``%gra`` take words only; ``%wor``
+    also takes fillers and retraced words. Then ``%wor`` with `xxx` entries (older
+    drafts wrote them), then the legacy convention (every word, filler and fragment
+    token, as CLAN-style files and earlier drafts wrote them)."""
+    wor = ("word", "filler", "retraced")
+    candidates = (
+        [("word",)]
+        if tier != "%wor"
+        else [wor, (*wor, "untranscribed")]
+    )
+    members = [[t for t, r in zip(tokens, roles) if r in kinds] for kinds in candidates]
+    members.append([t for t in tokens if t.kind in _CONTENT_KINDS])
+    return next((m for m in members if len(m) == item_count), members[0])
+
+
 _WOR_CHUNK = re.compile(r"\S+(?:\s+[\x15•]\d+_\d+[\x15•])?")
 
 
@@ -418,10 +483,17 @@ def encode_chat(document: SpeechDocument) -> str:
         ):
             pairs = " ".join(f"{_fmt(t.start_s)} {_fmt(t.end_s)}" for t in content)
             lines.append(f"%xaud:\t{media_path} {pairs}")
+        roles = tier_roles([t.text for t in utterance.tokens])
         for name in ("%wor", "%mor", "%gra"):
             values = layers.get(name[1:], {})
-            if content and all(t.id in values for t in content):
-                lines.append(name + ":\t" + " ".join(values[t.id] for t in content))
+            members = _tier_members(
+                name,
+                utterance.tokens,
+                roles,
+                sum(t.id in values for t in utterance.tokens),
+            )
+            if members and all(t.id in values for t in members):
+                lines.append(name + ":\t" + " ".join(values[t.id] for t in members))
     for name, text in document.raw_tiers.items():
         if name in _KNOWN_HEADERS:
             continue

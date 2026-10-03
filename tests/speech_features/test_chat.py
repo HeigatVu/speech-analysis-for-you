@@ -458,3 +458,84 @@ class TestRealFileShapes:
             doc.raw_tiers["@Comment"]
             == "@Comment:\tThis comment wraps across two indented continuation lines"
         )
+
+
+# --- dependent-tier membership (chatter / Batchalign3 alignment rules) ---------
+
+from speech_features.formats.chat import tier_roles  # noqa: E402
+
+
+@pytest.mark.parametrize(
+    ("items", "roles"),
+    [
+        (["tôi", "đi", "."], ["word", "word", "word"]),
+        (["tôi", ",", "đi", "."], ["word", "word", "word", "word"]),
+        (["tôi", "[/]", "tôi", "đi", "."], ["retraced", "skip", "word", "word", "word"]),
+        (
+            ["<tôi", "đi>", "[/]", "tôi", "đi", "."],
+            ["retraced", "retraced", "skip", "word", "word", "word"],
+        ),
+        (["đi>", "[//]", "đi"], ["retraced", "skip", "word"]),
+        (["&-ờ", "tôi", "."], ["filler", "word", "word"]),
+        (["xxx", "XXX.", "yyy", "www"], ["untranscribed"] * 4),
+        (["tôi", "(.)", "đi", "(..)"], ["word", "skip", "word", "skip"]),
+        (["&+ba", "&~gaga", "&=cười", "ba-"], ["skip"] * 4),
+        (["tôi", "[:", "tao]", "đi", "[=", "ghi", "chú]", "[*]"], ["word", "skip", "skip", "word", "skip", "skip", "skip", "skip"]),
+    ],
+)
+def test_tier_roles(items: list[str], roles: list[str]) -> None:
+    assert tier_roles(items) == roles
+
+
+def test_unmatched_group_end_marks_only_the_previous_item_retraced() -> None:
+    assert tier_roles(["a", "b>", "[/]", "c"]) == ["word", "retraced", "skip", "word"]
+
+
+_TIER_ALIGNED = (
+    "@Begin\n@Languages:\tvie\n@Participants:\tPAR Participant\n"
+    "@ID:\tvie|corpus|PAR|||||Participant|||\n@Media:\tsession, audio\n"
+    "*PAR:\t&-ờ tôi [/] tôi đi xxx (.) . \x150_3000\x15\n"
+    "%wor:\t&-ờ tôi tôi đi .\n"
+    "%mor:\tpron|tôi verb|đi .\n"
+    "%gra:\t1|2|NSUBJ 2|0|ROOT 3|2|PUNCT\n"
+    "@End\n"
+)
+
+
+def _layer_texts(document, layer):
+    values = next(a.values for a in document.annotations if a.layer == layer)
+    tokens = document.utterances[0].tokens
+    return [t.text for t in tokens if t.id in values]
+
+
+def test_chatter_aligned_tiers_decode_to_their_own_members() -> None:
+    from speech_features.formats.chat import decode_chat
+
+    document = decode_chat(_TIER_ALIGNED, source="t")
+
+    assert _layer_texts(document, "wor") == ["&-ờ", "tôi", "tôi", "đi", "."]
+    assert _layer_texts(document, "mor") == ["tôi", "đi", "."]
+    assert _layer_texts(document, "gra") == ["tôi", "đi", "."]
+
+
+def test_chatter_aligned_tiers_round_trip_through_encode() -> None:
+    from speech_features.formats.chat import decode_chat, encode_chat
+
+    encoded = encode_chat(decode_chat(_TIER_ALIGNED, source="t"))
+
+    assert "%mor:\tpron|tôi verb|đi ." in encoded
+    assert "%wor:\t&-ờ tôi tôi đi ." in encoded
+    assert decode_chat(encoded, source="t").annotations == decode_chat(_TIER_ALIGNED, source="t").annotations
+
+
+def test_mor_that_counts_retraced_words_still_decodes_as_before() -> None:
+    from speech_features.formats.chat import decode_chat
+
+    legacy = (
+        _TIER_ALIGNED.split("*PAR:")[0]
+        + "*PAR:\t&uh tôi [/] tôi đi . \x150_3000\x15\n"
+        + "%mor:\tco|uh pron|tôi pron|tôi verb|đi .\n"
+        + "@End\n"
+    )
+
+    assert len(_layer_texts(decode_chat(legacy, source="t"), "mor")) == 5
