@@ -981,3 +981,50 @@ def test_zipformer_vi_missing_dependency_maps_to_model_unavailable(monkeypatch):
     with pytest.raises(AsrError) as excinfo:
         ZipformerViBackend().load()
     assert excinfo.value.code == "MODEL_UNAVAILABLE"
+
+
+def test_segment_mode_keeps_the_phrase_span_but_not_a_phrase_masquerading_as_a_word():
+    """Segment timestamps give phrases, not words. Handing a 42-word phrase on as one
+    "word" would make word grouping fail and make `--align` skip the segment."""
+    backend = PhoWhisperBackend(model_id="fake", device="cpu", timestamps="segment")
+    backend._pipe = lambda inp, **kw: {
+        "chunks": [{"text": "xin chào các bạn", "timestamp": (0.0, 2.0)}]
+    }
+    [seg] = backend.transcribe_audio(np.zeros(3 * 16000, dtype=np.float32))
+
+    assert seg["words"] == []
+    assert (seg["start_ms"], seg["end_ms"]) == (0, 2000)
+    assert seg["text"] == "xin chào các bạn"
+
+
+def test_word_mode_still_returns_word_timings():
+    backend = PhoWhisperBackend(model_id="fake", device="cpu")
+    backend._pipe = lambda inp, **kw: {
+        "chunks": [{"text": "xin", "timestamp": (0.0, 0.5)}, {"text": "chào", "timestamp": (0.5, 1.0)}]
+    }
+    [seg] = backend.transcribe_audio(np.zeros(3 * 16000, dtype=np.float32))
+    assert [w["word"] for w in seg["words"]] == ["xin", "chào"]
+
+
+def test_segment_mode_closes_an_open_final_phrase_at_the_window_end():
+    """Whisper often omits the end of the last phrase in a window; left None the
+    segment is unbounded and `--align` skips it (26 of 60 utterances on p001)."""
+    backend = PhoWhisperBackend(model_id="fake", device="cpu", timestamps="segment")
+    backend._pipe = lambda inp, **kw: {
+        "chunks": [
+            {"text": "xin chào", "timestamp": (0.0, 1.0)},
+            {"text": "các bạn", "timestamp": (2.0, None)},
+        ]
+    }
+    segs = backend.transcribe_audio(np.zeros(3 * 16000, dtype=np.float32))
+
+    assert [(s["start_ms"], s["end_ms"]) for s in segs] == [(0, 1000), (2000, 3000)]
+
+
+def test_word_mode_leaves_an_open_final_word_untimed():
+    backend = PhoWhisperBackend(model_id="fake", device="cpu")
+    backend._pipe = lambda inp, **kw: {
+        "chunks": [{"text": "xin", "timestamp": (0.0, 0.5)}, {"text": "chào", "timestamp": (0.5, None)}]
+    }
+    [seg] = backend.transcribe_audio(np.zeros(3 * 16000, dtype=np.float32))
+    assert seg["words"][1]["end_ms"] is None

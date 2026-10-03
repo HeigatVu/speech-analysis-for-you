@@ -87,6 +87,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Time the words of word-less segments (qwen3-asr) with Vietnamese CTC alignment",
     )
     run_parser.add_argument(
+        "--timestamps",
+        choices=["word", "segment"],
+        default="word",
+        help="Whisper timestamp mode; 'segment' fits a 12 GB card, pair it with --align",
+    )
+    run_parser.add_argument(
         "--no-morphosyntax",
         action="store_true",
         help="Phase 1 output: write main tiers and %%wor only, deferring %%mor/%%gra to tag",
@@ -273,6 +279,7 @@ def cmd_run(
     stanza_backend: Any = None,
     skip_morphosyntax: bool = False,
     align: str = "none",
+    timestamps: str = "word",
 ) -> int:
     if not audio_path.is_file():
         sys.stderr.write("[INVALID_ARGUMENT] Audio file not found\n")
@@ -291,7 +298,11 @@ def cmd_run(
 
         # Step 4: ASR
         if asr_backend is None:
-            asr_backend = make_asr_backend(asr_model, device=device)
+            asr_backend = make_asr_backend(
+                asr_model,
+                device=device,
+                **({"timestamps": timestamps} if timestamps != "word" else {}),
+            )
         asr_res = transcribe(
             audio_path=audio_path,
             channel_index=channel,
@@ -875,6 +886,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             diarizer=args.diarizer,
             skip_morphosyntax=args.no_morphosyntax,
             align=args.align,
+            timestamps=args.timestamps,
         )
     elif args.command == "compare":
         return cmd_compare(

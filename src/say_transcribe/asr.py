@@ -271,6 +271,20 @@ def _normalize_segment(
 _TIMESTAMP_MODES = ("word", "segment")
 
 
+def _close_open_phrases(result: Any, duration_s: float) -> Any:
+    """Whisper often leaves the last phrase of a window without an end time; by its own
+    convention that phrase runs to the end of the audio, so close it there."""
+    if not isinstance(result, dict) or "chunks" not in result:
+        return result
+    chunks = [
+        {**c, "timestamp": (c["timestamp"][0], duration_s)}
+        if c.get("timestamp") and c["timestamp"][0] is not None and c["timestamp"][1] is None
+        else c
+        for c in result["chunks"]
+    ]
+    return {**result, "chunks": chunks}
+
+
 class PhoWhisperBackend:
     """Lazy-loaded PhoWhisper backend using HuggingFace transformers."""
 
@@ -349,6 +363,8 @@ class PhoWhisperBackend:
                 chunk = audio_16k_mono[start:end]
                 max_tokens = min(400, max(32, math.ceil(len(chunk) / 16000 * 20)))
                 result = self._decode(chunk, max_tokens)
+                if self.timestamps == "segment":
+                    result = _close_open_phrases(result, len(chunk) / 16000)
                 offset_ms = int(round(start / 16000 * 1000))
                 chunk_duration_ms = round(len(chunk) * 1000 / 16000)
                 segments = [
@@ -356,6 +372,10 @@ class PhoWhisperBackend:
                     for seg in self._parse_pipeline_output(result)
                 ]
                 for seg in _collapse_loop_segments(segments):
+                    if self.timestamps == "segment":
+                        # Phrases are not words: keep the phrase span, drop the pseudo-word
+                        # so word grouping and `--align` see a word-less, bounded segment.
+                        seg = {**seg, "words": []}
                     results.append(self._offset_segment(seg, offset_ms))
                 if self.device == "cuda":
                     import torch

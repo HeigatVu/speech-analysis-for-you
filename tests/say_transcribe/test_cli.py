@@ -667,3 +667,28 @@ def test_cli_benchmark_rejects_an_unknown_asr_model(tmp_path: Path, capsys):
     )
     assert ret == 2
     assert "[INVALID_ARGUMENT]" in capsys.readouterr().err
+
+
+def test_cli_run_timestamps_flag_reaches_the_asr_backend(tmp_path: Path, monkeypatch):
+    audio_file = _make_wav_file(tmp_path / "session_01_master.wav")
+    seen: dict[str, object] = {}
+
+    def fake_make(model, device="cpu", revision=None, **kwargs):
+        seen.update(model=model, **kwargs)
+        return object()
+
+    monkeypatch.setattr("say_transcribe.cli.make_asr_backend", fake_make)
+    monkeypatch.setattr(
+        "say_transcribe.cli.transcribe",
+        lambda *a, **k: _bounded_qwen_result(),
+    )
+    monkeypatch.setattr(
+        "say_transcribe.cli.PyannoteBackend",
+        lambda **kwargs: type("D", (), {"diarize": lambda self, _: ()})(),
+    )
+    main(
+        ["run", str(audio_file), "--channel", "0", "--out", str(tmp_path / "o"),
+         "--expected-sha256", compute_sha256(Path(str(audio_file))), "--no-morphosyntax",
+         "--asr-model", "phowhisper-large", "--timestamps", "segment"]
+    )
+    assert seen == {"model": "phowhisper-large", "timestamps": "segment"}
