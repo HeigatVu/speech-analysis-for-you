@@ -279,6 +279,7 @@ class PhoWhisperBackend:
         device: str = "cpu",
         revision: str | None = None,
         timestamps: str = "word",
+        language: str | None = None,
     ) -> None:
         if timestamps not in _TIMESTAMP_MODES:
             raise ValueError(f"timestamps must be one of {_TIMESTAMP_MODES}")
@@ -291,6 +292,9 @@ class PhoWhisperBackend:
         # decoding byte-identical text, so text-only callers ask for "segment". The
         # default stays "word" because the chat pipeline prints %wor tiers.
         self.timestamps = timestamps
+        # Multilingual checkpoints (whisper-large-v3) auto-detect the language unless
+        # told; PhoWhisper is Vietnamese-only and needs no hint.
+        self.language = language
         self._pipe: Any = None
 
     def load(self) -> None:
@@ -343,20 +347,7 @@ class PhoWhisperBackend:
             for start, end in _window_bounds(audio_16k_mono):
                 chunk = audio_16k_mono[start:end]
                 max_tokens = min(400, max(32, math.ceil(len(chunk) / 16000 * 20)))
-                result = self._pipe(
-                    {"raw": chunk, "sampling_rate": 16000},
-                    max_new_tokens=max_tokens,
-                    # Standard Whisper decoding heuristic (openai/whisper decode_options):
-                    # retry at higher temperature when the decode looks degenerate, instead
-                    # of keeping a repetition loop or low-confidence guess.
-                    generate_kwargs={
-                        "temperature": (0.0, 0.2, 0.4, 0.6, 0.8, 1.0),
-                        "compression_ratio_threshold": 2.4,
-                        "logprob_threshold": -1.0,
-                        "no_speech_threshold": 0.6,
-                        "condition_on_prev_tokens": False,
-                    },
-                )
+                result = self._decode(chunk, max_tokens)
                 offset_ms = int(round(start / 16000 * 1000))
                 chunk_duration_ms = round(len(chunk) * 1000 / 16000)
                 segments = [
@@ -372,6 +363,23 @@ class PhoWhisperBackend:
             return results
         except Exception:
             raise AsrError("MODEL_UNAVAILABLE", "ASR inference execution failed") from None
+
+    def _decode(self, chunk: np.ndarray, max_tokens: int) -> Any:
+        return self._pipe(
+            {"raw": chunk, "sampling_rate": 16000},
+            max_new_tokens=max_tokens,
+            # Standard Whisper decoding heuristic (openai/whisper decode_options):
+            # retry at higher temperature when the decode looks degenerate, instead
+            # of keeping a repetition loop or low-confidence guess.
+            generate_kwargs={
+                "temperature": (0.0, 0.2, 0.4, 0.6, 0.8, 1.0),
+                "compression_ratio_threshold": 2.4,
+                "logprob_threshold": -1.0,
+                "no_speech_threshold": 0.6,
+                "condition_on_prev_tokens": False,
+                **({"language": self.language, "task": "transcribe"} if self.language else {}),
+            },
+        )
 
     @staticmethod
     def _offset_segment(seg: dict[str, Any], offset_ms: int) -> dict[str, Any]:
@@ -481,6 +489,21 @@ class PhoWhisperBackend:
             segments.append(PhoWhisperBackend._finalize_segment(current_words))
 
         return segments
+
+
+WAV2VEC2_VI_ID = "nguyenvulebinh/wav2vec2-base-vi-vlsp2020"
+WAV2VEC2_VI_REVISION = "50a30dadb3ec98a0d4cdb1eb1ea315aff538f7c2"
+
+
+class Wav2Vec2AsrBackend(PhoWhisperBackend):
+    """Vietnamese wav2vec2 CTC arm: same windowing, offsets and word timing as the
+    Whisper path, but a CTC pipeline takes no generation arguments."""
+
+    def __init__(self, device: str = "cpu", revision: str | None = WAV2VEC2_VI_REVISION) -> None:
+        super().__init__(model_id=WAV2VEC2_VI_ID, device=device, revision=revision)
+
+    def _decode(self, chunk: np.ndarray, max_tokens: int) -> Any:
+        return self._pipe({"raw": chunk, "sampling_rate": 16000})
 
 
 _DIGITS = ("không", "một", "hai", "ba", "bốn", "năm", "sáu", "bảy", "tám", "chín")
@@ -642,7 +665,13 @@ class Qwen3AsrBackend:
             raise AsrError("MODEL_UNAVAILABLE", "ASR inference execution failed") from None
 
 
-ASR_MODEL_CHOICES = ("phowhisper-medium", "phowhisper-large", "qwen3-asr")
+ASR_MODEL_CHOICES = (
+    "phowhisper-medium",
+    "phowhisper-large",
+    "qwen3-asr",
+    "whisper-large-v3",
+    "wav2vec2-vi",
+)
 
 AsrBackend = PhoWhisperBackend | Qwen3AsrBackend
 
@@ -671,6 +700,16 @@ def make_asr_backend(
             revision=revision,
             timestamps=timestamps,
         )
+    if model == "whisper-large-v3":
+        return PhoWhisperBackend(
+            model_id="openai/whisper-large-v3",
+            device=device,
+            revision=revision,
+            timestamps=timestamps,
+            language="vi",
+        )
+    if model == "wav2vec2-vi":
+        return Wav2Vec2AsrBackend(device=device, revision=revision or WAV2VEC2_VI_REVISION)
     raise AsrError("MODEL_UNKNOWN", f"Unknown ASR model: {model}")
 
 

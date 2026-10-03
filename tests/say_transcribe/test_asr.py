@@ -874,3 +874,58 @@ def test_qwen3_numerals_and_percent_are_spoken_so_the_main_tier_parses():
     backend = _fake_qwen3(text="giảm 70 %")
     [segment] = backend.transcribe_audio(np.zeros(16000, dtype=np.float32))
     assert segment["text"] == "giảm bảy mươi phần trăm"
+
+
+def test_whisper_large_v3_pins_vietnamese_so_it_never_auto_detects():
+    from say_transcribe.asr import make_asr_backend
+
+    backend = make_asr_backend("whisper-large-v3")
+    assert isinstance(backend, PhoWhisperBackend)
+    assert backend.model_id == "openai/whisper-large-v3"
+    assert backend.language == "vi"
+
+    seen: dict[str, object] = {}
+
+    def fake_pipe(inp, **kwargs):
+        seen.update(kwargs["generate_kwargs"])
+        return {"chunks": [{"text": "xin", "timestamp": (0.0, 0.5)}]}
+
+    backend._pipe = fake_pipe
+    backend.transcribe_audio(np.zeros(16000, dtype=np.float32))
+    assert seen["language"] == "vi" and seen["task"] == "transcribe"
+
+
+def test_phowhisper_does_not_force_a_language():
+    backend = PhoWhisperBackend(model_id="fake", device="cpu")
+    seen: dict[str, object] = {}
+
+    def fake_pipe(inp, **kwargs):
+        seen.update(kwargs["generate_kwargs"])
+        return {"chunks": []}
+
+    backend._pipe = fake_pipe
+    backend.transcribe_audio(np.zeros(16000, dtype=np.float32))
+    assert "language" not in seen and "task" not in seen
+
+
+def test_wav2vec2_vi_is_a_pinned_ctc_arm_with_native_word_timing():
+    from say_transcribe.asr import ASR_MODEL_CHOICES, Wav2Vec2AsrBackend, make_asr_backend
+
+    backend = make_asr_backend("wav2vec2-vi")
+    assert isinstance(backend, Wav2Vec2AsrBackend)
+    assert backend.model_id == "nguyenvulebinh/wav2vec2-base-vi-vlsp2020"
+    assert backend.revision == "50a30dadb3ec98a0d4cdb1eb1ea315aff538f7c2"
+    assert {"whisper-large-v3", "wav2vec2-vi"} <= set(ASR_MODEL_CHOICES)
+
+    calls: list[dict[str, object]] = []
+
+    def fake_pipe(inp, **kwargs):
+        calls.append(kwargs)  # a CTC pipeline takes no generation arguments
+        return {"chunks": [{"text": "chào", "timestamp": (0.1, 0.4)}]}
+
+    backend._pipe = fake_pipe
+    segs = backend.transcribe_audio(np.zeros(21 * 16000, dtype=np.float32))
+
+    assert calls == [{}, {}]
+    assert segs[0]["words"][0]["start_ms"] == 100
+    assert segs[1]["words"][0]["start_ms"] == 20100  # second window, master timeline

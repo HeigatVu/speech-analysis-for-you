@@ -9,10 +9,16 @@ from typing import Callable, Protocol, Sequence
 
 import numpy as np
 
-from say_transcribe.asr import AsrSegment, WordTiming, _is_lexical_word
+from say_transcribe.asr import (
+    WAV2VEC2_VI_ID,
+    WAV2VEC2_VI_REVISION,
+    AsrSegment,
+    WordTiming,
+    _is_lexical_word,
+)
 
-_MODEL_ID = "nguyenvulebinh/wav2vec2-base-vi-vlsp2020"
-_MODEL_REVISION = "50a30dadb3ec98a0d4cdb1eb1ea315aff538f7c2"
+_MODEL_ID = WAV2VEC2_VI_ID
+_MODEL_REVISION = WAV2VEC2_VI_REVISION
 _SAMPLE_RATE = 16_000
 
 
