@@ -343,6 +343,7 @@ def run_ablation(
         )
         record["audio_seconds"] = float(len(views.audio_16k)) / SAMPLE_RATE
         record["asr_model"] = model
+        record["asr_revision"] = revision
         record["device"] = device
         record["gpu_memory_bytes"] = _gpu_memory_bytes(device)
         verify_source(row)

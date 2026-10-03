@@ -283,6 +283,8 @@ def test_ablation_runs_every_arm_and_writes_a_redacted_report(tmp_path, monkeypa
     assert list(report["sessions"]["p001"]["arms"]) == list(ABLATION_ARM_ORDER)
     assert report["config"]["asr_model"] == "phowhisper-large"
     assert report["config"]["asr_revision"] == "b" * 40
+    # The revision the arms actually ran, not the manifest row's declared one.
+    assert report["sessions"]["p001"]["asr_revision"] == "b" * 40
     assert report["config"]["channel_index"] == 0
     # Every arm transcribes identically here, so no arm may be promoted.
     assert set(report["promotion"]) == set(ABLATION_ARM_ORDER[1:])
