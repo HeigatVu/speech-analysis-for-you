@@ -11,6 +11,7 @@ from say_transcribe.alignment import AlignmentError, align_segments, align_words
 from say_transcribe.asr import (
     ASR_MODEL_CHOICES,
     AsrError,
+    _is_lexical_word,
     compute_sha256,
     verify_source_sha256,
     make_asr_backend,
@@ -297,10 +298,21 @@ def cmd_run(
         run_warnings: list[str] = list(asr_res.warnings)
         if align == "wav2vec2-vi":
             try:
+                segments = align_segments(audio_16k, asr_res.segments, aligner=align_words)
+                timed = {
+                    f"CHAT_WORD_TIMING_UNAVAILABLE:{i}"
+                    for i, seg in enumerate(segments, start=1)
+                    if seg.words
+                    and all(
+                        w.start_ms is not None for w in seg.words if _is_lexical_word(w.word)
+                    )
+                }
                 asr_res = replace(
                     asr_res,
-                    segments=align_segments(audio_16k, asr_res.segments, aligner=align_words),
+                    segments=segments,
+                    warnings=tuple(w for w in asr_res.warnings if w not in timed),
                 )
+                run_warnings = list(asr_res.warnings)
             except AlignmentError:
                 run_warnings.append("ALIGNMENT_UNAVAILABLE")
 

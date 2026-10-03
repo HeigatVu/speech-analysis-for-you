@@ -594,7 +594,7 @@ def _bounded_qwen_result():
     return AsrResult(
         source_sha256="a" * 64,
         segments=(AsrSegment(start_ms=0, end_ms=1000, text="tôi là", words=()),),
-        warnings=(),
+        warnings=("CHAT_WORD_TIMING_UNAVAILABLE:1",),
     )
 
 
@@ -633,11 +633,12 @@ def _run_with_align(tmp_path: Path, monkeypatch, fake_align_words):
     return ret, out_dir / "session_01.cha"
 
 
-def test_cli_run_align_times_a_wordless_qwen_segment(tmp_path: Path, monkeypatch):
+def test_cli_run_align_times_a_wordless_qwen_segment(tmp_path: Path, monkeypatch, capsys):
     ret, cha = _run_with_align(
         tmp_path, monkeypatch, lambda audio, words: ((100, 400), (500, 900))
     )
     text = cha.read_text(encoding="utf-8")
+    assert "CHAT_WORD_TIMING_UNAVAILABLE" not in capsys.readouterr().err  # now timed
 
     assert ret == 0
     assert "\x15100_900\x15" in text  # utterance bullet tightened to the aligned words
@@ -654,4 +655,6 @@ def test_cli_run_align_failure_degrades_to_untimed_words(tmp_path: Path, monkeyp
 
     assert ret == 0
     assert "%wor:" not in cha.read_text(encoding="utf-8")
-    assert "ALIGNMENT_UNAVAILABLE" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "ALIGNMENT_UNAVAILABLE" in err
+    assert "CHAT_WORD_TIMING_UNAVAILABLE:1" in err  # still untimed, still reported
