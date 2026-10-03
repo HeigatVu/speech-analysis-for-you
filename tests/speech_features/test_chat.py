@@ -462,7 +462,36 @@ class TestRealFileShapes:
 
 # --- dependent-tier membership (chatter / Batchalign3 alignment rules) ---------
 
-from speech_features.formats.chat import tier_roles  # noqa: E402
+from speech_features.formats.chat import decode_chat, encode_chat, tier_roles  # noqa: E402
+
+
+def test_canonical_correction_count_roundtrips():
+    text = "@Begin\n@Languages:\tvie\n@Participants:\tPAR Participant\n@Media:\ttest, audio\n*PAR:\ttôi [: chúng tôi] đi . \x150_1000\x15\n%mor:\tpron|chúng pron|tôi verb|đi .\n@End\n"
+    doc = decode_chat(text)
+    assert "%mor:\tpron|chúng pron|tôi verb|đi ." in encode_chat(doc)
+
+
+@pytest.mark.parametrize("wor", ["khác \x150_500\x15 .", "tôi \x15500_500\x15 .", "tôi \x15600_500\x15 .", "tôi \x150_1500\x15 ."])
+def test_untrusted_wor_is_preserved_without_timing(wor):
+    text = f"@Begin\n@Languages:\tvie\n@Participants:\tPAR Participant\n@Media:\ttest, audio\n*PAR:\ttôi . \x150_1000\x15\n%wor:\t{wor}\n@End\n"
+    doc = decode_chat(text)
+    assert doc.utterances[0].tokens[0].start_s is None
+    assert any(w.code == "UNTRUSTED_CHAT_WOR" for w in doc.warnings)
+    assert not any(layer.layer == "wor" for layer in doc.annotations)
+    assert f"%wor:\t{wor}" in encode_chat(doc)
+
+
+def test_trusted_wor_sets_only_positive_word_times():
+    text = "@Begin\n@Languages:\tvie\n@Participants:\tPAR Participant\n@Media:\ttest, audio\n*PAR:\t<tôi> . \x150_1000\x15\n%wor:\ttôi \x150_500\x15 .\n@End\n"
+    doc = decode_chat(text)
+    assert doc.utterances[0].tokens[0].end_s == 0.5
+
+
+def test_mismatched_wor_count_preserves_raw_without_alignment():
+    text = "@Begin\n@Languages:\tvie\n@Participants:\tPAR Participant\n@Media:\ttest, audio\n*PAR:\ttôi đi . \x150_1000\x15\n%wor:\ttôi \x150_500\x15 .\n@End\n"
+    doc = decode_chat(text)
+    assert not any(layer.layer == "wor" for layer in doc.annotations)
+    assert "%wor:\ttôi \x150_500\x15 ." in encode_chat(doc)
 
 
 @pytest.mark.parametrize(

@@ -241,7 +241,7 @@ def test_stanza_failure_returns_none():
 def test_mor_renders_ud_feats_as_chat_suffixes_with_a_single_pipe():
     item = MorItem(pos="pron", lemma="tôi", feats="Number=Plur|Person=1")
 
-    assert item.format_mor() == "pron|tôi-Plur-1"
+    assert item.format_mor() == "pron|tôi-P1"
     assert item.format_mor().count("|") == 1
 
 
@@ -264,3 +264,27 @@ def test_mor_writes_no_features_for_function_word_pos(pos):
 
 def test_mor_keeps_comma_joined_feature_values():
     assert MorItem("noun", "nhà", "Number=Plur,Sing").format_mor() == "noun|nhà-Plur,Sing"
+
+
+@pytest.mark.parametrize("pos,feats,suffix", [
+    ("verb", "Person=0|Tense=Pres|Mood=Ind|Number=Plur|VerbForm=Fin", "Fin-Ind-Pres-P4"),
+    ("pron", "Person=1|Case=Nom|Number=Plur|PronType=Prs|Reflex=Yes", "Prs-Nom-reflx-P1"),
+    ("det", "PersonPsor=1|NumberPsor=Sing|Number=Plur|PronType=Dem|Definite=Def|Gender=Com", "Def-Dem-Plur-S1"),
+    ("adj", "Number=Sing|Degree=Pos|Case=Nom", "Nom-S"),
+    ("noun", "PronType=Prs|Case=Nom|Number=Sing|Gender=Com", "Nom-Prs"),
+])
+def test_batchalign_features_use_pos_specific_order(pos, feats, suffix):
+    assert MorItem(pos, "đẹp", feats).format_mor() == f"{pos}|đẹp-{suffix}"
+
+
+def test_mor_projection_corrections_scope_and_annotated_retrace():
+    from say_transcribe.morphosyntax import mor_members
+    words = [GroupedWord(t, None, None, ()) for t in
+             ["<tôi", "đi>", "[:", "chúng", "tôi]", "[=", "ghi", "chú]", "[*]", "[/]", "<đến", "nhà>", "(1.2)", "."]]
+    assert [w.word for w in mor_members(words)] == ["đến", "nhà", "."]
+
+
+def test_mor_projection_multiple_replacement_words():
+    from say_transcribe.morphosyntax import mor_members
+    words = [GroupedWord(t, None, None, ()) for t in ["tôi", "[:", "chúng", "tôi]", "đi", "."]]
+    assert [w.word for w in mor_members(words)] == ["chúng", "tôi", "đi", "."]

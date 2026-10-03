@@ -1,8 +1,8 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Sequence
 
 from say_transcribe.asr import AsrError
-from speech_features.formats.chat import tier_roles
+from speech_features.formats.chat import mor_projection
 from say_transcribe.word_grouping import GroupedWord
 
 
@@ -22,11 +22,41 @@ class MorItem:
             return "cm|cm"
         if self.lemma in {".", "?", "!", "...", "…"}:
             return self.lemma
-        # UD feats are "Key=Val|Key=Val"; %mor allows one "|" (pos|lemma), so keep the
-        # values only, as "-Val" suffixes. Function-word POS carry none (Batchalign3).
-        pairs = self.feats.split("|") if self.feats and self.pos not in _NO_FEATS_POS else []
-        suffix = "".join(f"-{pair.partition('=')[2] or pair}" for pair in pairs)
+        suffix = "".join(f"-{value}" for value in _feature_suffixes(self.pos, self.feats))
         return f"{self.pos}|{self.lemma}{suffix}"
+
+
+def _feature_suffixes(pos: str, feats: str | None) -> list[str]:
+    """Vietnamese-relevant handlers from pinned Batchalign3 features.rs."""
+    if not feats or pos in _NO_FEATS_POS:
+        return []
+    values = dict(pair.split("=", 1) for pair in feats.split("|") if "=" in pair)
+    agreement = values.get("Number", "")[:1] + (
+        "4" if values.get("Person") == "0" else values.get("Person", "")
+    )
+    keys = {
+        "verb": ("VerbForm", "Aspect", "Mood", "Tense", "Polarity", "Polite"),
+        "aux": ("VerbForm", "Aspect", "Mood", "Tense", "Polarity", "Polite"),
+        "pron": ("PronType", "Case"),
+        "det": ("Gender", "Definite", "PronType", "Number"),
+        "adj": ("Degree", "Case"),
+        "noun": ("Gender", "Number", "Case", "PronType"),
+        "propn": ("Gender", "Number", "Case", "PronType"),
+    }.get(pos, ())
+    suffixes = [values[key] for key in keys if values.get(key) and not (
+        (key == "Gender" and values[key] in {"Com", "Com,Neut"})
+        or (key == "Degree" and values[key] == "Pos")
+        or (key == "Number" and pos in {"noun", "propn"} and values[key] == "Sing")
+    )]
+    if pos == "pron" and values.get("Reflex") == "Yes":
+        suffixes.append("reflx")
+    if pos in {"verb", "aux", "pron", "adj"} and agreement:
+        suffixes.append(agreement)
+    if pos == "det":
+        possessor = values.get("NumberPsor", "")[:1] + values.get("PersonPsor", "")
+        if possessor:
+            suffixes.append(possessor)
+    return suffixes
 
 
 @dataclass(frozen=True)
@@ -98,8 +128,12 @@ class StanzaBackend:
 
 def mor_members(words: Sequence[GroupedWord]) -> tuple[GroupedWord, ...]:
     """Words `%mor` and `%gra` align to: not retraced, filler, `xxx`, pause or annotation."""
-    roles = tier_roles([w.word for w in words])
-    return tuple(w for w, role in zip(words, roles) if role == "word")
+    return tuple(
+        replace(words[index], word=surface,
+                start_ms=words[index].start_ms if surface == words[index].word else None,
+                end_ms=words[index].end_ms if surface == words[index].word else None)
+        for index, surface in mor_projection([w.word for w in words])
+    )
 
 
 def project_morphosyntax(
@@ -114,7 +148,7 @@ def project_morphosyntax(
     if not any(c.isalnum() for w in grouped_words for c in w.word):
         return None
 
-    tokens = [w.word for w in grouped_words]
+    tokens = [w.word for w in mor_members(grouped_words)]
     if backend is None:
         backend = StanzaBackend()
 

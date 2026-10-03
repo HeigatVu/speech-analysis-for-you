@@ -92,7 +92,7 @@ def tier_roles(items: Sequence[str]) -> list[str]:
         elif item.startswith("["):
             roles[i] = "skip"
             in_annotation = not item.endswith("]")
-        elif item.startswith("(") and item.endswith(")") and set(item[1:-1]) == {"."}:
+        elif re.fullmatch(r"\((?:\.+|\d+(?:\.\d+)?)\)", item):
             roles[i] = "skip"
         elif item.startswith("&-"):
             roles[i] = "filler"
@@ -104,15 +104,57 @@ def tier_roles(items: Sequence[str]) -> list[str]:
         if item not in ("[/]", "[//]") or i == 0:
             continue
         start = i - 1
+        while start >= 0 and roles[start] == "skip":
+            start -= 1
+        if start < 0:
+            continue
+        end = start + 1
         if items[start].endswith(">"):
             while start > 0 and not items[start].startswith("<"):
                 start -= 1
             if not items[start].startswith("<"):
                 start = i - 1
-        for j in range(start, i):
+        for j in range(start, end):
             if roles[j] == "word":
                 roles[j] = "retraced"
     return roles
+
+
+def mor_projection(items: Sequence[str]) -> tuple[tuple[int, str], ...]:
+    """Canonical corrected MOR surfaces with original main-tier source indices.
+
+    Scope markup is removed only in this view. Corrections may contribute several
+    words at one source index; the original main tier is never rewritten.
+    """
+    roles = tier_roles(items)
+    projected: list[tuple[int, str]] = []
+    i = 0
+    while i < len(items):
+        item = items[i]
+        if item.startswith("[:"):
+            annotation = [item[2:]]
+            while not items[i].endswith("]") and i + 1 < len(items):
+                i += 1
+                annotation.append(items[i])
+            replacement = " ".join(annotation).removesuffix("]").split()
+            previous = i - len(annotation)
+            while previous >= 0 and roles[previous] == "skip":
+                previous -= 1
+            start = previous
+            if previous >= 0 and items[previous].endswith(">"):
+                while start > 0 and not items[start].startswith("<"):
+                    start -= 1
+                if not items[start].startswith("<"):
+                    start = previous
+            if previous >= 0 and roles[previous] == "word":
+                projected = [(j, text) for j, text in projected if j < start]
+                projected.extend((start, text) for text in replacement)
+        elif roles[i] == "word":
+            surface = item.strip("<>")
+            if surface:
+                projected.append((i, surface))
+        i += 1
+    return tuple(projected)
 
 
 def _split_header(line: str) -> tuple[str, str]:
@@ -190,14 +232,28 @@ def decode_chat(text: str, *, source: str = "", sha256: str | None = None) -> Sp
                     items = _chunk_wor(current["tiers"][name])
                 else:
                     items = current["tiers"][name].split()
-                members = _tier_members(name, current["tokens"], roles, len(items))
+                projection = mor_projection([t.text for t in current["tokens"]])
+                members = (
+                    [current["tokens"][index] for index, _ in projection]
+                    if name != "%wor" and len(projection) == len(items)
+                    else _tier_members(name, current["tokens"], roles, len(items))
+                )
+                if name == "%wor" and len(items) != len(members):
+                    raw_tiers.setdefault("__wor_" + current["id"], []).append("%wor:\t" + current["tiers"][name])
+                    warnings.append(ChatTierWarning(code="UNTRUSTED_CHAT_WOR", tier="%wor"))
+                    continue
                 if len(items) != len(members):
                     raise _invalid(
                         f"incompatible {name} alignment: {len(items)} items for "
                         f"{len(members)} alignable tokens"
                     )
+                if name == "%wor":
+                    if not _apply_wor_timing(current, members, items, warnings):
+                        raw_tiers.setdefault("__wor_" + current["id"], []).append("%wor:\t" + current["tiers"][name])
+                        continue
                 for token, item in zip(members, items):
-                    annotations[layer_key][token.id] = item
+                    previous = annotations[layer_key].get(token.id)
+                    annotations[layer_key][token.id] = (previous + " " + item) if previous else item
         utterances.append(
             DocumentUtterance(
                 id=current["id"],
@@ -431,6 +487,39 @@ def _chunk_wor(rest: str) -> list[str]:
     return _WOR_CHUNK.findall(rest)
 
 
+def _wor_surface(text: str) -> str:
+    surface = text.strip("<>")
+    return surface[2:] if surface.startswith("&-") else surface
+
+
+def _apply_wor_timing(current: dict, members: Sequence[DocumentToken], items: Sequence[str],
+                      warnings: list[ChatTierWarning]) -> bool:
+    """Admit timing only after lexical identity and interval validation."""
+    pairs: list[tuple[DocumentToken, float, float]] = []
+    valid = True
+    previous_end = current["start_s"]
+    for token, item in zip(members, items):
+        display = item.split()[0]
+        if _wor_surface(token.text) != _wor_surface(display):
+            valid = False
+        match = re.search(r"[\x15•](\d+)_(\d+)[\x15•]", item)
+        if match:
+            start, end = (int(value) / 1000 for value in match.groups())
+            if not (previous_end <= start < end <= current["end_s"]):
+                valid = False
+            previous_end = end
+            pairs.append((token, start, end))
+        elif any(c.isalnum() for c in display) and any("\x15" in entry or "•" in entry for entry in items):
+            valid = False
+    if not valid:
+        warnings.append(ChatTierWarning(code="UNTRUSTED_CHAT_WOR", tier="%wor"))
+        return False
+    for token, start, end in pairs:
+        object.__setattr__(token, "start_s", start)
+        object.__setattr__(token, "end_s", end)
+    return True
+
+
 def _parse_bullet(parts: list[str], current: dict, role: str) -> list[tuple[float, float]]:
     # Trailing numeric run = the timing payload; a media path may contain spaces
     # ("p001, audio"), so anything before the floats is path text.
@@ -484,8 +573,20 @@ def encode_chat(document: SpeechDocument) -> str:
             pairs = " ".join(f"{_fmt(t.start_s)} {_fmt(t.end_s)}" for t in content)
             lines.append(f"%xaud:\t{media_path} {pairs}")
         roles = tier_roles([t.text for t in utterance.tokens])
+        raw_wor = document.raw_tiers.get("__wor_" + utterance.id)
+        if raw_wor:
+            lines.append(raw_wor)
         for name in ("%wor", "%mor", "%gra"):
             values = layers.get(name[1:], {})
+            if name != "%wor":
+                canonical = list(dict.fromkeys(index for index, _ in mor_projection(
+                    [t.text for t in utterance.tokens]
+                )))
+                canonical_members = [utterance.tokens[index] for index in canonical]
+                present_ids = {t.id for t in utterance.tokens if t.id in values}
+                if canonical_members and present_ids == {t.id for t in canonical_members}:
+                    lines.append(name + ":\t" + " ".join(values[t.id] for t in canonical_members))
+                    continue
             members = _tier_members(
                 name,
                 utterance.tokens,
@@ -495,7 +596,7 @@ def encode_chat(document: SpeechDocument) -> str:
             if members and all(t.id in values for t in members):
                 lines.append(name + ":\t" + " ".join(values[t.id] for t in members))
     for name, text in document.raw_tiers.items():
-        if name in _KNOWN_HEADERS:
+        if name in _KNOWN_HEADERS or name.startswith("__wor_"):
             continue
         for tier_line in text.split("\n"):
             lines.append(tier_line)
