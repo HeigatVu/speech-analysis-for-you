@@ -168,16 +168,34 @@ def _fmt(value: float) -> str:
     return f"{value:g}"
 
 
-def decode_chat(text: str, *, source: str = "", sha256: str | None = None) -> SpeechDocument:
+def decode_chat(
+    text: str,
+    *,
+    source: str = "",
+    sha256: str | None = None,
+    require_timing: bool = True,
+) -> SpeechDocument:
     """Parse a CHAT text snapshot into a :class:`SpeechDocument`.
 
     ``source`` records the origin and ``sha256`` the input hash; both are
     stored on the returned document. Raises :class:`InvalidChatError`
     (code ``INVALID_CHAT``) for malformed input.
+
+    A draft written before alignment has no main-tier media bullet, so
+    ``require_timing`` defaults to rejecting it: timing-dependent callers
+    must never receive an untimed reference. Pass ``require_timing=False``
+    only to inspect such a draft, as ``tag`` does before it adds tiers.
     """
     if text.startswith("\ufeff"):
         text = text[1:]
-    lines = [line.rstrip("\r\n") for line in text.splitlines() if line.strip()]
+    lines: list[str] = []
+    for line in text.splitlines():
+        if not line.strip():
+            continue
+        if line[0].isspace() and lines:
+            lines[-1] += " " + line.strip()
+        else:
+            lines.append(line)
 
     # CLAN writes preamble headers (@UTF8, @Window, @TimeDuration, ...)
     # before @Begin; accept and ignore them.
@@ -217,8 +235,10 @@ def decode_chat(text: str, *, source: str = "", sha256: str | None = None) -> Sp
                 current["start_s"], current["end_s"] = pairs[0]
             else:
                 word_pairs = pairs
-        if current["start_s"] is None:
+        if require_timing and current["start_s"] is None:
             raise _invalid(f"speaker tier {current['tier']!r} has no media bullet")
+        if word_pairs is not None and current["start_s"] is None:
+            raise _invalid("word media bullet requires utterance timing")
         if word_pairs is not None:
             for token, (start, end) in zip(current["content"], word_pairs):
                 if start < current["start_s"] or end > current["end_s"]:
@@ -495,6 +515,9 @@ def _wor_surface(text: str) -> str:
 def _apply_wor_timing(current: dict, members: Sequence[DocumentToken], items: Sequence[str],
                       warnings: list[ChatTierWarning]) -> bool:
     """Admit timing only after lexical identity and interval validation."""
+    if current["start_s"] is None or current["end_s"] is None:
+        warnings.append(ChatTierWarning(tier="%wor", line="untrusted timing"))
+        return False
     pairs: list[tuple[DocumentToken, float, float]] = []
     valid = True
     previous_end = current["start_s"]
@@ -563,7 +586,8 @@ def encode_chat(document: SpeechDocument) -> str:
     layers = {a.layer: a.values for a in document.annotations}
     for utterance in document.utterances:
         lines.append(f"*{utterance.speaker_id}:\t" + " ".join(t.text for t in utterance.tokens))
-        lines.append(f"%xaud:\t{media_path} {_fmt(utterance.start_s)} {_fmt(utterance.end_s)}")
+        if utterance.start_s is not None and utterance.end_s is not None:
+            lines.append(f"%xaud:\t{media_path} {_fmt(utterance.start_s)} {_fmt(utterance.end_s)}")
         content = [t for t in utterance.tokens if t.kind in _CONTENT_KINDS]
         # a single-token word bullet would be indistinguishable from an
         # utterance bullet on reload; skip it rather than misround-trip

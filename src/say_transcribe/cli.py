@@ -1,7 +1,6 @@
 import argparse
 from dataclasses import replace
 from pathlib import Path
-import re
 import sys
 from typing import Any, Sequence
 
@@ -20,7 +19,7 @@ from say_transcribe.asr import (
 )
 from say_transcribe.audio import AudioPreparationError, extract_channel, read_wav, resample_to_16kHz
 from say_transcribe.benchmark import run_asr_benchmark, run_diarization_benchmark, write_report
-from say_transcribe.chat_writer import PARTICIPANTS, UtteranceRecord, write_chat_file
+from say_transcribe.chat_writer import UtteranceRecord, write_chat_file
 from say_transcribe.denoise import DenoiseError
 from say_transcribe.diarize import PyannoteBackend, WavlmClusterBackend, assign_speakers
 from say_transcribe.disfluency import drop_invalid_commas, mark_disfluencies
@@ -370,82 +369,63 @@ def cmd_run(
         return 4
 
 
-_SOURCE_SHA256_COMMENT = re.compile(r"@Comment:\s*source_sha256\s+(\S+)")
-# Our %wor tier carries word timings inline ("token \x15start_end\x15"); the CHAT
-# reader keeps them in the "wor" annotation layer instead of the token spans.
-_WOR_BULLET = re.compile(r"[\x15•](\d+)_(\d+)[\x15•]")
-# The writer declares exactly these participants; any other label in a reviewed
-# transcript would produce a file its own reader rejects.
-_REVIEWED_SPEAKERS = tuple(code for code, _role in PARTICIPANTS)
-
-
-def _wor_timings(document: Any) -> dict[str, tuple[int, int]]:
-    """Collect inline %wor word timings, keyed by token id."""
-    timings: dict[str, tuple[int, int]] = {}
-    for layer in document.annotations:
-        if layer.layer != "wor":
-            continue
-        for token_id, value in layer.values.items():
-            match = _WOR_BULLET.search(value)
-            if match:
-                timings[token_id] = (int(match.group(1)), int(match.group(2)))
-    return timings
-
-
-def _token_ms(
-    token: Any,
-    timings: dict[str, tuple[int, int]],
-) -> tuple[int | None, int | None]:
-    """Word span in milliseconds: the token's own span, else its inline %wor bullet."""
-    if token.start_s is not None and token.end_s is not None:
-        return round(token.start_s * 1000), round(token.end_s * 1000)
-    return timings.get(token.id, (None, None))
-
-
-def _document_source_sha256(document: Any) -> str:
-    """Recover the audio digest recorded in the reviewed transcript's @Comment."""
-    # The reader keeps each unknown header's lines joined into one string.
-    for value in document.raw_tiers.values():
-        match = _SOURCE_SHA256_COMMENT.search(value)
-        if match:
-            return match.group(1)
-    return document.source_sha256 or ""
-
-
-def _reviewed_records(
-    document: Any,
-    stanza_backend: Any,
-) -> tuple[str, str, list[UtteranceRecord]]:
-    """Rebuild run records from a hand-reviewed CHAT document (phase 2 input)."""
-    timings = _wor_timings(document)
-    utterances: list[UtteranceRecord] = []
+def _reviewed_records(document: Any, stanza_backend: Any) -> list[UtteranceRecord]:
+    """Project morphology without rebuilding reviewed text or timing."""
+    declared = {speaker.id for speaker in document.speakers}
+    utterances = []
     for utterance in document.utterances:
-        if utterance.speaker_id not in _REVIEWED_SPEAKERS:
-            raise ValueError(
-                f"unsupported speaker code {utterance.speaker_id!r} in reviewed transcript"
-            )
-        words_list: list[GroupedWord] = []
-        for token in utterance.tokens:
-            start_ms, end_ms = _token_ms(token, timings)
-            words_list.append(
-                GroupedWord(word=token.text, start_ms=start_ms, end_ms=end_ms, syllables=())
-            )
-        words = tuple(words_list)
-        utterances.append(
-            UtteranceRecord(
-                speaker=utterance.speaker_id,
-                start_ms=None if utterance.start_s is None else round(utterance.start_s * 1000),
-                end_ms=None if utterance.end_s is None else round(utterance.end_s * 1000),
-                text=" ".join(word.word for word in words),
-                words=words,
-                morphosyntax=(
-                    project_morphosyntax(mor_members(words), backend=stanza_backend)
-                    if words
-                    else None
-                ),
-            )
-        )
-    return document.document_id, _document_source_sha256(document), utterances
+        if utterance.speaker_id not in declared:
+            raise ValueError("undeclared speaker")
+        words = tuple(GroupedWord(token.text,
+                               None if token.start_s is None else round(token.start_s * 1000),
+                               None if token.end_s is None else round(token.end_s * 1000), ())
+                      for token in utterance.tokens)
+        members = mor_members(words)
+        analysable = any(any(c.isalnum() for c in word.word) for word in members)
+        morphology = project_morphosyntax(members, backend=stanza_backend) if analysable else None
+        if analysable and morphology is None:
+            raise AsrError("MODEL_UNAVAILABLE", "Morphosyntax projection produced no tiers")
+        utterances.append(UtteranceRecord(utterance.speaker_id, None, None, "", words, morphology))
+    return utterances
+
+
+def _without_morphology(source: bytes) -> list[bytes]:
+    # Split only physical CR/LF lines: CHAT media bullets are not line breaks.
+    lines = source.splitlines(keepends=True)
+    result: list[bytes] = []
+    discard_continuation = False
+    for line in lines:
+        if line.startswith((b"%mor:", b"%gra:")):
+            discard_continuation = True
+            continue
+        if discard_continuation and line.startswith((b" ", b"\t")):
+            continue
+        discard_continuation = False
+        result.append(line)
+    return result
+
+
+def _replace_morphology(source: bytes, utterances: Sequence[UtteranceRecord]) -> bytes:
+    result = _without_morphology(source)
+    output: list[bytes] = []
+    index = -1
+    pending = False
+    eol = b"\n"
+    for line in result:
+        if pending and not line.startswith((b" ", b"\t")):
+            morphology = utterances[index].morphosyntax
+            if morphology is not None:
+                output.extend((morphology.mor_line().encode("utf-8") + eol,
+                               morphology.gra_line().encode("utf-8") + eol))
+            pending = False
+        output.append(line)
+        if line.startswith(b"*"):
+            index += 1
+            pending = True
+            eol = b"\r\n" if line.endswith(b"\r\n") else b"\n"
+    if index + 1 != len(utterances):
+        raise ValueError("utterance count mismatch")
+    return b"".join(output)
 
 
 def cmd_tag(
@@ -460,9 +440,9 @@ def cmd_tag(
         return 2
 
     try:
+        source = transcript_path.read_bytes()
         document = decode_chat(
-            transcript_path.read_text(encoding="utf-8"),
-            source=str(transcript_path),
+            b"".join(_without_morphology(source)).decode("utf-8"), require_timing=False
         )
     except (InvalidChatError, OSError, UnicodeDecodeError):
         sys.stderr.write("[CHAT_VALIDATION_FAILED] CHAT input validation failed\n")
@@ -471,21 +451,12 @@ def cmd_tag(
     try:
         if stanza_backend is None:
             stanza_backend = StanzaBackend(device=device)
-        session_id, source_sha256, utterances = _reviewed_records(document, stanza_backend)
-        # project_morphosyntax degrades to None on any backend failure; an untagged
-        # "tagged" file must not be reported as success.
-        if any(utterance.words for utterance in utterances) and not any(
-            utterance.morphosyntax is not None for utterance in utterances
-        ):
-            sys.stderr.write("[MODEL_UNAVAILABLE] Morphosyntax projection produced no tiers\n")
-            return 3
-        write_chat_file(
-            output_path=out_file,
-            session_id=session_id,
-            source_sha256=source_sha256,
-            utterances=utterances,
-        )
-        sys.stdout.write(f"Wrote morphotagged transcript for session: {session_id}\n")
+        utterances = _reviewed_records(document, stanza_backend)
+        tagged = _replace_morphology(source, utterances)
+        out_file.parent.mkdir(parents=True, exist_ok=True)
+        with out_file.open("xb") as stream:
+            stream.write(tagged)
+        sys.stdout.write("Wrote morphotagged transcript\n")
         return 0
     except FileExistsError:
         sys.stderr.write("[OUTPUT_EXISTS] Refusing to overwrite an existing transcript\n")

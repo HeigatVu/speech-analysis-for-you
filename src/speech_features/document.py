@@ -76,8 +76,8 @@ class DocumentUtterance:
 
     id: str
     speaker_id: str
-    start_s: float
-    end_s: float
+    start_s: float | None
+    end_s: float | None
     tokens: tuple = field(default_factory=tuple)
 
     def __post_init__(self) -> None:

@@ -481,15 +481,12 @@ def test_cli_tag_adds_morphosyntax_to_reviewed_transcript(
     assert "[OUTPUT_EXISTS]" in capsys.readouterr().err
 
 
-def test_cli_tag_rejects_speaker_code_outside_the_writer_contract(
+def test_cli_tag_rejects_undeclared_speaker(
     tmp_path: Path, monkeypatch, capsys
 ):
     phase1 = _write_phase1(tmp_path / "p003.cha", "p003")
     text = phase1.read_text(encoding="utf-8")
-    text = text.replace(
-        "@Participants:\tPAR Participant, INV Investigator",
-        "@Participants:\tPAR Participant, INV Investigator, MED Media",
-    ).replace("*PAR:", "*MED:")
+    text = text.replace("*PAR:", "*MED:")
     phase1.write_text(text, encoding="utf-8")
 
     monkeypatch.setattr("say_transcribe.cli.StanzaBackend", _FakeStanzaBackend)
